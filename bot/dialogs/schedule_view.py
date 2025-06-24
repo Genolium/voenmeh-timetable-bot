@@ -3,11 +3,13 @@ from aiogram.types import CallbackQuery
 from aiogram_dialog import Dialog, Window, DialogManager, StartMode
 from aiogram_dialog.widgets.text import Format, Const
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo, Back
+from aiogram_dialog.widgets.media import StaticMedia
+from aiogram.enums import ContentType
 
-from .states import Schedule, MainMenu, SettingsMenu
+from .states import Schedule, MainMenu, SettingsMenu, FindMenu
 from core.manager import TimetableManager
 from bot.utils import format_schedule_text, format_full_week_text
-from core.config import MOSCOW_TZ
+from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH
 
 # --- Getters ---
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
@@ -25,7 +27,11 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     group = ctx.dialog_data.get("group", "N/A")
 
     day_info = manager.get_schedule_for_day(group, target_date=current_date)
-    return { "schedule_text": format_schedule_text(day_info) }
+    
+    return {
+        "schedule_text": format_schedule_text(day_info),
+        "has_lessons": bool(day_info.get("lessons"))
+    }
 
 async def get_full_week_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
@@ -54,20 +60,22 @@ async def on_today_click(callback: CallbackQuery, button: Button, manager: Dialo
     manager.current_context().dialog_data["current_date_iso"] = today_in_moscow.isoformat()
     
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Запускает диалог смены группы со сбросом стека."""
     await manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
     
-# --- ИЗМЕНЕНИЕ: Новый обработчик для перехода в настройки ---
 async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """
-    Переключает на диалог настроек.
-    Мы не используем RESET_STACK, чтобы можно было вернуться назад.
-    """
     await manager.start(SettingsMenu.main)
+
+async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.start(FindMenu.choice)
 
 # --- Dialogs ---
 schedule_dialog = Dialog(
     Window(
+        StaticMedia(
+            path=NO_LESSONS_IMAGE_PATH,
+            type=ContentType.PHOTO,
+            when=lambda data, widget, manager: not data.get("has_lessons")
+        ),
         Format("{schedule_text}"),
         Row(
             Button(Const("⏪"), id="prev_week", on_click=lambda c, b, m: on_date_shift(c, b, m, -7)),
@@ -79,18 +87,20 @@ schedule_dialog = Dialog(
         Row(
             SwitchTo(Const("🗓️ Вся неделя"), id="full_week", state=Schedule.full_week_view),
             Button(Const("🔄 Сменить группу"), id="change_group", on_click=on_change_group_click),
-            # --- ИЗМЕНЕНИЕ: Заменяем SwitchTo на Button с нашим обработчиком ---
             Button(Const("⚙️ Настройки"), id="settings", on_click=on_settings_click),
         ),
+        Button(Const("🔍 Поиск"), id="find_btn", on_click=on_find_click),
         state=Schedule.view,
         getter=get_schedule_data,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        disable_web_page_preview=True
     ),
     Window(
         Format("{week_text}"),
         Back(Const("◀️ Назад")),
         state=Schedule.full_week_view,
         getter=get_full_week_data,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        disable_web_page_preview=True
     )
 )

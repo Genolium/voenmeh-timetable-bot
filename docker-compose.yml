@@ -1,0 +1,36 @@
+services:
+  # Сервис для нашего Telegram-бота
+  bot:
+    # Собираем образ из Dockerfile в текущей директории
+    build: .
+    # Имя контейнера для удобства
+    container_name: voenmeh_bot
+    # Указываем файл с переменными окружения
+    env_file:
+      - .env
+    # --- ИЗМЕНЕНИЕ: Монтируем всю папку `data` ---
+    volumes:
+      # Связываем папку ./data на хосте с папкой /app/data в контейнере
+      - ./data:/app/data
+    # Указываем, что наш бот зависит от сервиса redis.
+    # Docker Compose сначала запустит redis, а потом бота.
+    depends_on:
+      - redis
+    # Перезапускать контейнер, если он упал, кроме случаев штатной остановки
+    restart: unless-stopped
+
+  # Сервис для Redis
+  redis:
+    # Используем официальный образ Redis с тегом alpine (очень маленький)
+    image: redis:7-alpine
+    container_name: voenmeh_redis
+    # Тома для постоянного хранения данных Redis
+    volumes:
+      - redis_data:/data
+    # Перезапускать, если упал
+    restart: unless-stopped
+
+# Определяем именованный том для данных Redis.
+# Docker сам будет управлять этой папкой.
+volumes:
+  redis_data:

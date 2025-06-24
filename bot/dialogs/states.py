@@ -9,3 +9,10 @@ class Schedule(StatesGroup):
 
 class SettingsMenu(StatesGroup):
     main = State()
+    
+class FindMenu(StatesGroup):
+    choice = State() 
+    enter_teacher = State()
+    enter_classroom = State()
+    select_item = State()
+    view_result = State()

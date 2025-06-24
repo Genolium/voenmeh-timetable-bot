@@ -1,4 +1,3 @@
-# voenmeh_bot/bot/dialogs/settings_menu.py
 import logging
 from aiogram.types import CallbackQuery
 from aiogram_dialog import Dialog, Window, DialogManager
@@ -8,7 +7,6 @@ from aiogram_dialog.widgets.text import Const, Format
 from .states import SettingsMenu
 from core.user_data import UserDataManager
 
-# --- Утилиты для этого файла ---
 def get_status_text(status: bool) -> str:
     return "✅ Включена" if status else "❌ Отключена"
 
@@ -30,7 +28,6 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     morning_status = bool(settings.get("morning_summary"))
     reminders_status = bool(settings.get("lesson_reminders"))
 
-    # Этот словарь будет использоваться для отрисовки текста и кнопок
     return {
         "evening_status_text": get_status_text(evening_status),
         "morning_status_text": get_status_text(morning_status),

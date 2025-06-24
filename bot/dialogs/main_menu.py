@@ -2,10 +2,12 @@ from aiogram.types import Message
 from aiogram_dialog import Dialog, Window, DialogManager
 from aiogram_dialog.widgets.text import Const
 from aiogram_dialog.widgets.input import MessageInput
+from aiogram_dialog.widgets.media import StaticMedia
 
 from .states import MainMenu, Schedule
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
+from core.config import WELCOME_IMAGE_PATH
 
 async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager):
     group_name = message.text.upper()
@@ -24,6 +26,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
 
 dialog = Dialog(
     Window(
+        StaticMedia(path=WELCOME_IMAGE_PATH),
         Const("👋 Привет! Я бот расписания Военмеха.\n\n"
               "Чтобы начать, введите номер вашей группы:"),
         MessageInput(on_group_entered),

@@ -5,13 +5,14 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder 
 from aiogram.types import Message
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
 from dotenv import load_dotenv
+from redis.asyncio.client import Redis
 
 # Импорты ядра
-from core.config import DATABASE_FILENAME
+from core.config import DATABASE_FILENAME, CACHE_FILENAME 
 from core.parser import fetch_and_parse_all_schedules
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
@@ -22,17 +23,14 @@ from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.dialogs import main_menu
 from bot.dialogs.schedule_view import schedule_dialog
 from bot.dialogs.settings_menu import settings_dialog
+from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.states import MainMenu, Schedule
 from bot.scheduler import setup_scheduler
 
 # Настройка логирования для вывода информации в консоль
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --- Глобальная переменная для доступа в scheduler ---
-# Это простой способ передать менеджер в планировщик.
-# В более сложных проектах можно использовать DI-контейнеры.
 timetable_manager = None
-
 
 async def start_command_handler(message: Message, dialog_manager: DialogManager):
     """
@@ -53,17 +51,19 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
 
 async def main():
     """Основная асинхронная функция для запуска бота."""
-    # Загрузка переменных окружения из .env файла
     load_dotenv()
     bot_token = os.getenv("BOT_TOKEN")
+    redis_url = os.getenv("REDIS_URL")
+
     if not bot_token:
         logging.error("Токен бота не найден! Укажите его в .env файле.")
         return
-
-    # Делаем timetable_manager доступным в глобальной области видимости
+    if not redis_url:
+        logging.error("URL для Redis не найден! Укажите REDIS_URL в .env файле.")
+        return
+        
     global timetable_manager
 
-    # 1. Инициализация менеджера расписаний (из кэша или с сервера)
     timetable_manager = TimetableManager.load_from_cache()
     if not timetable_manager:
         all_schedules = fetch_and_parse_all_schedules()
@@ -74,45 +74,42 @@ async def main():
             logging.error("Не удалось инициализировать менеджер расписаний. Запуск отменен.")
             return
 
-    # 2. Инициализация менеджера данных пользователя и создание таблицы в БД
     user_data_manager = UserDataManager(db_path=DATABASE_FILENAME)
     await user_data_manager._init_db()
     logging.info("База данных пользователей инициализирована.")
 
-    # 3. Настройка бота и диспетчера
-    storage = MemoryStorage()
+    # --- ИЗМЕНЕНИЕ: Настраиваем RedisStorage с DefaultKeyBuilder ---
+    redis_client = Redis.from_url(redis_url)
+    storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+    
     default_properties = DefaultBotProperties(parse_mode="HTML")
     bot = Bot(token=bot_token, default=default_properties)
     dp = Dispatcher(storage=storage)
 
-    # 4. Настройка и запуск планировщика задач (scheduler)
     scheduler = setup_scheduler(
         bot=bot,
         manager=timetable_manager,
         user_data_manager=user_data_manager
     )
 
-    # 5. Регистрация middlewares, роутеров и диалогов
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
 
     dp.include_router(main_menu.dialog)
     dp.include_router(schedule_dialog)
     dp.include_router(settings_dialog)
+    dp.include_router(find_dialog)
     setup_dialogs(dp) 
 
     dp.message.register(start_command_handler, CommandStart())
 
-    # 6. Запуск бота и планировщика
     logging.info("Запуск бота и планировщика...")
     try:
         scheduler.start()
-        # Удаляем вебхук, если он был установлен ранее
         await bot.delete_webhook(drop_pending_updates=True)
-        # Начинаем polling
         await dp.start_polling(bot)
     finally:
-        # Корректно останавливаем планировщик и бота при выходе
         scheduler.shutdown()
         await dp.storage.close()
         await bot.session.close()

@@ -1,5 +1,3 @@
-# voenmeh_bot/bot/scheduler.py
-
 import logging
 from datetime import datetime, timedelta, time
 
@@ -30,14 +28,12 @@ async def evening_broadcast(bot: Bot, manager: TimetableManager, user_data_manag
         tomorrow = datetime.now(MOSCOW_TZ).date() + timedelta(days=1)
         schedule_info = manager.get_schedule_for_day(group_name, target_date=tomorrow)
         
-        # Отправляем только если на завтра есть занятия
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
             text = f"👋 <b>Твоё расписание на завтра:</b>\n\n{format_schedule_text(schedule_info)}"
             try:
                 await bot.send_message(user_id, text)
                 logging.info(f"Отправлено вечернее расписание для user_id={user_id}")
             except Exception as e:
-                # Логируем ошибку отправки, но не прерываем цикл
                 logging.error(f"Ошибка отправки вечернего расписания для user_id={user_id}: {e}")
     
     logging.info(f"Вечерняя рассылка завершена. Обработано пользователей: {len(users_to_notify)}")
@@ -60,7 +56,6 @@ async def morning_summary_broadcast(bot: Bot, manager: TimetableManager, user_da
         today = datetime.now(MOSCOW_TZ).date()
         schedule_info = manager.get_schedule_for_day(group_name, target_date=today)
         
-        # Отправляем только если на сегодня есть занятия
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
             text = f"☀️ <b>Доброе утро! Расписание на сегодня:</b>\n\n{format_schedule_text(schedule_info)}"
             try:
@@ -93,7 +88,6 @@ async def lesson_reminders_planner(
         if not schedule_info or 'error' in schedule_info or not schedule_info.get('lessons'):
             continue
         
-        # Сортируем пары по времени, чтобы правильно определять первую и следующие
         lessons = sorted(schedule_info['lessons'], key=lambda x: x['time'])
         
         for i, current_lesson in enumerate(lessons):
@@ -106,19 +100,14 @@ async def lesson_reminders_planner(
 
             reminder_time = None
             if i == 0:
-                # Для первой пары - за 20 минут до начала
                 reminder_time = lesson_start_time - timedelta(minutes=20)
             else:
-                # Для последующих - в момент окончания предыдущей
                 prev_lesson = lessons[i-1]
                 prev_hour, prev_minute = map(int, prev_lesson['time'].split(':'))
-                # Предполагаем, что пара длится 90 минут
                 end_of_prev_lesson = datetime.combine(today, time(prev_hour, prev_minute), tzinfo=MOSCOW_TZ) + timedelta(minutes=90)
                 reminder_time = end_of_prev_lesson
             
-            # Планируем задачу, только если время напоминания еще не прошло
             if reminder_time > datetime.now(MOSCOW_TZ):
-                # ID задачи должен быть уникальным для каждой пары каждого пользователя в каждый день
                 job_id = f"lesson_{user_id}_{today.isoformat()}_{current_lesson['time']}"
                 next_lesson = lessons[i+1] if i + 1 < len(lessons) else None
                 
@@ -127,7 +116,7 @@ async def lesson_reminders_planner(
                     trigger=DateTrigger(run_date=reminder_time),
                     args=(bot, user_id, current_lesson, next_lesson),
                     id=job_id,
-                    replace_existing=True # Заменяем, если задача с таким ID уже есть
+                    replace_existing=True
                 )
     
     logging.info(f"Планирование напоминаний о парах завершено. Обработано пользователей: {len(users_to_plan)}")
@@ -155,31 +144,8 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     """Настраивает и возвращает экземпляр планировщика с тремя основными задачами."""
     scheduler = AsyncIOScheduler(timezone=str(MOSCOW_TZ))
     
-    # Задача 1: Вечерняя рассылка в 20:00
-    scheduler.add_job(
-        evening_broadcast,
-        trigger='cron',
-        hour=20,
-        minute=0,
-        args=(bot, manager, user_data_manager)
-    )
-    
-    # Задача 2: Утренняя сводка в 8:00
-    scheduler.add_job(
-        morning_summary_broadcast,
-        trigger='cron',
-        hour=8,
-        minute=0,
-        args=(bot, manager, user_data_manager)
-    )
-    
-    # Задача 3: Утренний планировщик напоминаний о парах в 6:00
-    scheduler.add_job(
-        lesson_reminders_planner,
-        trigger='cron',
-        hour=6,
-        minute=0,
-        args=(bot, scheduler, manager, user_data_manager) # Передаем сам scheduler для добавления задач
-    )
+    scheduler.add_job(evening_broadcast, 'cron', hour=20, args=(bot, manager, user_data_manager))
+    scheduler.add_job(morning_summary_broadcast, 'cron', hour=8, args=(bot, manager, user_data_manager))
+    scheduler.add_job(lesson_reminders_planner, 'cron', hour=6, args=(bot, scheduler, manager, user_data_manager))
     
     return scheduler
