@@ -137,11 +137,6 @@ find_dialog = Dialog(
         disable_web_page_preview=True
     ),
     Window(
-        StaticMedia(
-            path=NO_LESSONS_IMAGE_PATH,
-            type=ContentType.PHOTO,
-            when=lambda data, widget, manager: not data.get("has_lessons")
-        ),
         Format("{result_text}"),
         Row(
             Button(Const("⏪"), id="find_prev_week", on_click=lambda c, b, m: on_find_date_shift(c, b, m, -7)),
