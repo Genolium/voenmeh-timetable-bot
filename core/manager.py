@@ -1,6 +1,6 @@
 import json
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta 
 from core.config import CACHE_FILENAME, CACHE_LIFETIME, DAY_MAP
 
 class TimetableManager:
@@ -16,6 +16,7 @@ class TimetableManager:
         self._schedules = {k: v for k, v in all_schedules_data.items() if not k.startswith('__')}
         self._teachers_index = all_schedules_data.get('__teachers_index__', {})
         self._classrooms_index = all_schedules_data.get('__classrooms_index__', {})
+        self._current_xml_hash = all_schedules_data.get('__current_xml_hash__', '')
         self.semester_start_date = None
         
         if 'period' in self.metadata:
@@ -50,12 +51,13 @@ class TimetableManager:
             return None
 
     def save_to_cache(self):
-        """Сохраняет полное расписание, включая индексы, в кэш."""
+        """Сохраняет полное расписание, включая индексы и хеш, в кэш."""
         print(f"Сохранение расписания в кэш: {CACHE_FILENAME}")
         data_to_save = {
             '__metadata__': self.metadata, 
             '__teachers_index__': self._teachers_index,
             '__classrooms_index__': self._classrooms_index,
+            '__current_xml_hash__': self._current_xml_hash,
             **self._schedules
         }
         with open(CACHE_FILENAME, 'w', encoding='utf-8') as f:
@@ -92,7 +94,7 @@ class TimetableManager:
             'date': target_date,
             'day_name': day_name or 'Воскресенье',
             'week_name': week_name,
-            'lessons': lessons
+            'lessons': sorted(lessons, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         }
         
     def find_teachers(self, query: str) -> list[str]:
@@ -132,7 +134,7 @@ class TimetableManager:
             'date': target_date,
             'day_name': day_name or 'Воскресенье',
             'week_name': week_name,
-            'lessons': sorted(lessons_for_day, key=lambda x: x['time'])
+            'lessons': sorted(lessons_for_day, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         }
 
     def find_classrooms(self, query: str) -> list[str]:
@@ -170,5 +172,9 @@ class TimetableManager:
             'date': target_date,
             'day_name': day_name or 'Воскресенье',
             'week_name': week_name,
-            'lessons': sorted(lessons_for_day, key=lambda x: x['time'])
+            'lessons': sorted(lessons_for_day, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         }
+    
+    def get_current_xml_hash(self) -> str:
+        """Возвращает хеш текущей версии XML расписания."""
+        return self._current_xml_hash
