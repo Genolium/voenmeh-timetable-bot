@@ -6,7 +6,7 @@
 
 ---
 
-## ![](https://github.com/Genolium/voenmeh-timetable-bot/tree/main/bot/media/work.gif)
+## ![](https://github.com/Genolium/voenmeh-timetable-bot/blob/main/bot/media/work.gif)
 
 ## ✨ Ключевые возможности
 
