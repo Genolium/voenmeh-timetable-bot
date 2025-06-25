@@ -1,17 +1,18 @@
 import json
-import os
-from datetime import date, datetime, timedelta 
-from core.config import CACHE_FILENAME, CACHE_LIFETIME, DAY_MAP
+from datetime import date, datetime, timedelta
+from redis.asyncio.client import Redis
+from core.config import DAY_MAP, REDIS_SCHEDULE_CACHE_KEY, CACHE_LIFETIME 
 
 class TimetableManager:
     """
-    Управляет полным расписанием, включая индексы для быстрого поиска,
-    и предоставляет методы для доступа к данным.
+    Управляет полным расписанием, включая индексы для быстрого поиска.
+    Работает ИСКЛЮЧИТЕЛЬНО с Redis для кэширования.
     """
-    def __init__(self, all_schedules_data: dict):
+    def __init__(self, all_schedules_data: dict, redis_client: Redis):
         if not all_schedules_data:
             raise ValueError("Данные расписания не могут быть пустыми.")
         
+        self.redis = redis_client
         self.metadata = all_schedules_data.get('__metadata__', {})
         self._schedules = {k: v for k, v in all_schedules_data.items() if not k.startswith('__')}
         self._teachers_index = all_schedules_data.get('__teachers_index__', {})
@@ -27,32 +28,34 @@ class TimetableManager:
                 print("Предупреждение: не удалось разобрать дату начала семестра.")
 
     @classmethod
-    def load_from_cache(cls):
-        """Загружает полное расписание из кэша, если он существует и не устарел."""
-        if not os.path.exists(CACHE_FILENAME):
-            return None
+    async def create(cls, redis_client: Redis):
+        """
+        Асинхронный конструктор. Единственный правильный способ создать экземпляр.
+        Загружает данные из кэша Redis или с сервера.
+        """
+        print("Инициализация TimetableManager...")
         
-        try:
-            file_mod_time = os.path.getmtime(CACHE_FILENAME)
-            cache_age = datetime.now() - datetime.fromtimestamp(file_mod_time)
-
-            if cache_age > CACHE_LIFETIME:
-                print(f"Кэш устарел (возраст: {str(cache_age).split('.')[0]}). Будет выполнен новый запрос.")
+        cached_data = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
+        
+        if cached_data:
+            print("Найден кэш расписания в Redis.")
+            data = json.loads(cached_data)
+            return cls(data, redis_client)
+        else:
+            print("Кэш в Redis не найден. Загрузка с сервера...")
+            from core.parser import fetch_and_parse_all_schedules
+            new_data = await fetch_and_parse_all_schedules()
+            if new_data:
+                temp_instance = cls(new_data, redis_client)
+                await temp_instance.save_to_cache()
+                print("Новое расписание загружено и сохранено в кэш Redis.")
+                return temp_instance
+            else:
                 return None
 
-            print(f"Загрузка расписания из свежего кэша (возраст: {str(cache_age).split('.')[0]})")
-            
-            with open(CACHE_FILENAME, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            print("Данные из кэша успешно загружены.")
-            return cls(data)
-        except Exception as e:
-            print(f"Ошибка чтения кэша или проверки его возраста: {e}. Будет выполнен новый запрос.")
-            return None
-
-    def save_to_cache(self):
-        """Сохраняет полное расписание, включая индексы и хеш, в кэш."""
-        print(f"Сохранение расписания в кэш: {CACHE_FILENAME}")
+    async def save_to_cache(self):
+        """Сохраняет текущее состояние менеджера в кэш Redis."""
+        print(f"Сохранение расписания в кэш Redis по ключу: {REDIS_SCHEDULE_CACHE_KEY}")
         data_to_save = {
             '__metadata__': self.metadata, 
             '__teachers_index__': self._teachers_index,
@@ -60,9 +63,12 @@ class TimetableManager:
             '__current_xml_hash__': self._current_xml_hash,
             **self._schedules
         }
-        with open(CACHE_FILENAME, 'w', encoding='utf-8') as f:
-            json.dump(data_to_save, f, ensure_ascii=False, indent=2)
-
+        await self.redis.set(
+            REDIS_SCHEDULE_CACHE_KEY, 
+            json.dumps(data_to_save, ensure_ascii=False), 
+            ex=CACHE_LIFETIME
+        )
+    
     def get_week_type(self, target_date: date) -> tuple[str, str] | None:
         """Определяет тип недели ('odd'/'even') для указанной даты."""
         if not self.semester_start_date:

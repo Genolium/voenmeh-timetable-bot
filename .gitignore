@@ -1,6 +1,9 @@
 # #################### #
 #  Кэш и Базы данных   #
 # #################### #
+/data/
+/users.db-journal
+/schedule_hash.txt
 
 # Файл кэша с расписанием
 full_schedule_cache.json

@@ -1,45 +1,43 @@
-import requests
+import aiohttp
 import xml.etree.ElementTree as ET
 import hashlib
-from datetime import datetime, timedelta 
-from core.config import API_URL, USER_AGENT 
+from datetime import datetime, timedelta
+from core.config import API_URL, USER_AGENT
 
-def fetch_and_parse_all_schedules() -> dict | None:
-    print("Загрузка полного расписания с сервера...")
+async def fetch_and_parse_all_schedules() -> dict | None:
+    """
+    Асинхронно загружает и парсит XML, возвращая словарь с расписанием,
+    индексами и хешем XML-контента.
+    """
+    print("Асинхронная загрузка полного расписания с сервера...")
     try:
-        response = requests.get(API_URL, headers={'User-Agent': USER_AGENT}, timeout=15)
-        response.raise_for_status()
-        xml_bytes = response.content
-        xml_data = xml_bytes.decode('utf-16').strip()
+        async with aiohttp.ClientSession(headers={'User-Agent': USER_AGENT}) as session:
+            async with session.get(API_URL, timeout=15) as response:
+                response.raise_for_status()
+                xml_bytes = await response.read()
         
+        xml_data = xml_bytes.decode('utf-16').strip()
         current_hash = hashlib.md5(xml_bytes).hexdigest()
-
         root = ET.fromstring(xml_data)
         
         all_schedules = {}
         teachers_index = {}
         classrooms_index = {}
         
-        period_element = root.find('Period')
-        period_meta = period_element.attrib if period_element is not None else {}
-        weeks_element = root.find('Weeks')
-        weeks_meta = weeks_element.attrib if weeks_element is not None else {}
+        period_meta = root.find('Period').attrib if root.find('Period') is not None else {}
+        weeks_meta = root.find('Weeks').attrib if root.find('Weeks') is not None else {}
         all_schedules['__metadata__'] = {'period': period_meta, 'weeks': weeks_meta}
 
         for group_element in root.findall('Group'):
             group_number = group_element.get('Number')
-            if not group_number:
-                continue
+            if not group_number: continue
             
             group_schedule = {'odd': {}, 'even': {}}
-            
             for day_element in group_element.findall('Days/Day'):
                 day_title = day_element.get('Title')
-                if not day_title:
-                    continue
+                if not day_title: continue
                 
                 lessons_odd, lessons_even = [], []
-                
                 for lesson_element in day_element.findall('GroupLessons/Lesson'):
                     time_tag = lesson_element.find('Time')
                     discipline_tag = lesson_element.find('Discipline')
@@ -53,35 +51,29 @@ def fetch_and_parse_all_schedules() -> dict | None:
                     lecturers = [l.text.strip() for l in lesson_element.findall('Lecturers/Lecturer/ShortName') if l.text and l.text.strip()]
                     classroom = classroom_tag.text.strip(';* ') if classroom_tag is not None and classroom_tag.text and classroom_tag.text.strip() else None
 
-                    lesson_start_time_str = time_raw.split()[0] # "10:50 Нечетная" -> "10:50"
-                    
+                    start_time_str = time_raw.split()[0]
                     try:
-                        # Парсим время начала, добавляем 90 минут
-                        start_dt_obj = datetime.strptime(lesson_start_time_str, '%H:%M')
+                        start_dt_obj = datetime.strptime(start_time_str, '%H:%M')
                         end_dt_obj = start_dt_obj + timedelta(minutes=90)
-                        lesson_end_time_str = end_dt_obj.strftime('%H:%M')
+                        end_time_str = end_dt_obj.strftime('%H:%M')
                     except ValueError:
-                        lesson_end_time_str = "N/A" # В случае ошибки парсинга времени
+                        end_time_str = "N/A"
 
                     lesson_info = {
-                        "time": f"{lesson_start_time_str}-{lesson_end_time_str}", # Форматируем время в "начало-конец"
+                        "time": f"{start_time_str}-{end_time_str}",
                         "subject": disc_parts[1] if len(disc_parts) > 1 else discipline_raw,
                         "type": disc_parts[0],
                         "teachers": ", ".join(lecturers),
                         "room": classroom or 'кабинет не указан',
                         "group": group_number.upper(),
-                        "start_time_raw": lesson_start_time_str, # Для сортировки и планировщика
-                        "end_time_raw": lesson_end_time_str,     # Для планировщика
+                        "start_time_raw": start_time_str,
+                        "end_time_raw": end_time_str,
                     }
                     
                     week_code = week_code_tag.text if week_code_tag is not None else '0'
-                    if week_code == '1': 
-                        lessons_odd.append(lesson_info)
-                    elif week_code == '2': 
-                        lessons_even.append(lesson_info)
-                    else: 
-                        lessons_odd.append(lesson_info)
-                        lessons_even.append(lesson_info)
+                    if week_code == '1': lessons_odd.append(lesson_info)
+                    elif week_code == '2': lessons_even.append(lesson_info)
+                    else: lessons_odd.append(lesson_info); lessons_even.append(lesson_info)
 
                     lesson_for_index = lesson_info.copy()
                     lesson_for_index['day'] = day_title
@@ -89,7 +81,7 @@ def fetch_and_parse_all_schedules() -> dict | None:
                     lesson_for_index['groups'] = [lesson_info["group"]]
                     
                     lesson_key_components = [
-                        day_title, week_code, lesson_info['time'], # Используем уже форматированный интервал
+                        day_title, week_code, lesson_info['time'],
                         lesson_info['subject'], lesson_info['type'],
                         lesson_info['room'], "|".join(sorted(lecturers))
                     ]
