@@ -4,7 +4,7 @@ import os
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
 from aiogram.types import Message
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
@@ -23,15 +23,15 @@ from bot.dialogs.main_menu import dialog as main_menu_dialog
 from bot.dialogs.schedule_view import schedule_dialog
 from bot.dialogs.settings_menu import settings_dialog
 from bot.dialogs.find_menu import find_dialog
-from bot.dialogs.states import MainMenu, Schedule
+from bot.dialogs.about_menu import about_dialog
+from bot.dialogs.states import MainMenu, Schedule, About
 from bot.scheduler import setup_scheduler
-
-# Импортируем наш обработчик для inline-запросов
 from bot.handlers.inline_handlers import inline_query_handler
 
 # Настройка логирования для вывода информации в консоль
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# --- Обработчики команд ---
 
 async def start_command_handler(message: Message, dialog_manager: DialogManager):
     """
@@ -48,6 +48,11 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
     else:
         await dialog_manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
 
+async def about_command_handler(message: Message, dialog_manager: DialogManager):
+    """Запускает диалог-инструкцию о боте."""
+    await dialog_manager.start(About.page_1, mode=StartMode.RESET_STACK)
+
+# --- Основная функция запуска ---
 
 async def main():
     """Основная асинхронная функция для запуска бота."""
@@ -70,10 +75,7 @@ async def main():
         return
     
     user_data_manager = UserDataManager(db_path=DATABASE_FILENAME)
-    
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
     await user_data_manager._init_db()
-    
     logging.info("Менеджеры данных инициализированы.")
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))
@@ -88,16 +90,21 @@ async def main():
         redis_client=redis_client
     )
 
+    # Подключаем Middleware
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
 
+    # Включаем роутеры для всех диалогов
     dp.include_router(main_menu_dialog)
     dp.include_router(schedule_dialog)
     dp.include_router(settings_dialog)
     dp.include_router(find_dialog)
+    dp.include_router(about_dialog)
     setup_dialogs(dp) 
 
+    # Регистрируем хэндлеры для команд и inline-режима
     dp.message.register(start_command_handler, CommandStart())
+    dp.message.register(about_command_handler, Command("about"))
     dp.inline_query.register(inline_query_handler)
 
     logging.info("Запуск бота и планировщика...")

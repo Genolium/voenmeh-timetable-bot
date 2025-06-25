@@ -12,7 +12,7 @@ from bot.utils import format_schedule_text, format_full_week_text
 from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH
 
 def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]:
-    """Генерирует контекстный заголовок и прогресс-бар с улучшенным UX."""
+    """Генерирует контекстный заголовок и прогресс-бар с улучшенным UX и защитой от ошибок данных."""
     is_today = target_date == datetime.now(MOSCOW_TZ).date()
 
     if is_today and not lessons:
@@ -21,46 +21,65 @@ def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]
     if not is_today or not lessons:
         return "", ""
 
-    sorted_lessons = sorted(lessons, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
-    now_time = datetime.now(MOSCOW_TZ).time()
-    
-    passed_lessons_count = sum(1 for lesson in sorted_lessons if now_time > datetime.strptime(lesson['end_time_raw'], '%H:%M').time())
-    total_lessons = len(sorted_lessons)
-    progress_bar_emojis = '🟩' * passed_lessons_count + '⬜️' * (total_lessons - passed_lessons_count)
-    progress_bar = f"<i>Прогресс дня: {passed_lessons_count}/{total_lessons}</i> {progress_bar_emojis}\n"
-
-    first_lesson_start = datetime.strptime(sorted_lessons[0]['start_time_raw'], '%H:%M').time()
-    last_lesson_end = datetime.strptime(sorted_lessons[-1]['end_time_raw'], '%H:%M').time()
-
-    if now_time < first_lesson_start:
-        header = f"☀️ <b>Доброе утро!</b> Первая пара в {sorted_lessons[0]['time'].split('–')[0].strip()}."
-        return header, progress_bar
-
-    if now_time > last_lesson_end:
-        header = "✅ <b>Пары на сегодня закончились.</b> Отдыхайте!"
-        return header, progress_bar
-
-    for i, lesson in enumerate(sorted_lessons):
-        start_time = datetime.strptime(lesson['start_time_raw'], '%H:%M').time()
-        end_time = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
-
-        if start_time <= now_time <= end_time:
-            header = f"⏳ <b>Идет пара:</b> {lesson['subject']}.\n Закончится в {lesson['time'].split('–')[1].strip()}."
-            return header, progress_bar
+    try:
+        sorted_lessons = sorted(lessons, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
+        now_time = datetime.now(MOSCOW_TZ).time()
         
-        if i + 1 < len(sorted_lessons):
-            next_lesson = sorted_lessons[i+1]
-            # Получаем только время НАЧАЛА следующей пары
-            next_start_time_str = next_lesson['time'].split('-')[0].strip()
-            next_start_time_obj = datetime.strptime(next_lesson['start_time_raw'], '%H:%M').time()
+        passed_lessons_count = sum(1 for lesson in sorted_lessons if now_time > datetime.strptime(lesson['end_time_raw'], '%H:%M').time())
+        total_lessons = len(sorted_lessons)
+        progress_bar_emojis = '🟩' * passed_lessons_count + '⬜️' * (total_lessons - passed_lessons_count)
+        progress_bar = f"<i>Прогресс дня: {passed_lessons_count}/{total_lessons}</i> {progress_bar_emojis}\n"
+
+        first_lesson_start = datetime.strptime(sorted_lessons[0]['start_time_raw'], '%H:%M').time()
+        last_lesson_end = datetime.strptime(sorted_lessons[-1]['end_time_raw'], '%H:%M').time()
+        
+        # --- Блок безопасного извлечения времени ---
+        def get_safe_times(time_str: str) -> tuple[str, str]:
+            """Безопасно разделяет строку времени, возвращая начало и конец."""
+            # Заменяем и тире, и дефис на один разделитель, чтобы унифицировать
+            time_str_unified = time_str.replace('–', '-').replace('—', '-')
+            parts = [p.strip() for p in time_str_unified.split('-')]
+            if len(parts) >= 2:
+                return parts[0], parts[1]
+            elif len(parts) == 1:
+                return parts[0], "" # Возвращаем пустую строку, если конца нет
+            return "", ""
+        # --- Конец блока ---
+
+        start_time_str, _ = get_safe_times(sorted_lessons[0]['time'])
+        if now_time < first_lesson_start:
+            header = f"☀️ <b>Доброе утро!</b> Первая пара в {start_time_str}."
+            return header, progress_bar
+
+        if now_time > last_lesson_end:
+            header = "✅ <b>Пары на сегодня закончились.</b> Отдыхайте!"
+            return header, progress_bar
+
+        for i, lesson in enumerate(sorted_lessons):
+            start_time = datetime.strptime(lesson['start_time_raw'], '%H:%M').time()
+            end_time = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
             
-            if end_time < now_time < next_start_time_obj:
-                # Используем отформатированную строку времени начала
-                header = f"☕️ <b>Перерыв до {next_start_time_str}.</b>\n Следующая пара: {next_lesson['subject']}."
+            _, lesson_end_time_str = get_safe_times(lesson['time'])
+
+            if start_time <= now_time <= end_time:
+                end_text = f"Закончится в {lesson_end_time_str}." if lesson_end_time_str else ""
+                header = f"⏳ <b>Идет пара:</b> {lesson['subject']}.\n{end_text}"
                 return header, progress_bar
+            
+            if i + 1 < len(sorted_lessons):
+                next_lesson = sorted_lessons[i+1]
+                next_start_time_obj = datetime.strptime(next_lesson['start_time_raw'], '%H:%M').time()
+                next_start_time_str, _ = get_safe_times(next_lesson['time'])
 
-    return "", progress_bar 
+                if end_time < now_time < next_start_time_obj:
+                    header = f"☕️ <b>Перерыв до {next_start_time_str}.</b>\nСледующая пара: {next_lesson['subject']}."
+                    return header, progress_bar
 
+        return "", progress_bar 
+    except (ValueError, IndexError, KeyError) as e:
+        # Ловим любые ошибки, связанные с отсутствием ключей или неверным форматом данных
+        logging.error(f"Ошибка при генерации динамического заголовка: {e}. Данные урока: {lessons}")
+        return "", "" # Возвращаем пустой заголовок в случае ошибки
 
 # --- Getters ---
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
