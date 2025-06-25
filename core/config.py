@@ -35,3 +35,6 @@ OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 OPENWEATHERMAP_CITY_ID = "498817" # Saint Petersburg, Russia
 # Единицы измерения: metric (Цельсий), imperial (Фаренгейт), standard (Кельвин)
 OPENWEATHERMAP_UNITS = "metric"
+
+ADMIN_ID = os.getenv("ADMIN_ID")
+FEEDBACK_CHAT_ID = os.getenv("FEEDBACK_CHAT_ID")

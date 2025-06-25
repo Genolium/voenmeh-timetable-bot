@@ -24,3 +24,11 @@ class About(StatesGroup):
     page_3 = State() # Поиск
     page_4 = State() # Уведомления
     page_5 = State() # Inline режим
+    
+class Feedback(StatesGroup):
+    enter_feedback = State()
+
+class Admin(StatesGroup):
+    menu = State()
+    stats = State()
+    broadcast = State()

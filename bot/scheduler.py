@@ -8,30 +8,74 @@ from apscheduler.triggers.date import DateTrigger
 
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
-from core.config import MOSCOW_TZ, CHECK_INTERVAL_MINUTES, DATABASE_FILENAME, REDIS_SCHEDULE_HASH_KEY, OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS
+from core.config import (
+    MOSCOW_TZ, CHECK_INTERVAL_MINUTES, DATABASE_FILENAME,
+    REDIS_SCHEDULE_HASH_KEY, OPENWEATHERMAP_API_KEY,
+    OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS
+)
 from bot.utils import format_schedule_text
 from core.parser import fetch_and_parse_all_schedules
 from core.weather_api import WeatherAPI
 
 global_timetable_manager_instance = None
 
+def generate_creative_weather_intro(weather_forecast: dict | None) -> str:
+    """
+    Генерирует креативную подводку к расписанию, включая краткую сводку погоды.
+    """
+    if not weather_forecast:
+        return "🤷‍♀️ Не удалось получить прогноз погоды. Но расписание всегда под рукой!\n\n"
+
+    temp = int(weather_forecast['temperature'])
+    main_weather = weather_forecast.get('main_weather', '').lower()
+    description = weather_forecast.get('description', '')
+    emoji = weather_forecast.get('emoji', '')
+    wind_speed = weather_forecast.get('wind_speed', 0)
+
+    # --- Основная креативная фраза ---
+    if 'rain' in main_weather or 'drizzle' in main_weather:
+        base_phrase = f"☔️ Кажется, понадобятся зонты! Синоптики обещают дожди."
+    elif 'thunderstorm' in main_weather:
+        base_phrase = f"⛈️ Ого, возможна гроза! Лучше переждать непогоду в аудитории."
+    elif 'snow' in main_weather:
+        base_phrase = f"❄️ Зима на пороге! Готовьтесь к снегу и одевайтесь потеплее."
+    elif 'clear' in main_weather:
+        base_phrase = f"☀️ Отличные новости! Нас ждет ясный и солнечный день."
+    elif 'clouds' in main_weather:
+        base_phrase = f"☁️ На небе будут облака, но это не помешает нашим планам."
+    else: # Для тумана, дымки и т.д.
+        base_phrase = f"{emoji} Погода сегодня будет загадочной."
+
+    # --- Совет по одежде ---
+    advice = ""
+    if temp <= 0:
+        advice = "На улице мороз, не забудьте шапку и перчатки! 🧣"
+    elif 0 < temp <= 10:
+        advice = "Довольно прохладно, куртка — ваш лучший друг. 🧥"
+    elif 10 < temp <= 18:
+        advice = "Отличная погода для легкой куртки или толстовки."
+    elif temp > 18:
+        advice = "Наконец-то тепло! Можно одеться полегче. 😎"
+
+    # --- Краткая, но информативная сводка ---
+    summary = (
+        f"<b>Прогноз на утро:</b> {emoji} {temp}°C, {description}.\n"
+        f"Ветер: {wind_speed} м/с."
+    )
+
+    # --- Собираем все вместе ---
+    return f"{base_phrase}\n{advice}\n\n{summary}\n\n"
+
+
 async def evening_broadcast(bot: Bot, user_data_manager: UserDataManager):
-    """(Запускается в 20:00) Рассылает расписание на завтра."""
+    """(Запускается в 20:00) Рассылает расписание на завтра с креативной подводкой."""
     logging.info("Запуск вечерней рассылки...")
     
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     tomorrow_9am = datetime.combine(datetime.now(MOSCOW_TZ).date() + timedelta(days=1), time(9, 0), tzinfo=MOSCOW_TZ)
     weather_forecast = await weather_api.get_forecast_for_time(tomorrow_9am)
     
-    weather_intro_text = ""
-    if weather_forecast:
-        weather_intro_text = (
-            f"☀️ Прогноз на завтра, к {weather_forecast['forecast_time']}: "
-            f"{weather_forecast['emoji']} {weather_forecast['temperature']}°C, {weather_forecast['description']}.\n"
-            f"Влажность: {weather_forecast['humidity']}%, Ветер: {weather_forecast['wind_speed']} м/с.\n\n"
-        )
-    else:
-        weather_intro_text = "🤷‍♀️ Не удалось получить прогноз погоды на завтра.\n\n"
+    weather_intro_text = generate_creative_weather_intro(weather_forecast)
 
     try:
         users_to_notify = await user_data_manager.get_users_for_evening_notify()
@@ -44,7 +88,7 @@ async def evening_broadcast(bot: Bot, user_data_manager: UserDataManager):
         schedule_info = global_timetable_manager_instance.get_schedule_for_day(group_name, target_date=tomorrow)
         
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
-            text = f"👋 <b>Твоё расписание на завтра:</b>\n\n{weather_intro_text}{format_schedule_text(schedule_info)}"
+            text = f"👋 <b>Добрый вечер!</b>\n\n{weather_intro_text}Ваше расписание на завтра:\n\n{format_schedule_text(schedule_info)}"
             try:
                 await bot.send_message(user_id, text, disable_web_page_preview=True)
             except Exception as e:
@@ -54,22 +98,14 @@ async def evening_broadcast(bot: Bot, user_data_manager: UserDataManager):
 
 
 async def morning_summary_broadcast(bot: Bot, user_data_manager: UserDataManager):
-    """(Запускается в 8:00) Рассылает расписание на сегодня."""
+    """(Запускается в 8:00) Рассылает расписание на сегодня с креативной подводкой."""
     logging.info("Запуск утренней рассылки-сводки...")
     
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     today_9am = datetime.combine(datetime.now(MOSCOW_TZ).date(), time(9, 0), tzinfo=MOSCOW_TZ)
     weather_forecast = await weather_api.get_forecast_for_time(today_9am)
     
-    weather_intro_text = ""
-    if weather_forecast:
-        weather_intro_text = (
-            f"☀️ Прогноз на сегодня, к {weather_forecast['forecast_time']}: "
-            f"{weather_forecast['emoji']} {weather_forecast['temperature']}°C, {weather_forecast['description']}.\n"
-            f"Влажность: {weather_forecast['humidity']}%, Ветер: {weather_forecast['wind_speed']} м/с.\n\n"
-        )
-    else:
-        weather_intro_text = "🤷‍♀️ Не удалось получить прогноз погоды на сегодня.\n\n"
+    weather_intro_text = generate_creative_weather_intro(weather_forecast)
 
     try:
         users_to_notify = await user_data_manager.get_users_for_morning_summary()
@@ -113,7 +149,6 @@ async def lesson_reminders_planner(
         for i, current_lesson in enumerate(lessons):
             try:
                 current_start_time_str = current_lesson['start_time_raw']
-                # current_end_time_str = current_lesson['end_time_raw'] # Не используется напрямую
                 
                 lesson_start_datetime = datetime.combine(today, datetime.strptime(current_start_time_str, '%H:%M').time(), tzinfo=MOSCOW_TZ)
                 
@@ -151,7 +186,6 @@ async def send_lesson_reminder(bot: Bot, user_id: int, lesson: dict, next_lesson
         text = f"🔔 <b>Скоро пара: {lesson['time']}</b>\n\n"
         text += f"<b>{lesson['subject']}</b> ({lesson['type']})\n"
         
-        # Улучшенное форматирование с проверкой данных
         info_parts = []
         if lesson.get('room') and lesson['room'].strip() != 'N/A':
             info_parts.append(f"📍{lesson['room']}")
@@ -169,7 +203,7 @@ async def send_lesson_reminder(bot: Bot, user_id: int, lesson: dict, next_lesson
         await bot.send_message(user_id, text, disable_web_page_preview=True)
     except Exception as e:
         logging.error(f"Ошибка при отправке напоминания о паре для user_id={user_id}: {e}")
-        
+
 
 async def monitor_schedule_changes(bot: Bot, user_data_manager: UserDataManager, redis_client: Redis):
     """
