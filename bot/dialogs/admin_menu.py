@@ -1,12 +1,31 @@
-from aiogram.types import Message, ContentType
+from aiogram.types import Message, ContentType, CallbackQuery
 from aiogram import Bot
 from aiogram_dialog import Dialog, Window, DialogManager
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.text import Const, Format
 from aiogram_dialog.widgets.kbd import Button, SwitchTo, Back
 
+from bot.scheduler import morning_summary_broadcast, evening_broadcast
+
 from .states import Admin
 from core.user_data import UserDataManager
+
+async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot = manager.middleware_data.get("bot")
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    await callback.answer("🚀 Запускаю утреннюю рассылку...")
+    # Запускаем задачу вручную
+    await morning_summary_broadcast(bot, user_data_manager)
+    await callback.message.answer("✅ Утренняя рассылка завершена.")
+
+async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot = manager.middleware_data.get("bot")
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    await callback.answer("🚀 Запускаю вечернюю рассылку...")
+    # Запускаем задачу вручную
+    await evening_broadcast(bot, user_data_manager)
+    await callback.message.answer("✅ Вечерняя рассылка завершена.")
+
 
 # --- Геттер для окна статистики ---
 async def get_stats_data(user_data_manager: UserDataManager, **kwargs):
@@ -60,11 +79,12 @@ async def on_broadcast_received(message: Message, message_input: MessageInput, m
 
 # --- Диалог админки ---
 admin_dialog = Dialog(
-    # --- Окно 1: Главное меню админки ---
     Window(
         Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
         SwitchTo(Const("📊 Статистика"), id="stats", state=Admin.stats),
         SwitchTo(Const("📣 Сделать рассылку"), id="broadcast", state=Admin.broadcast),
+        Button(Const("⚙️ Тест утренней рассылки"), id="test_morning", on_click=on_test_morning),
+        Button(Const("⚙️ Тест вечерней рассылки"), id="test_evening", on_click=on_test_evening),
         state=Admin.menu
     ),
     # --- Окно 2: Статистика ---
