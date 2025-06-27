@@ -91,7 +91,7 @@ async def main():
         return
     
     user_data_manager = UserDataManager(db_path=DATABASE_FILENAME)
-    await user_data_manager._init_db()
+    await user_data_manager.init_db()
     logging.info("Менеджеры данных инициализированы.")
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))

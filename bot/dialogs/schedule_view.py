@@ -5,6 +5,7 @@ from aiogram_dialog.widgets.text import Format, Const
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo, Back
 from aiogram_dialog.widgets.media import StaticMedia
 from aiogram.enums import ContentType
+import logging
 
 from .states import Schedule, MainMenu, SettingsMenu, FindMenu
 from core.manager import TimetableManager
@@ -25,6 +26,8 @@ def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]
         sorted_lessons = sorted(lessons, key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         now_time = datetime.now(MOSCOW_TZ).time()
         
+        MORNING_START_TIME = time(5, 0) # Утро начинается в 5:00
+        
         passed_lessons_count = sum(1 for lesson in sorted_lessons if now_time > datetime.strptime(lesson['end_time_raw'], '%H:%M').time())
         total_lessons = len(sorted_lessons)
         progress_bar_emojis = '🟩' * passed_lessons_count + '⬜️' * (total_lessons - passed_lessons_count)
@@ -33,32 +36,31 @@ def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]
         first_lesson_start = datetime.strptime(sorted_lessons[0]['start_time_raw'], '%H:%M').time()
         last_lesson_end = datetime.strptime(sorted_lessons[-1]['end_time_raw'], '%H:%M').time()
         
-        # --- Блок безопасного извлечения времени ---
         def get_safe_times(time_str: str) -> tuple[str, str]:
-            """Безопасно разделяет строку времени, возвращая начало и конец."""
-            # Заменяем и тире, и дефис на один разделитель, чтобы унифицировать
             time_str_unified = time_str.replace('–', '-').replace('—', '-')
             parts = [p.strip() for p in time_str_unified.split('-')]
-            if len(parts) >= 2:
-                return parts[0], parts[1]
-            elif len(parts) == 1:
-                return parts[0], "" # Возвращаем пустую строку, если конца нет
-            return "", ""
-        # --- Конец блока ---
+            return (parts[0], parts[1]) if len(parts) >= 2 else (parts[0] if parts else "", "")
 
+        # 1. Если сейчас ночь (до 5 утра)
+        if now_time < MORNING_START_TIME:
+            header = "🌙 <b>Поздняя ночь.</b> Скоро утро!"
+            return header, progress_bar
+            
+        # 2. Если сейчас утро (после 5 утра), но до начала пар
         start_time_str, _ = get_safe_times(sorted_lessons[0]['time'])
         if now_time < first_lesson_start:
             header = f"☀️ <b>Доброе утро!</b> Первая пара в {start_time_str}."
             return header, progress_bar
 
+        # 3. Если пары на сегодня уже закончились
         if now_time > last_lesson_end:
             header = "✅ <b>Пары на сегодня закончились.</b> Отдыхайте!"
             return header, progress_bar
 
+        # 4. Проверка на текущую пару или перерыв 
         for i, lesson in enumerate(sorted_lessons):
             start_time = datetime.strptime(lesson['start_time_raw'], '%H:%M').time()
             end_time = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
-            
             _, lesson_end_time_str = get_safe_times(lesson['time'])
 
             if start_time <= now_time <= end_time:
@@ -70,18 +72,16 @@ def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]
                 next_lesson = sorted_lessons[i+1]
                 next_start_time_obj = datetime.strptime(next_lesson['start_time_raw'], '%H:%M').time()
                 next_start_time_str, _ = get_safe_times(next_lesson['time'])
-
                 if end_time < now_time < next_start_time_obj:
                     header = f"☕️ <b>Перерыв до {next_start_time_str}.</b>\nСледующая пара: {next_lesson['subject']}."
                     return header, progress_bar
 
         return "", progress_bar 
     except (ValueError, IndexError, KeyError) as e:
-        # Ловим любые ошибки, связанные с отсутствием ключей или неверным форматом данных
         logging.error(f"Ошибка при генерации динамического заголовка: {e}. Данные урока: {lessons}")
-        return "", "" # Возвращаем пустой заголовок в случае ошибки
+        return "", ""
 
-# --- Getters ---
+# --- Остальной код файла без изменений ---
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     ctx = dialog_manager.current_context()
@@ -122,7 +122,6 @@ async def get_full_week_data(dialog_manager: DialogManager, **kwargs):
     
     return { "week_text": format_full_week_text(week_schedule, f"{week_name} неделя") }
 
-# --- Click Handlers ---
 async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int):
     ctx = manager.current_context()
     current_date = date.fromisoformat(ctx.dialog_data.get("current_date_iso"))
@@ -142,7 +141,6 @@ async def on_settings_click(callback: CallbackQuery, button: Button, manager: Di
 async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.start(FindMenu.choice)
 
-# --- Dialogs ---
 schedule_dialog = Dialog(
     Window(
         StaticMedia(

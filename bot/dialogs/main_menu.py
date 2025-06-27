@@ -22,6 +22,14 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
         return
 
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+
+    # 1. Сначала регистрируем пользователя. Это создаст запись в БД, если ее нет.
+    await user_data_manager.register_user(
+        user_id=message.from_user.id,
+        username=message.from_user.username
+    )
+    
+    # 2. Теперь, когда пользователь гарантированно есть в БД, устанавливаем его группу.
     await user_data_manager.set_user_group(user_id=message.from_user.id, group=group_name)
     
     manager.dialog_data["group"] = group_name
@@ -32,7 +40,6 @@ async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, mana
     group_name = manager.dialog_data.get("group")
     await manager.start(Schedule.view, data={"group": group_name}, mode=StartMode.RESET_STACK)
 
-# --- НОВЫЙ ОБРАБОТЧИК для кнопки "Показать инструкцию" ---
 async def on_show_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Запускает диалог с инструкцией."""
     await manager.start(About.page_1, mode=StartMode.RESET_STACK)
@@ -56,7 +63,6 @@ dialog = Dialog(
             "Хотите посмотреть короткую инструкцию?"
         ),
         Row(
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Заменяем SwitchTo на Button ---
             Button(
                 Const("📖 Показать инструкцию"), 
                 id="show_tutorial", 

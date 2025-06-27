@@ -14,7 +14,7 @@ DAY_MAP = ['Понедельник', 'Вторник', 'Среда', 'Четве
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # --- Настройки базы данных и Redis ---
-DATABASE_FILENAME = Path('/app/data/users.db')
+DATABASE_FILENAME = Path('data/users.db')
 # Интервал проверки изменений в расписании на сайте (в минутах)
 CHECK_INTERVAL_MINUTES = 30
 # Имена ключей в Redis
