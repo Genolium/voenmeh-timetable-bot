@@ -34,7 +34,11 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     )
     await bot.send_message(FEEDBACK_CHAT_ID, user_info)
     
-    await message.answer("✅ <b>Спасибо! Ваш отзыв отправлен.</b>\nМы ценим вашу помощь в улучшении бота!")
+    await message.answer(
+        "✅ <b>Спасибо! Ваш отзыв отправлен.</b>\n"
+        "Мы ценим вашу помощь в улучшении бота!\n\n"
+        "<i>Вы можете вернуться в главное меню командой /start.</i>"
+    )
     await manager.done()
 
 

@@ -36,5 +36,16 @@ OPENWEATHERMAP_CITY_ID = "498817" # Saint Petersburg, Russia
 # Единицы измерения: metric (Цельсий), imperial (Фаренгейт), standard (Кельвин)
 OPENWEATHERMAP_UNITS = "metric"
 
-ADMIN_ID = os.getenv("ADMIN_ID")
+
+
+admin_ids_str = os.getenv("ADMIN_ID")
+ADMIN_IDS = []
+if admin_ids_str:
+    try:
+        ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(',') if admin_id.strip()]
+    except ValueError:
+        print("ОШИБКА: Неверный формат ADMIN_IDS. ID должны быть числами, разделенными запятой.")
+        
+        
+        
 FEEDBACK_CHAT_ID = os.getenv("FEEDBACK_CHAT_ID")

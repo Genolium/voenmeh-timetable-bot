@@ -37,7 +37,6 @@ class WeatherAPI:
             if datetime.now(timezone.utc) - cache_timestamp < timedelta(hours=self.CACHE_DURATION_HOURS):
                 logging.info(f"Использую кэшированный прогноз для {cache_key}.")
                 return cached_entry['data']
-        # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
 
         params = {
             "id": self.city_id,
