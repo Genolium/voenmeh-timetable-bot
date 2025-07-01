@@ -1,160 +1,156 @@
-from core.config import MAP_URL 
+from datetime import datetime
 
 def format_schedule_text(day_info: dict) -> str:
-    """Форматирует расписание на день для группы (с новым дизайном)."""
+    """Форматирует расписание на день для группы."""
     if not day_info or 'error' in day_info:
         return f"❌ <b>Ошибка:</b> {day_info.get('error', 'Неизвестная ошибка')}"
 
-    date_str = day_info['date'].strftime('%d.%m.%Y')
-    day_name = day_info['day_name']
-    week_name = day_info['week_name']
-    lessons = day_info['lessons']
+    date_obj = day_info.get('date')
+    if not date_obj:
+        return "❌ <b>Ошибка:</b> Дата не найдена в данных расписания."
 
-    header = f"🗓 <b>{date_str}</b> · {day_name} <i>({week_name} неделя)</i>"
+    date_str = date_obj.strftime('%d.%m.%Y')
+    day_name = day_info.get('day_name', '')
+    week_type = f"({day_info.get('week_type_name', '')})" if day_info.get('week_type_name') else ""
+
+    header = f"🗓 <b>{date_str} · {day_name}</b> {week_type}\n"
     
+    lessons = day_info.get('lessons')
     if not lessons:
-        # Это сообщение будет показано для дней без пар (кроме сегодня)
-        return f"{header}\n\n🎉 Занятий нет, можно отдыхать!"
+        return header + "\n🎉 <b>Занятий нет!</b>"
 
-    body = []
+    lesson_parts = []
     for lesson in lessons:
-        time = lesson['time']
-        subject = lesson['subject']
-        lesson_type = lesson['type']
+        time_str = lesson.get('time', 'Время не указано')
+        subject_str = lesson.get('subject', 'Предмет не указан')
+        type_str = f"({lesson.get('type', '')})" if lesson.get('type') else ""
         
-        # --- Улучшенный блок преподавателей ---
+        lesson_header = f"<b>{time_str}</b>\n{subject_str} {type_str}"
+        
+        details_parts = []
         teachers = lesson.get('teachers')
-        teachers_str = f"🧑‍🏫 <i>{teachers}</i>" if teachers else "🧑‍🏫 Преподаватель не указан"
+        if teachers:
+            details_parts.append(f"🧑‍🏫 {teachers}")
         
-        # --- Улучшенный блок аудитории ---
         room = lesson.get('room')
-        room_str = ""
-        if room and room.strip() not in ['N/A', 'кабинет не указан', '']:
-            # Используем <code> для возможности копирования по клику
-            room_number = room.split(" ")[0] # Предполагаем, что номер - первое слово
-            room_str = f"📍 Аудитория: <code>{room_number}</code>"
-        else:
-            room_str = "🤷‍♀️ Кабинет не указан"
+        if room:
+            details_parts.append(f"📍 {room}")
+        
+        details_str = "\n" + " ".join(details_parts) if details_parts else ""
+        lesson_parts.append(f"{lesson_header}{details_str}")
 
-        lesson_block = (
-            f"<b>{time}</b>\n"
-            f"<b>{subject}</b> ({lesson_type})\n"
-            f"{teachers_str}\n"
-            f"{room_str}"
-        )
-        body.append(lesson_block)
+    return header + "\n\n".join(lesson_parts)
+
+
+def format_teacher_schedule_text(schedule_info: dict) -> str:
+    """Форматирует расписание на день для преподавателя."""
+    if not schedule_info or schedule_info.get('error'):
+        return f"❌ <b>Ошибка:</b> {schedule_info.get('error', 'Не удалось получить расписание преподавателя.')}"
+
+    teacher_name = schedule_info.get('teacher_name', 'Преподаватель')
+    date_str = schedule_info['date'].strftime('%d.%m.%Y')
+    day_name = schedule_info.get('day_name', '')
+
+    header = f"🧑‍🏫 <b>{teacher_name}</b>\n🗓 <b>{date_str} · {day_name}</b>\n"
     
-    map_link_text = f"\n\n🗺️ <a href='{MAP_URL}'>Карта корпусов</a>"
+    lessons = schedule_info.get('lessons')
+    if not lessons:
+        return header + "\n🎉 <b>Занятий нет!</b>"
 
-    return f"{header}\n\n" + "\n\n".join(body) + map_link_text
+    lesson_parts = []
+    for lesson in lessons:
+        time_str = lesson.get('time', 'Время не указано')
+        subject_str = lesson.get('subject', 'Предмет не указан')
+        group_str = f" ({lesson.get('group', 'группа не указана')})"
+        
+        lesson_header = f"<b>{time_str}</b>\n{subject_str}{group_str}"
+        
+        details_parts = []
+        room = lesson.get('room')
+        if room:
+            details_parts.append(f"📍 {room}")
+        
+        details_str = "\n" + " ".join(details_parts) if details_parts else ""
+        lesson_parts.append(f"{lesson_header}{details_str}")
 
-def format_full_week_text(week_schedule, week_name_header):
-    """Форматирует расписание на всю неделю для группы (улучшенный дизайн)."""
-    text = f"🗓 <b>{week_name_header}</b>\n"
-    days_ordered = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
-    has_any_lesson = False
+    return header + "\n\n".join(lesson_parts)
 
-    day_texts = []
-    for day in days_ordered:
-        lessons = week_schedule.get(day)
+
+def format_classroom_schedule_text(schedule_info: dict) -> str:
+    """Форматирует расписание на день для аудитории."""
+    if not schedule_info or schedule_info.get('error'):
+        return f"❌ <b>Ошибка:</b> {schedule_info.get('error', 'Не удалось получить расписание аудитории.')}"
+
+    classroom_number = schedule_info.get('classroom_number', 'Аудитория')
+    date_str = schedule_info['date'].strftime('%d.%m.%Y')
+    day_name = schedule_info.get('day_name', '')
+
+    header = f"🚪 <b>Аудитория {classroom_number}</b>\n🗓 <b>{date_str} · {day_name}</b>\n"
+    
+    lessons = schedule_info.get('lessons')
+    if not lessons:
+        return header + "\n✅ <b>Аудитория свободна весь день!</b>"
+
+    lesson_parts = []
+    for lesson in lessons:
+        time_str = lesson.get('time', 'Время не указано')
+        subject_str = lesson.get('subject', 'Предмет не указан')
+        group_str = f"({lesson.get('group', 'группа не указана')})"
+        
+        lesson_header = f"<b>{time_str}</b>\n{subject_str}{group_str}"
+        
+        details_parts = []
+        teachers = lesson.get('teachers')
+        if teachers:
+            details_parts.append(f"🧑‍🏫 {teachers}")
+        
+        details_str = "\n" + " ".join(details_parts) if details_parts else ""
+        lesson_parts.append(f"{lesson_header}{details_str}")
+
+    return header + "\n\n".join(lesson_parts)
+
+
+def format_full_week_text(week_schedule: dict, week_name: str) -> str:
+    """Форматирует текст расписания на всю неделю с корректной сортировкой пар."""
+    days_order = ["ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА"]
+    text_parts = [f"🗓 <b>{week_name.capitalize()}</b>"]
+    
+    sorted_days = sorted(week_schedule.keys(), key=lambda day: days_order.index(day.upper()) if day.upper() in days_order else 99)
+
+    for day_name in sorted_days:
+        lessons = week_schedule.get(day_name)
+        
         if lessons:
-            has_any_lesson = True
-            day_header = f"<b>--- {day.upper()} ---</b>"
-            lesson_texts = []
-            # Сортируем пары на всякий случай
-            sorted_lessons = sorted(lessons, key=lambda x: x['time'])
-            for lesson in sorted_lessons:
-                time = lesson.get('time', 'Время не указано')
-                subject = lesson.get('subject', 'Предмет не указан')
-                lesson_type = lesson.get('type', '')
-                
-                teachers_str = f"🧑‍🏫 <i>{lesson['teachers']}</i>" if lesson.get('teachers') else ""
-                
-                room_str = ""
-                if lesson.get('room') and lesson['room'].strip() not in ['N/A', 'кабинет не указан', '']:
-                    room_str = f"📍 <code>{lesson['room']}</code>"
-
-                lesson_texts.append(
-                    f"<b>{time}</b> - {subject} ({lesson_type})\n{teachers_str} {room_str}".strip()
+            text_parts.append(f"\n--- <b>{day_name.upper()}</b> ---")
+            
+            try:
+                sorted_lessons = sorted(
+                    lessons, 
+                    key=lambda lesson: datetime.strptime(lesson.get('time', '23:59').split('-')[0].strip(), '%H:%M').time()
                 )
-            day_texts.append(day_header + "\n" + "\n".join(lesson_texts))
+            except (ValueError, IndexError):
+                sorted_lessons = lessons
 
-    if not has_any_lesson:
-        return text + "\n🎉 Занятий на этой неделе нет!"
-        
-    return text + "\n\n".join(day_texts) + f"\n\n\n🗺️ <a href='{MAP_URL}'>Карта корпусов</a>"
-
-def format_teacher_schedule_text(day_info: dict) -> str:
-    """Форматирует расписание преподавателя на день (улучшенный дизайн)."""
-    if not day_info or 'error' in day_info:
-        return f"❌ <b>Ошибка:</b> {day_info.get('error', 'Неизвестная ошибка')}"
-
-    date_str = day_info['date'].strftime('%d.%m.%Y')
-    day_name = day_info['day_name']
-    week_name = day_info['week_name']
-    lessons = day_info['lessons']
-    teacher_name = day_info['teacher']
-
-    header = f"🧑‍🏫 Расписание для <b>{teacher_name}</b>\n"
-    header += f"🗓 <b>{date_str}</b> · {day_name} <i>({week_name} неделя)</i>"
+            for lesson in sorted_lessons:
+                time_str = lesson.get('time', 'Время не указано')
+                subject_str = lesson.get('subject', 'Предмет не указан')
+                type_str = f"({lesson.get('type', '')})" if lesson.get('type') else ""
+                
+                text_parts.append(f"{time_str} - <b>{subject_str}</b> {type_str}")
+                
+                details_parts = []
+                teachers = lesson.get('teachers')
+                if teachers:
+                    details_parts.append(f"🧑‍🏫 {teachers}")
+                
+                room = lesson.get('room')
+                if room:
+                    details_parts.append(f"📍 {room}")
+                
+                if details_parts:
+                    text_parts.append(" ".join(details_parts))
     
-    if not lessons:
-        return f"{header}\n\n🎉 У преподавателя нет пар в этот день."
-
-    body = []
-    for lesson in lessons:
-        groups_list = lesson.get('groups', [])
-        groups_str = f"👥 <i>гр. {', '.join(sorted(groups_list))}</i>" if groups_list else ""
+    if len(text_parts) == 1:
+        return f"🗓 <b>{week_name.capitalize()}</b>\n\n🎉 На этой неделе занятий нет!"
         
-        room_str = ""
-        if lesson.get('room') and lesson['room'].strip() not in ['N/A', 'кабинет не указан', '']:
-            room_str = f"📍 Аудитория: <code>{lesson['room']}</code>"
-        
-        lesson_block = (
-            f"<b>{lesson['time']}</b>\n"
-            f"<b>{lesson['subject']}</b> ({lesson['type']})\n"
-            f"{groups_str}\n"
-            f"{room_str}"
-        )
-        body.append(lesson_block)
-    
-    return f"{header}\n\n" + "\n\n".join(body)
-
-
-def format_classroom_schedule_text(day_info: dict) -> str:
-    """Форматирует расписание аудитории на день (улучшенный дизайн)."""
-    if not day_info or 'error' in day_info:
-        return f"❌ <b>Ошибка:</b> {day_info.get('error', 'Неизвестная ошибка')}"
-
-    date_str = day_info['date'].strftime('%d.%m.%Y')
-    day_name = day_info['day_name']
-    week_name = day_info['week_name']
-    lessons = day_info['lessons']
-    classroom_number = day_info['classroom']
-
-    header = f"🚪 Расписание для аудитории <b>{classroom_number}</b>\n"
-    header += f"🗓 <b>{date_str}</b> · {day_name} <i>({week_name} неделя)</i>"
-    
-    if not lessons:
-        return f"{header}\n\n🎉 Аудитория свободна в этот день."
-
-    body = []
-    for lesson in lessons:
-        # Информация о группах
-        groups_list = lesson.get('groups', [])
-        groups_str = f"👥 <i>гр. {', '.join(sorted(groups_list))}</i>" if groups_list else ""
-        
-        # Информация о преподавателях
-        teachers = lesson.get('teachers', '')
-        teachers_str = f"🧑‍🏫 <i>{teachers}</i>" if teachers else ""
-        
-        lesson_block = (
-            f"<b>{lesson['time']}</b>\n"
-            f"<b>{lesson['subject']}</b> ({lesson['type']})\n"
-            f"{groups_str}\n"
-            f"{teachers_str}"
-        )
-        # Убираем лишние пустые строки, если какой-то информации нет
-        body.append("\n".join(line for line in lesson_block.splitlines() if line.strip()))
-    
-    return f"{header}\n\n" + "\n\n".join(body)
+    return "\n".join(text_parts)

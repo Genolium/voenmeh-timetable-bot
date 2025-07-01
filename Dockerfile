@@ -1,27 +1,39 @@
-# 1. Базовый образ
-# Используем slim-версию Python для уменьшения размера образа
-FROM python:3.11-slim
+# --- Этап 1: Тестирование ---
+FROM python:3.11-slim as builder
 
-# 2. Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app
 
-# 3. Устанавливаем переменные окружения
-#    - PYTHONUNBUFFERED: гарантирует, что логи сразу выводятся в консоль Docker
-#    - PYTHONPATH: говорит Python искать модули в корне /app
-ENV PYTHONUNBUFFERED 1
-ENV PYTHONPATH /app
-
-# 4. Копируем файлы с зависимостями
+# Копируем единый файл с зависимостями
 COPY requirements.txt .
 
-# 5. Устанавливаем зависимости
-#    - --no-cache-dir: не сохраняем кэш pip, чтобы уменьшить размер образа
-#    - --upgrade pip: обновляем сам pip
+# Устанавливаем все зависимости из одного файла
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# 6. Копируем весь остальной код проекта в рабочую директорию
+# Копируем весь код проекта
 COPY . .
 
-# 7. Команда, которая будет выполняться при запуске контейнера
+# Запускаем тесты
+RUN python -m pytest
+
+
+# --- Этап 2: Финальный образ ---
+FROM python:3.11-slim as final
+
+WORKDIR /app
+
+# Копируем тот же самый requirements.txt
+COPY --from=builder /app/requirements.txt .
+
+# И устанавливаем из него все зависимости.
+# Да, в финальном образе будут тестовые библиотеки, но для простоты это приемлемо.
+# Альтернатива - разделять requirements, как я предлагал ранее.
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Копируем только нужный для работы код
+COPY --from=builder /app/bot ./bot
+COPY --from=builder /app/core ./core
+COPY --from=builder /app/main.py .
+
 CMD ["python", "main.py"]

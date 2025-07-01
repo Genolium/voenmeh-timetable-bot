@@ -24,9 +24,10 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     user_id = dialog_manager.event.from_user.id
     settings = await user_data_manager.get_user_settings(user_id)
     
-    evening_status = bool(settings.get("evening_notify"))
-    morning_status = bool(settings.get("morning_summary"))
-    reminders_status = bool(settings.get("lesson_reminders"))
+    # Более надежная проверка на случай, если settings будет None или пустым
+    evening_status = settings.get("evening_notify", False)
+    morning_status = settings.get("morning_summary", False)
+    reminders_status = settings.get("lesson_reminders", False)
 
     return {
         "evening_status_text": get_status_text(evening_status),
@@ -47,23 +48,21 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     
-    # 1. Определяем, какую настройку меняем, по ID кнопки
     setting_name = button.widget_id
     
-    # 2. Получаем ТЕКУЩЕЕ состояние настройки НАПРЯМУЮ из БД
     current_settings = await user_data_manager.get_user_settings(user_id)
-    current_status = bool(current_settings.get(setting_name))
+    current_status = current_settings.get(setting_name, False)
     
-    # 3. Инвертируем статус и сохраняем новое значение в БД
     new_status = not current_status
     await user_data_manager.update_setting(user_id, setting_name, new_status)
     
-    # 4. Всплывающее уведомление для пользователя
     await callback.answer(f"Настройка обновлена.")
     
-    # 5. Принудительно обновляем окно, чтобы перерисовать его с новыми данными из БД
-    new_data_for_render = await get_settings_data(manager)
-    await manager.update(new_data_for_render)
+    # Принудительно обновляем окно, чтобы перерисовать его с новыми данными из БД
+    # Это можно сделать и через manager.update(), но т.к. мы в том же состоянии,
+    # aiogram-dialog часто делает это автоматически после on_click. 
+    # Для явности можно оставить.
+    await manager.switch_to(SettingsMenu.main)
 
 
 async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager):
