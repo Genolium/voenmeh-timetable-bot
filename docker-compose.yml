@@ -1,36 +1,142 @@
+version: '3.8' 
+
 services:
-  # Сервис для нашего Telegram-бота
   bot:
-    # Собираем образ из Dockerfile в текущей директории
-    build: .
-    # Имя контейнера для удобства
+    build: 
+      context: . 
+      dockerfile: Dockerfile 
     container_name: voenmeh_bot
-    # Указываем файл с переменными окружения
+    working_dir: /app
     env_file:
       - .env
-    # --- ИЗМЕНЕНИЕ: Монтируем всю папку `data` ---
-    volumes:
-      # Связываем папку ./data на хосте с папкой /app/data в контейнере
-      - ./data:/app/data
-    # Указываем, что наш бот зависит от сервиса redis.
-    # Docker Compose сначала запустит redis, а потом бота.
     depends_on:
-      - redis
-    # Перезапускать контейнер, если он упал, кроме случаев штатной остановки
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      logstash:
+        condition: service_healthy 
+      migrator:
+        condition: service_completed_successfully # Бот ждет, пока миграции не будут успешно завершены
     restart: unless-stopped
+    command: python main.py
 
-  # Сервис для Redis
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voenmeh_worker
+    working_dir: /app
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_started
+      db:
+        condition: service_healthy
+      logstash:
+        condition: service_healthy
+      migrator: # Воркер ждет, пока миграции не будут успешно завершены
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: python -m dramatiq bot.tasks 
+
   redis:
-    # Используем официальный образ Redis с тегом alpine (очень маленький)
     image: redis:7-alpine
     container_name: voenmeh_redis
-    # Тома для постоянного хранения данных Redis
     volumes:
       - redis_data:/data
-    # Перезапускать, если упал
+    env_file: 
+      - .env
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     restart: unless-stopped
 
-# Определяем именованный том для данных Redis.
-# Docker сам будет управлять этой папкой.
+  db:
+    image: postgres:15-alpine
+    container_name: voenmeh_postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  migrator:
+    build:
+      context: .
+      dockerfile: Dockerfile 
+    container_name: voenmeh_migrator
+    working_dir: /app
+    env_file:
+      - .env 
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "python -m alembic upgrade head"
+    restart: "no" # Этот контейнер должен запуститься один раз и успешно завершиться
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: voenmeh_prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - bot
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: voenmeh_grafana
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000" 
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: voenmeh_elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false 
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  logstash:
+    build:
+      context: ./elk-stack/logstash 
+      dockerfile: Dockerfile
+    container_name: voenmeh_logstash
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+    healthcheck: 
+      test: ["CMD-SHELL", "curl --fail http://localhost:9600/_node/hot_threads?human=true"]
+      interval: 10s       
+      timeout: 5s         
+      retries: 60         
+      start_period: 60s   
+
+  kibana:
+    build:
+      context: ./elk-stack/kibana 
+      dockerfile: Dockerfile
+    container_name: voenmeh_kibana
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    restart: unless-stopped
+
 volumes:
   redis_data:
+  postgres_data:
+  elasticsearch_data:

@@ -1,69 +1,114 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime
+
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from core.db import Base, User
 from core.user_data import UserDataManager
 
+# Используем асинхронную фикстуру, чтобы база данных создавалась для каждого теста
 @pytest.fixture
-def manager(mocker):
-    mocker.patch('core.user_data.UserDataManager._execute', new_callable=AsyncMock)
-    return UserDataManager(db_path=':memory:')
+async def manager_with_db():
+    """
+    Создает реальный UserDataManager с in-memory SQLite базой данных для тестов.
+    Таблицы создаются и удаляются для каждого теста.
+    """
+    # Создаем один движок для всех операций в рамках теста
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    
+    # Создаем все таблицы, используя этот движок
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Создаем экземпляр менеджера. Он внутри создаст свой движок, но мы его заменим
+    user_data_manager = UserDataManager(db_url="sqlite+aiosqlite:///:memory:")
+    user_data_manager.engine = engine
+    user_data_manager.async_session_maker.configure(bind=engine)
+
+
+    yield user_data_manager
+
+    # Удаляем все таблицы после теста
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+    # Закрываем соединение
+    await engine.dispose()
+
 
 @pytest.mark.asyncio
-class TestUserDataManager:
+class TestUserDataManagerWithSQLAlchemy:
 
-    async def test_init_db(self, manager):
-        await manager.init_db()
-        call_args = manager._execute.call_args.args
-        assert "CREATE TABLE IF NOT EXISTS users" in call_args[0]
-        assert manager._execute.call_args.kwargs['commit'] is True
-
-    async def test_register_user(self, manager):
-        await manager.register_user(123, "testuser")
-        assert manager._execute.call_count == 2
-
-    async def test_set_user_group(self, manager):
-        await manager.set_user_group(123, "О735Б")
-        manager._execute.assert_called_once_with(
-            'UPDATE users SET "group" = ? WHERE user_id = ?', ("О735Б", 123), commit=True
-        )
-
-    async def test_get_user_group(self, manager):
-        manager._execute.return_value = {'group': 'О735Б'}
-        assert await manager.get_user_group(123) == "О735Б"
-        manager._execute.return_value = None
-        assert await manager.get_user_group(404) is None
-
-    async def test_get_user_settings(self, manager):
-        mock_row = MagicMock()
-        settings_data = {'evening_notify': 1, 'morning_summary': 0, 'lesson_reminders': 1}
-        def get_item_by_key(key): return settings_data[key]
-        mock_row.__getitem__.side_effect = get_item_by_key
-        mock_row.keys.return_value = settings_data.keys()
-        manager._execute.return_value = mock_row
+    async def test_register_new_user(self, manager_with_db: UserDataManager):
+        # Act
+        await manager_with_db.register_user(123, "testuser")
         
-        settings = await manager.get_user_settings(123)
-        
-        assert settings == {"evening_notify": True, "morning_summary": False, "lesson_reminders": True}
-        manager._execute.assert_called_once_with(
-            "SELECT evening_notify, morning_summary, lesson_reminders FROM users WHERE user_id = ?",
-            (123,), fetchone=True
-        )
+        # Assert
+        async with manager_with_db.async_session_maker() as session:
+            user = await session.get(User, 123)
+            assert user is not None
+            assert user.user_id == 123
+            assert user.username == "testuser"
 
-    async def test_get_active_users_by_period(self, manager, mocker):
-        fixed_now = datetime(2024, 10, 31, 12, 0, 0)
-        mocker.patch('core.user_data.datetime', MagicMock(utcnow=lambda: fixed_now))
+    async def test_register_existing_user_updates_date(self, manager_with_db: UserDataManager):
+        # Arrange: создаем пользователя
+        await manager_with_db.register_user(123, "testuser")
+        async with manager_with_db.async_session_maker() as session:
+            user_before = await session.get(User, 123)
+            first_active_date = user_before.last_active_date
         
-        await manager.get_active_users_by_period(days=7)
+        # Act: вызываем регистрацию снова
+        await manager_with_db.register_user(123, "testuser_new_name")
         
-        expected_start_date = fixed_now - timedelta(days=7)
-        
-        manager._execute.assert_called_once_with(
-            "SELECT COUNT(user_id) FROM users WHERE last_active_date >= ?",
-            (expected_start_date,),
-            fetchone=True
-        )
+        # Assert: проверяем, что дата обновилась
+        async with manager_with_db.async_session_maker() as session:
+            user_after = await session.get(User, 123)
+            assert user_after.last_active_date > first_active_date
+            # Имя не должно меняться, так как мы сначала проверяем наличие пользователя
+            assert user_after.username == "testuser"
 
-    async def test_get_subscribed_users_count(self, manager):
-        await manager.get_subscribed_users_count()
-        expected_query = "SELECT COUNT(user_id) FROM users WHERE evening_notify = 1 OR morning_summary = 1 OR lesson_reminders = 1"
-        manager._execute.assert_called_once_with(expected_query, fetchone=True)
+    async def test_set_and_get_user_group(self, manager_with_db: UserDataManager):
+        # Arrange
+        await manager_with_db.register_user(123, "testuser")
+        
+        # Act
+        await manager_with_db.set_user_group(123, "О735Б")
+        
+        # Assert
+        group = await manager_with_db.get_user_group(123)
+        assert group == "О735Б"
+    
+    async def test_get_user_settings(self, manager_with_db: UserDataManager):
+        # Arrange
+        await manager_with_db.register_user(456, "settings_user")
+        
+        # Act & Assert 1: Проверяем настройки по умолчанию
+        settings = await manager_with_db.get_user_settings(456)
+        assert settings == {
+            "evening_notify": True,
+            "morning_summary": True,
+            "lesson_reminders": True
+        }
+        
+        # Act & Assert 2: Обновляем настройку и проверяем снова
+        await manager_with_db.update_setting(456, "morning_summary", False)
+        new_settings = await manager_with_db.get_user_settings(456)
+        assert new_settings["morning_summary"] is False
+        assert new_settings["evening_notify"] is True
+
+    async def test_get_top_groups(self, manager_with_db: UserDataManager):
+        # Arrange
+        await manager_with_db.register_user(1, "u1")
+        await manager_with_db.set_user_group(1, "GROUP_A")
+        await manager_with_db.register_user(2, "u2")
+        await manager_with_db.set_user_group(2, "GROUP_B")
+        await manager_with_db.register_user(3, "u3")
+        await manager_with_db.set_user_group(3, "GROUP_A")
+        
+        # Act
+        top_groups = await manager_with_db.get_top_groups(limit=5)
+        
+        # Assert
+        assert len(top_groups) == 2
+        assert top_groups[0] == ("GROUP_A", 2)
+        assert top_groups[1] == ("GROUP_B", 1)

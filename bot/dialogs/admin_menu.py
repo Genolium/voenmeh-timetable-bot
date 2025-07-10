@@ -1,39 +1,41 @@
 from aiogram.types import Message, ContentType, CallbackQuery
-from aiogram import Bot
+from aiogram import Bot 
 from aiogram_dialog import Dialog, Window, DialogManager
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.text import Const, Format
 from aiogram_dialog.widgets.kbd import Button, SwitchTo, Back
 
 from bot.scheduler import morning_summary_broadcast, evening_broadcast
-from .states import Admin
+from bot.tasks import copy_message_task 
 from core.user_data import UserDataManager
+from core.metrics import TASKS_SENT_TO_QUEUE
+
+from .states import Admin 
+
 
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
-    bot = manager.middleware_data.get("bot")
     user_data_manager = manager.middleware_data.get("user_data_manager")
-    await callback.answer("🚀 Запускаю утреннюю рассылку...")
-    await morning_summary_broadcast(bot, user_data_manager)
-    await callback.message.answer("✅ Утренняя рассылка завершена.")
+    await callback.answer("🚀 Запускаю постановку задач на утреннюю рассылку...")
+    await morning_summary_broadcast(user_data_manager) 
+    await callback.message.answer("✅ Задачи для утренней рассылки поставлены в очередь.")
+
 
 async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager):
-    bot = manager.middleware_data.get("bot")
     user_data_manager = manager.middleware_data.get("user_data_manager")
-    await callback.answer("🚀 Запускаю вечернюю рассылку...")
-    await evening_broadcast(bot, user_data_manager)
-    await callback.message.answer("✅ Вечерняя рассылка завершена.")
+    await callback.answer("🚀 Запускаю постановку задач на вечернюю рассылку...")
+    await evening_broadcast(user_data_manager)
+    await callback.message.answer("✅ Задачи для вечерней рассылки поставлены в очередь.")
+
 
 async def get_stats_data(user_data_manager: UserDataManager, **kwargs):
     total_users = await user_data_manager.get_total_users_count()
     new_today = await user_data_manager.get_new_users_count(days=1)
     new_week = await user_data_manager.get_new_users_count(days=7)
     
-    # Статистика по активности
     active_day = await user_data_manager.get_active_users_by_period(days=1)
     active_week = await user_data_manager.get_active_users_by_period(days=7)
     active_month = await user_data_manager.get_active_users_by_period(days=30)
     
-    # Статистика по подпискам
     subscribed_users = await user_data_manager.get_subscribed_users_count()
 
     top_groups = await user_data_manager.get_top_groups(limit=5)
@@ -58,35 +60,44 @@ async def get_stats_data(user_data_manager: UserDataManager, **kwargs):
     return {"stats_text": stats_text}
 
 async def on_broadcast_received(message: Message, message_input: MessageInput, manager: DialogManager):
-    bot: Bot = manager.middleware_data.get("bot")
+    bot: Bot = manager.middleware_data.get("bot") 
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
 
     try:
         all_users = await user_data_manager.get_all_user_ids()
-        sent_count, failed_count = 0, 0
+        queued_count, failed_to_queue_count = 0, 0
         
-        await bot.send_message(message.from_user.id, f"🚀 Начинаю рассылку для {len(all_users)} пользователей...")
+        admin_chat_id = message.from_user.id
+        original_chat_id = message.chat.id 
+        original_message_id = message.message_id
+
+        await bot.send_message(admin_chat_id, f"🚀 Начинаю постановку задач на рассылку для {len(all_users)} пользователей...")
 
         for user_id in all_users:
             try:
-                await message.copy_to(chat_id=user_id)
-                sent_count += 1
-            except Exception:
-                failed_count += 1
+                copy_message_task.send(user_id, original_chat_id, original_message_id)
+                TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc() 
+                queued_count += 1
+            except Exception as e:
+                logging.error(f"Failed to queue broadcast message for user {user_id}: {e}")
+                failed_to_queue_count += 1
         
         await bot.send_message(
-            message.from_user.id,
-            f"✅ Рассылка завершена!\n👍 Отправлено: {sent_count}\n👎 Ошибок: {failed_count}"
+            admin_chat_id,
+            f"✅ Задачи рассылки поставлены в очередь!\n"
+            f"👍 Поставлено: {queued_count}\n"
+            f"👎 Ошибок при постановке: {failed_to_queue_count}\n\n"
+            f"Результаты отправки сообщений будут видны в логах worker-а Dramatiq."
         )
     except Exception as e:
-        await bot.send_message(message.from_user.id, f"❌ Ошибка рассылки: {e}")
+        await bot.send_message(admin_chat_id, f"❌ Общая ошибка при подготовке рассылки: {e}")
     
     await manager.done()
 
 admin_dialog = Dialog(
     Window(
         Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
-        SwitchTo(Const("📊 Статистика"), id="stats", state=Admin.stats),
+        SwitchTo(Const("📊 Статистика"), id="stats", state=Admin.stats), # Теперь Admin.stats будет доступен
         SwitchTo(Const("📣 Сделать рассылку"), id="broadcast", state=Admin.broadcast),
         Button(Const("⚙️ Тест утренней рассылки"), id="test_morning", on_click=on_test_morning),
         Button(Const("⚙️ Тест вечерней рассылки"), id="test_evening", on_click=on_test_evening),

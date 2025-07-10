@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any
 from core.config import OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS, MOSCOW_TZ
 
 class WeatherAPI:
-    BASE_URL = "http://api.openweathermap.org/data/2.5/forecast"
+    BASE_URL = "https://api.openweathermap.org/data/2.5/forecast"
     CACHE_DURATION_HOURS = 1 # Кэш погоды будет храниться 1 час
     _cache: Dict[str, Dict[str, Any]] = {} # Словарь для хранения кэша: {'дата_час_прогноза': {'timestamp': ..., 'data': ...}}
 

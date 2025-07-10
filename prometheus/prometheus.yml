@@ -1,0 +1,7 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "voenmeh_bot"
+    static_configs:
+      - targets: ["bot:8000"] # Prometheus будет опрашивать сервис 'bot' на порту 8000

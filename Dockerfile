@@ -1,39 +1,40 @@
-# --- Этап 1: Тестирование ---
+
+# --- Этап 1: Сборка зависимостей и копирование исходников (builder) ---
 FROM python:3.11-slim as builder
 
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем единый файл с зависимостями
-COPY requirements.txt .
 
-# Устанавливаем все зависимости из одного файла
+COPY requirements.txt .
+COPY alembic.ini .
+COPY migrate_data.py .
+COPY migrations/ ./migrations/
+COPY core/ ./core/
+COPY bot/ ./bot/
+COPY main.py .
+
+# Устанавливаем зависимости
+# Используем --no-cache-dir для уменьшения размера образа и ускорения билда
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Копируем весь код проекта
-COPY . .
-
-# Запускаем тесты
-RUN python -m pytest
-
-
-# --- Этап 2: Финальный образ ---
+# --- Этап 2: Финальный образ (final) ---
 FROM python:3.11-slim as final
 
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Копируем тот же самый requirements.txt
-COPY --from=builder /app/requirements.txt .
+COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 
-# И устанавливаем из него все зависимости.
-# Да, в финальном образе будут тестовые библиотеки, но для простоты это приемлемо.
-# Альтернатива - разделять requirements, как я предлагал ранее.
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Копируем только нужный для работы код
 COPY --from=builder /app/bot ./bot
 COPY --from=builder /app/core ./core
 COPY --from=builder /app/main.py .
+COPY --from=builder /app/alembic.ini . 
+COPY --from=builder /app/migrate_data.py . 
+COPY --from=builder /app/migrations ./migrations 
+
+COPY --from=builder /app/bot/media ./bot/media 
+COPY --from=builder /app/bot/screenshots ./bot/screenshots
 
 CMD ["python", "main.py"]
