@@ -57,7 +57,7 @@ __pycache__/
 #  Логи и отчеты       #
 # #################### #
 code_collector.py
-schedule_hash.txt
+*.txt
 *.log
 *.log.*
 npm-debug.log*

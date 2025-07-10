@@ -1,7 +1,10 @@
+import logging
 from aiogram.types import CallbackQuery
+from aiogram.exceptions import TelegramBadRequest
 from aiogram_dialog import Dialog, Window, DialogManager, StartMode
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo, Back
 from aiogram_dialog.widgets.media import StaticMedia
+from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.text import Const, Format
 
 from core.user_data import UserDataManager 
@@ -62,27 +65,28 @@ async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: Di
     Обработчик нажатия на кнопку 'Завершить'.
     Удаляет сообщение и переходит к основному диалогу с расписанием.
     """
-    # Получаем user_data_manager из middleware
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
-    
-    # Получаем сохраненную группу пользователя из БД
     user_group = await user_data_manager.get_user_group(callback.from_user.id)
     
-    # Удаляем сообщение с туториалом
-    await callback.message.delete()
+    # Оборачиваем удаление в try...except
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest as e:
+        if "message can't be deleted" in str(e):
+            logging.warning(f"Не удалось удалить сообщение с туториалом (слишком старое): {e}")
+        else:
+            # Если ошибка другая, лучше ее не скрывать
+            logging.error(f"Неожиданная ошибка при удалении сообщения: {e}")
+            raise
     
     if user_group:
-        # Если группа найдена, запускаем диалог расписания
         await manager.start(Schedule.view, data={"group": user_group}, mode=StartMode.RESET_STACK)
     else:
-        # Если по какой-то причине группы нет, просто завершаем диалог.
-        # Пользователь сможет ввести /start снова.
         await manager.done()
         
     
 # --- Создание диалога ---
 about_dialog = Dialog(
-    # --- Страница 1 ---
     Window(
         StaticMedia(path=IMG_WELCOME),
         Const(TEXT_PAGE_1),
@@ -90,11 +94,10 @@ about_dialog = Dialog(
             Button(Const(f"1/{TOTAL_PAGES}"), id="pager"),
             SwitchTo(Const("Далее ▶️"), id="next_1", state=About.page_2),
         ),
+        LinkPreview(is_disabled=True),
         state=About.page_1,
-        disable_web_page_preview=True,
         parse_mode="HTML"
     ),
-    # --- Страница 2 ---
     Window(
         StaticMedia(path=IMG_MAIN_SCREEN),
         Const(TEXT_PAGE_2),
@@ -103,11 +106,10 @@ about_dialog = Dialog(
             Button(Const(f"2/{TOTAL_PAGES}"), id="pager"),
             SwitchTo(Const("Далее ▶️"), id="next_2", state=About.page_3),
         ),
+        LinkPreview(is_disabled=True),
         state=About.page_2,
-        disable_web_page_preview=True,
         parse_mode="HTML"
     ),
-    # --- Страница 3 ---
     Window(
         StaticMedia(path=IMG_SEARCH),
         Const(TEXT_PAGE_3),
@@ -116,11 +118,10 @@ about_dialog = Dialog(
             Button(Const(f"3/{TOTAL_PAGES}"), id="pager"),
             SwitchTo(Const("Далее ▶️"), id="next_3", state=About.page_4),
         ),
+        LinkPreview(is_disabled=True),
         state=About.page_3,
-        disable_web_page_preview=True,
         parse_mode="HTML"
     ),
-    # --- Страница 4 ---
     Window(
         StaticMedia(path=IMG_NOTIFICATIONS),
         Const(TEXT_PAGE_4),
@@ -129,11 +130,10 @@ about_dialog = Dialog(
             Button(Const(f"4/{TOTAL_PAGES}"), id="pager"),
             SwitchTo(Const("Далее ▶️"), id="next_4", state=About.page_5),
         ),
+        LinkPreview(is_disabled=True),
         state=About.page_4,
-        disable_web_page_preview=True,
         parse_mode="HTML"
     ),
-    # --- Страница 5 ---
     Window(
         StaticMedia(path=IMG_INLINE),
         Const(TEXT_PAGE_5),
@@ -142,8 +142,8 @@ about_dialog = Dialog(
             Button(Const(f"5/{TOTAL_PAGES}"), id="pager"),
             Button(Const("✅ Понятно"), id="finish", on_click=on_finish_clicked),
         ),
+        LinkPreview(is_disabled=True),
         state=About.page_5,
-        disable_web_page_preview=True,
         parse_mode="HTML"
     ),    
 )
