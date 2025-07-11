@@ -17,7 +17,7 @@ services:
       redis:
         condition: service_started
       logstash:
-        condition: service_healthy 
+        condition: service_healthy
       migrator:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -25,8 +25,8 @@ services:
     logging:
       driver: gelf
       options:
-        gelf-address: "udp://logstash:12201" 
-        tag: "voenmeh-bot" 
+        gelf-address: "udp://127.0.0.1:12201"
+        tag: "voenmeh-bot"
 
   worker:
     build:
@@ -50,8 +50,8 @@ services:
     logging:
       driver: gelf
       options:
-        gelf-address: "udp://logstash:12201" 
-        tag: "voenmeh-worker" 
+        gelf-address: "udp://127.0.0.1:12201"
+        tag: "voenmeh-worker"
 
   redis:
     image: redis:7-alpine
@@ -92,21 +92,21 @@ services:
     restart: "no"
 
   prometheus:
-    image: prom/prometheus:v2.53.0
+    build:
+      context: ./prometheus 
+      dockerfile: Dockerfile
     container_name: voenmeh_prometheus
-    volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
       - "9090:9090" 
     depends_on:
       - bot
     restart: unless-stopped
-
+    
   grafana:
-    image: grafana/grafana:11.1.0
+    build:
+      context: ./grafana
+      dockerfile: Dockerfile
     container_name: voenmeh_grafana
-    volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
     ports:
       - "3000:3000" 
     depends_on:
@@ -120,8 +120,6 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false 
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     restart: unless-stopped
@@ -138,7 +136,7 @@ services:
       - elasticsearch
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:9600/_node/stats/pipelines?pretty"]
+      test: ["CMD-SHELL", "curl --fail http://localhost:9600/_node/stats/pipelines?pretty || exit 1"]
       interval: 10s       
       timeout: 5s         
       retries: 60         
