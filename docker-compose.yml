@@ -9,6 +9,8 @@ services:
     working_dir: /app
     env_file:
       - .env
+    ports:
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -17,9 +19,14 @@ services:
       logstash:
         condition: service_healthy 
       migrator:
-        condition: service_completed_successfully # Бот ждет, пока миграции не будут успешно завершены
+        condition: service_completed_successfully
     restart: unless-stopped
     command: python main.py
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://logstash:12201" 
+        tag: "voenmeh-bot" 
 
   worker:
     build:
@@ -36,10 +43,15 @@ services:
         condition: service_healthy
       logstash:
         condition: service_healthy
-      migrator: # Воркер ждет, пока миграции не будут успешно завершены
+      migrator:
         condition: service_completed_successfully
     restart: unless-stopped
     command: python -m dramatiq bot.tasks 
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://logstash:12201" 
+        tag: "voenmeh-worker" 
 
   redis:
     image: redis:7-alpine
@@ -76,14 +88,16 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "python -m alembic upgrade head"
-    restart: "no" # Этот контейнер должен запуститься один раз и успешно завершиться
+    command: sh -c "alembic upgrade head && python migrate_data.py" 
+    restart: "no"
 
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: voenmeh_prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090" 
     depends_on:
       - bot
     restart: unless-stopped
@@ -106,6 +120,8 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false 
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
     volumes:
       - elasticsearch_data:/usr/share/elasticsearch/data
     restart: unless-stopped
@@ -115,11 +131,14 @@ services:
       context: ./elk-stack/logstash 
       dockerfile: Dockerfile
     container_name: voenmeh_logstash
+    ports:
+      - "5044:5044"
+      - "12201:12201/udp"
     depends_on:
       - elasticsearch
     restart: unless-stopped
-    healthcheck: 
-      test: ["CMD-SHELL", "curl --fail http://localhost:9600/_node/hot_threads?human=true"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail http://localhost:9600/_node/stats/pipelines?pretty"]
       interval: 10s       
       timeout: 5s         
       retries: 60         

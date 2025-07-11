@@ -165,11 +165,13 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
             logging.warning(f"Пропуск планирования для {group_name} из-за ошибки времени: {e}")
             continue
         
+        # Напоминание за 20 минут до первой пары
         if lessons:
             first_lesson = lessons[0]
             try:
                 start_time_obj = datetime.strptime(first_lesson['start_time_raw'], '%H:%M').time()
-                reminder_dt = datetime.combine(today, start_time_obj, MOSCOW_TZ) - timedelta(minutes=20)
+                naive_dt = datetime.combine(today, start_time_obj)
+                reminder_dt = MOSCOW_TZ.localize(naive_dt) - timedelta(minutes=20)
                 if reminder_dt > datetime.now(MOSCOW_TZ):
                     job_id = f"reminder_{user_id}_{today.isoformat()}_first"
                     scheduler.add_job(send_lesson_reminder_task.send, trigger=DateTrigger(run_date=reminder_dt),
@@ -177,10 +179,12 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
             except (ValueError, KeyError) as e:
                 logging.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
 
+        # Напоминания в начале каждого перерыва
         for i, lesson in enumerate(lessons):
             try:
                 end_time_obj = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
-                reminder_dt = datetime.combine(today, end_time_obj, MOSCOW_TZ)
+                naive_dt = datetime.combine(today, end_time_obj)
+                reminder_dt = MOSCOW_TZ.localize(naive_dt)
                 
                 if reminder_dt > datetime.now(MOSCOW_TZ):
                     is_last_lesson = (i == len(lessons) - 1)
@@ -198,7 +202,8 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                  logging.warning(f"Ошибка планирования напоминания в перерыве для user_id={user_id}: {e}")
     
     logging.info(f"Планирование напоминаний завершено для {len(users_to_plan)} пользователей.")
-
+    
+    
 async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis):
     """Проверяет изменения в расписании и ставит в очередь уведомления."""
     logging.info("Проверка изменений в расписании...")
