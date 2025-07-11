@@ -88,7 +88,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && python migrate_data.py" 
+    command: sh -c "python -m alembic upgrade head && python migrate_data.py"
     restart: "no"
 
   prometheus:
