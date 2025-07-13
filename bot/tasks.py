@@ -2,57 +2,32 @@ import asyncio
 import logging
 import os
 import random
-import sys
-from typing import Dict, Any
+from typing import Dict, Any 
 
 import dramatiq
-import graypy
 from aiogram import Bot
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 from dramatiq.brokers.redis import RedisBroker
-from pythonjsonlogger import jsonlogger
-
 
 load_dotenv()
 
-# Настройка подключения к Redis
 redis_url = os.getenv("REDIS_URL")
-redis_password = os.getenv("REDIS_PASSWORD")
+redis_password = os.getenv("REDIS_PASSWORD") 
 if not redis_url or not redis_password:
     raise RuntimeError("REDIS_URL или REDIS_PASSWORD не найдены. Воркер не может стартовать.")
 
 redis_broker = RedisBroker(url=redis_url, password=redis_password)
 dramatiq.set_broker(redis_broker)
 
-# Настройка логирования для воркера
-def setup_worker_logging():
-    log = logging.getLogger("dramatiq")
-    log.setLevel(logging.INFO)
-    
-    if log.hasHandlers():
-        log.handlers.clear()
+# Используем стандартный логгер. Dramatiq сам его настроит для вывода в консоль.
+log = logging.getLogger(__name__)
+log.setLevel(logging.INFO)
 
-    formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(name)s %(levelname)s %(message)s'
-    )
-    
-    # Обработчик для консоли
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(formatter)
-    log.addHandler(console_handler)
 
-    # Обработчик для Graylog/Logstash
-    try:
-        gelf_handler = graypy.GELFUDPHandler('logstash', 12201, extra_fields=True)
-        gelf_handler.setFormatter(formatter)
-        log.addHandler(gelf_handler)
-        log.info("Worker GELF logging to Logstash enabled.")
-    except Exception as e:
-        log.error(f"Worker failed to set up GELF logging to Logstash: {e}")
+UNSUBSCRIBE_FOOTER = "\n\n<tg-spoiler><i>Отключить эту рассылку можно в «⚙️ Настройки»</i></tg-spoiler>"
 
-setup_worker_logging()
-
+# Создаем один экземпляр бота и event loop для всего процесса воркера, чтобы не создавать их в каждой задаче
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не найден. Воркер не может работать.")
@@ -60,31 +35,36 @@ if not BOT_TOKEN:
 BOT_INSTANCE = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 LOOP = asyncio.get_event_loop()
 
-UNSUBSCRIBE_FOOTER = "\n\n<tg-spoiler><i>Отключить эту рассылку можно в «⚙️ Настройки»</i></tg-spoiler>"
+# --- Асинхронные хелперы для переиспользования сессии ---
 
 async def _send_message(user_id: int, text: str):
-    """Асинхронный хелпер для отправки сообщения."""
     try:
         await BOT_INSTANCE.send_message(user_id, text, disable_web_page_preview=True)
+        log.info(f"Сообщение успешно отправлено пользователю {user_id}")
     except Exception as e:
-        logging.error(f"Failed to send message to {user_id}: {e}")
+        log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
 
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
-    """Асинхронный хелпер для копирования сообщения."""
     try:
         await BOT_INSTANCE.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
+        log.info(f"Сообщение {message_id} из чата {from_chat_id} успешно скопировано пользователю {user_id}")
     except Exception as e:
-        logging.error(f"Failed to copy message to {user_id}: {e}")
+        log.error(f"Dramatiq task FAILED to copy message {message_id} to {user_id}: {e}")
 
-@dramatiq.actor(max_retries=1, time_limit=30000)
+
+# --- Акторы, которые теперь вызывают асинхронные хелперы ---
+
+@dramatiq.actor(max_retries=1, time_limit=30000) 
 def send_message_task(user_id: int, text: str):
-    """Задача, которая использует глобальный loop для отправки."""
+    """Синхронная обертка для асинхронной отправки сообщения."""
     LOOP.run_until_complete(_send_message(user_id, text))
 
-@dramatiq.actor(max_retries=1, time_limit=30000)
+
+@dramatiq.actor(max_retries=1, time_limit=30000) 
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
-    """Задача, которая использует глобальный loop для копирования."""
+    """Синхронная обертка для асинхронного копирования сообщения."""
     LOOP.run_until_complete(_copy_message(user_id, from_chat_id, message_id))
+
 
 @dramatiq.actor(max_retries=1, time_limit=30000)
 def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None):
@@ -110,9 +90,9 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
         elif reminder_type == "final":
             final_phrases = ["Пары на сегодня всё! Можно отдыхать.", "Учебный день окончен. Хорошего вечера!"]
             text = f"🎉 <b>{random.choice(final_phrases)}</b>{UNSUBSCRIBE_FOOTER}"
-            send_message_task.send(user_id, text)
+            send_message_task.send(user_id, text) 
             return
-        
+
         else:
             return 
         
@@ -127,4 +107,4 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
         send_message_task.send(user_id, text)
 
     except Exception as e:
-        logging.error(f"Dramatiq task send_lesson_reminder_task FAILED to prepare reminder for {user_id}: {e}")
+        log.error(f"Dramatiq task send_lesson_reminder_task FAILED to prepare reminder for {user_id}: {e}")

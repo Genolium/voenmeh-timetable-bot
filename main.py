@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import os
-import sys 
+import sys
 
-import graypy 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandStart
@@ -12,7 +11,6 @@ from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotComman
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
 from dotenv import load_dotenv
 from prometheus_client import start_http_server 
-from pythonjsonlogger import jsonlogger
 from redis.asyncio.client import Redis
 
 # --- Импорты ядра ---
@@ -39,30 +37,11 @@ from bot.dialogs.settings_menu import settings_dialog
 # --- Импорты состояний ---
 from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
 
-# Настройка логирования 
-def setup_logging():
-    log = logging.getLogger()
-    log.setLevel(logging.INFO)
-    
-    if log.hasHandlers():
-        log.handlers.clear()
-
-    console_handler = logging.StreamHandler(sys.stdout)
-    json_formatter = jsonlogger.JsonFormatter(
-        '%(asctime)s %(name)s %(levelname)s %(message)s %(user_id)s %(event_type)s'
-    )
-    console_handler.setFormatter(json_formatter)
-    log.addHandler(console_handler)
-
-    try:
-        gelf_handler = graypy.GELFUDPHandler('logstash', 12201, extra_fields=True)
-        gelf_handler.setFormatter(json_formatter)
-        log.addHandler(gelf_handler)
-        logging.info("GELF logging to Logstash enabled.")
-    except Exception as e:
-        logging.error(f"Failed to set up GELF logging to Logstash: {e}")
+# Настройка простого логирования в консоль
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 
 async def set_bot_commands(bot: Bot):
+    """Устанавливает меню команд для пользователей и администраторов."""
     user_commands = [
         BotCommand(command="start", description="🤖 Главное меню"),
         BotCommand(command="about", description="📒 О боте"),
@@ -82,6 +61,7 @@ async def set_bot_commands(bot: Bot):
                 logging.error(f"Не удалось установить команды для админа {admin_id}: {e}")
         logging.info(f"Установлены расширенные команды для администраторов: {ADMIN_IDS}")
 
+# --- Обработчики команд ---
 async def start_command_handler(message: Message, dialog_manager: DialogManager):
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     saved_group = await user_data_manager.get_user_group(message.from_user.id)
@@ -99,21 +79,23 @@ async def feedback_command_handler(message: Message, dialog_manager: DialogManag
 async def admin_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Admin.menu, mode=StartMode.RESET_STACK)
 
+# --- Функции для запуска сервисов ---
 async def run_metrics_server(port: int = 8000):
+    """Запускает HTTP-сервер для Prometheus в отдельном потоке, чтобы не блокировать основную логику."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, start_http_server, port)
-    logging.info(f"Prometheus metrics server started on http://bot:{port}") 
+    logging.info(f"Prometheus metrics server started on http://localhost:{port}")
 
+# --- Основная функция запуска ---
 async def main():
-    setup_logging() 
     load_dotenv()
 
     bot_token = os.getenv("BOT_TOKEN")
     redis_url = os.getenv("REDIS_URL")
-    redis_password = os.getenv("REDIS_PASSWORD") 
+    redis_password = os.getenv("REDIS_PASSWORD")
     db_url = os.getenv("DATABASE_URL")
 
-    if not all([bot_token, redis_url, redis_password, db_url]): 
+    if not all([bot_token, redis_url, redis_password, db_url]):
         logging.critical("Одна из критически важных переменных окружения не найдена (BOT_TOKEN, REDIS_URL, REDIS_PASSWORD, DATABASE_URL).")
         return
 
@@ -139,11 +121,13 @@ async def main():
         redis_client=redis_client
     )
 
+    # Подключение Middleware
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
-    dp.update.middleware(LoggingMiddleware())
+    dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик
     dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot}))
 
+    # Регистрация диалогов и хэндлеров
     all_dialogs = [
         main_menu_dialog, schedule_dialog, settings_dialog, find_dialog,
         about_dialog, feedback_dialog, admin_dialog
@@ -164,6 +148,7 @@ async def main():
         await set_bot_commands(bot)
         scheduler.start()
         
+        # Запускаем сервер метрик и поллинг бота параллельно
         await asyncio.gather(
             dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
             run_metrics_server()
