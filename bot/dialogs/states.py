@@ -10,6 +10,7 @@ class Schedule(StatesGroup):
 
 class SettingsMenu(StatesGroup):
     main = State()
+    reminders_time = State()
     
 class FindMenu(StatesGroup):
     choice = State() 
@@ -19,11 +20,11 @@ class FindMenu(StatesGroup):
     view_result = State()
     
 class About(StatesGroup):
-    page_1 = State() # Приветствие
-    page_2 = State() # Основной экран
-    page_3 = State() # Поиск
-    page_4 = State() # Уведомления
-    page_5 = State() # Inline режим
+    page_1 = State()
+    page_2 = State()
+    page_3 = State()
+    page_4 = State()
+    page_5 = State()
     
 class Feedback(StatesGroup):
     enter_feedback = State()
@@ -32,3 +33,6 @@ class Admin(StatesGroup):
     menu = State()
     stats = State()
     broadcast = State()
+    enter_user_id = State()
+    user_manage = State()
+    change_group_confirm = State()

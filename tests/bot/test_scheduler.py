@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, time, date, timedelta, timezone
+from datetime import datetime, time, date, timezone
 
 from bot.scheduler import lesson_reminders_planner
 from core.config import MOSCOW_TZ
@@ -16,7 +16,7 @@ def mock_scheduler():
 @pytest.fixture
 def mock_user_data_manager():
     udm = AsyncMock()
-    udm.get_users_for_lesson_reminders.return_value = [(123, "TEST_GROUP")]
+    udm.get_users_for_lesson_reminders.return_value = [(123, "TEST_GROUP", 20)]
     return udm
 
 @pytest.fixture
@@ -31,19 +31,15 @@ def mock_timetable_manager(mocker):
     return tt_manager
 
 def mock_datetime(mocker, target_dt: datetime):
-    # Создаем класс-заменитель
     class MockDateTime(datetime):
         @classmethod
         def now(cls, tz=None):
-            # Всегда возвращаем фиксированное время, но с правильной таймзоной
             return target_dt.astimezone(tz)
         
-        # Переопределяем и другие методы, которые могут понадобиться
         @classmethod
         def combine(cls, d, t, tzinfo=None):
             return datetime.combine(d, t, tzinfo=tzinfo)
 
-    # Патчим класс datetime в модуле, где он используется
     mocker.patch('bot.scheduler.datetime', MockDateTime)
 
 
@@ -59,7 +55,6 @@ class TestLessonRemindersPlanner:
     async def test_planner_schedules_jobs_correctly_based_on_time(
         self, mocker, mock_scheduler, mock_user_data_manager, mock_timetable_manager, mock_current_time_str, expected_call_count
     ):
-        # Создаем "осознанный" объект времени для мока
         mock_now = MOSCOW_TZ.localize(datetime.combine(date.today(), time.fromisoformat(mock_current_time_str)))
         mock_datetime(mocker, mock_now)
         

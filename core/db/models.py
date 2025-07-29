@@ -1,6 +1,6 @@
 from datetime import datetime 
 
-from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean
+from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -20,3 +20,5 @@ class User(Base):
     evening_notify: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
     morning_summary: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
+
+    reminder_time_minutes: Mapped[int] = mapped_column(Integer, server_default='20', nullable=False)

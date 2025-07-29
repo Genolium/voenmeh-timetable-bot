@@ -84,7 +84,6 @@ class TestSettingsDialog:
         # Arrange
         mock_manager.user_data_manager.get_user_settings.return_value = {"evening_notify": True}
         
-        # ИСПРАВЛЕНИЕ: Создаем мок callback и ЯВНО задаем значение атрибута .id
         mock_callback = AsyncMock()
         mock_callback.from_user.id = 123
         mock_button = MagicMock(widget_id="evening_notify")

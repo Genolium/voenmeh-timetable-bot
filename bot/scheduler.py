@@ -77,7 +77,7 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
     if not users_to_plan:
         return
 
-    for user_id, group_name in users_to_plan:
+    for user_id, group_name, reminder_time in users_to_plan:
         schedule_info = global_timetable_manager_instance.get_schedule_for_day(group_name, target_date=today)
         if not (schedule_info and not schedule_info.get('error') and schedule_info.get('lessons')):
             continue
@@ -90,9 +90,8 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
         if lessons:
             try:
                 start_time_obj = datetime.strptime(lessons[0]['start_time_raw'], '%H:%M').time()
-                # ИСПРАВЛЕНИЕ: Правильное создание timezone-aware datetime
                 start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
-                reminder_dt = start_dt - timedelta(minutes=20)
+                reminder_dt = start_dt - timedelta(minutes=reminder_time)
                 
                 if reminder_dt > now_in_moscow:
                     scheduler.add_job(send_lesson_reminder_task.send, trigger=DateTrigger(run_date=reminder_dt),
@@ -103,7 +102,6 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
         for i, lesson in enumerate(lessons):
             try:
                 end_time_obj = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
-                # ИСПРАВЛЕНИЕ: Правильное создание timezone-aware datetime
                 reminder_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
                 
                 if reminder_dt > now_in_moscow:

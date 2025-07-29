@@ -1,20 +1,30 @@
 apiVersion: 1
+
 deleteDatasources:
   - name: Prometheus
   - name: Loki
+
 datasources:
+  # Источник данных Prometheus
   - name: Prometheus
     type: prometheus
+    # ПРИСВАИВАЕМ ФИКСИРОВАННЫЙ UID
+    uid: prometheus_voenmeh_bot
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+
+  # Источник данных Loki
   - name: Loki
     type: loki
+    # ПРИСВАИВАЕМ ФИКСИРОВАННЫЙ UID
+    uid: loki_voenmeh_bot
     access: proxy
     url: http://loki:3100
     jsonData:
+      # Связываем с Prometheus для корреляции логов и метрик
       derivedFields:
-        - datasourceUid: "Prometheus" # Связываем с Prometheus для корреляции логов и метрик
+        - datasourceUid: "prometheus_voenmeh_bot"
           matcherRegex: 'trace_id="(\w+)"'
           name: "TraceID"
           url: "$${__value.raw}"
