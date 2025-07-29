@@ -6,14 +6,12 @@ from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.kbd import Button, Row
 
 from .states import MainMenu, Schedule, About
+from .constants import DialogDataKeys, WidgetIds
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
 from core.config import WELCOME_IMAGE_PATH
 
 async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager):
-    """
-    Обработчик ввода группы. Проверяет, сохраняет и переходит к следующему шагу.
-    """
     group_name = message.text.upper()
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
@@ -22,31 +20,23 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
         return
 
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
-
-    # 1. Сначала регистрируем пользователя. Это создаст запись в БД, если ее нет.
     await user_data_manager.register_user(
         user_id=message.from_user.id,
         username=message.from_user.username
     )
-    
-    # 2. Теперь, когда пользователь гарантированно есть в БД, устанавливаем его группу.
     await user_data_manager.set_user_group(user_id=message.from_user.id, group=group_name)
     
-    manager.dialog_data["group"] = group_name
+    manager.dialog_data[DialogDataKeys.GROUP] = group_name
     await manager.switch_to(MainMenu.offer_tutorial)
 
 async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Переходит к расписанию, пропуская инструкцию."""
-    group_name = manager.dialog_data.get("group")
-    await manager.start(Schedule.view, data={"group": group_name}, mode=StartMode.RESET_STACK)
+    group_name = manager.dialog_data.get(DialogDataKeys.GROUP)
+    await manager.start(Schedule.view, data={DialogDataKeys.GROUP: group_name}, mode=StartMode.RESET_STACK)
 
 async def on_show_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Запускает диалог с инструкцией."""
     await manager.start(About.page_1, mode=StartMode.RESET_STACK)
 
-
 dialog = Dialog(
-    # --- Окно 1: Ввод группы ---
     Window(
         StaticMedia(path=WELCOME_IMAGE_PATH),
         Const("👋 Привет! Я бот расписания Военмеха.\n\n"
@@ -54,7 +44,6 @@ dialog = Dialog(
         MessageInput(on_group_entered),
         state=MainMenu.enter_group,
     ),
-    # --- Окно 2: Предложение инструкции ---
     Window(
         Format(
             "✅ Группа <b>{dialog_data[group]}</b> сохранена!\n\n"
@@ -63,16 +52,8 @@ dialog = Dialog(
             "Хотите посмотреть короткую инструкцию?"
         ),
         Row(
-            Button(
-                Const("📖 Показать инструкцию"), 
-                id="show_tutorial", 
-                on_click=on_show_tutorial_clicked,
-            ),
-            Button(
-                Const("Понятно, спасибо!"), 
-                id="skip_tutorial", 
-                on_click=on_skip_tutorial_clicked
-            )
+            Button(Const("📖 Показать инструкцию"), id=WidgetIds.SHOW_TUTORIAL, on_click=on_show_tutorial_clicked),
+            Button(Const("Понятно, спасибо!"), id=WidgetIds.SKIP_TUTORIAL, on_click=on_skip_tutorial_clicked)
         ),
         state=MainMenu.offer_tutorial
     )

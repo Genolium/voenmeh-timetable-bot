@@ -11,6 +11,7 @@ from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotComman
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
 from dotenv import load_dotenv
 from prometheus_client import start_http_server 
+from pythonjsonlogger import jsonlogger
 from redis.asyncio.client import Redis
 
 # --- Импорты ядра ---
@@ -37,8 +38,20 @@ from bot.dialogs.settings_menu import settings_dialog
 # --- Импорты состояний ---
 from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
 
-# Настройка простого логирования в консоль
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+# --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
+def setup_logging():
+    """Настраивает JSON логирование."""
+    logHandler = logging.StreamHandler()
+    # Используем JsonFormatter для вывода логов в формате JSON
+    formatter = jsonlogger.JsonFormatter(
+        '%(asctime)s %(name)s %(levelname)s %(message)s %(user_id)s %(event_type)s'
+    )
+    logHandler.setFormatter(formatter)
+    
+    # Устанавливаем обработчик для корневого логгера
+    logging.basicConfig(level=logging.INFO, handlers=[logHandler])
+    # Устанавливаем уровень для логгера aiogram, чтобы не видеть слишком много системных сообщений
+    logging.getLogger('aiogram').setLevel(logging.WARNING)
 
 async def set_bot_commands(bot: Bot):
     """Устанавливает меню команд для пользователей и администраторов."""
@@ -88,18 +101,18 @@ async def run_metrics_server(port: int = 8000):
 
 # --- Основная функция запуска ---
 async def main():
+    setup_logging()  # Вызываем настройку логирования
     load_dotenv()
 
     bot_token = os.getenv("BOT_TOKEN")
     redis_url = os.getenv("REDIS_URL")
-    redis_password = os.getenv("REDIS_PASSWORD")
     db_url = os.getenv("DATABASE_URL")
 
-    if not all([bot_token, redis_url, redis_password, db_url]):
-        logging.critical("Одна из критически важных переменных окружения не найдена (BOT_TOKEN, REDIS_URL, REDIS_PASSWORD, DATABASE_URL).")
+    if not all([bot_token, redis_url, db_url]):
+        logging.critical("Одна из критически важных переменных окружения не найдена (BOT_TOKEN, REDIS_URL, DATABASE_URL).")
         return
 
-    redis_client = Redis.from_url(redis_url, password=redis_password)
+    redis_client = Redis.from_url(redis_url)
     
     timetable_manager = await TimetableManager.create(redis_client=redis_client)
     if not timetable_manager:
@@ -124,7 +137,7 @@ async def main():
     # Подключение Middleware
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
-    dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик
+    dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
     dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot}))
 
     # Регистрация диалогов и хэндлеров
@@ -148,7 +161,6 @@ async def main():
         await set_bot_commands(bot)
         scheduler.start()
         
-        # Запускаем сервер метрик и поллинг бота параллельно
         await asyncio.gather(
             dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
             run_metrics_server()

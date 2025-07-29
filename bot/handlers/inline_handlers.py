@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
 from core.manager import TimetableManager
-from bot.utils import format_schedule_text
+from bot.text_formatters import format_schedule_text
 from core.config import MOSCOW_TZ
 
 # Словарь для парсинга дней недели

@@ -1,10 +1,9 @@
 import pytest
 from unittest.mock import MagicMock, AsyncMock
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 
 from aiogram_dialog import StartMode
 from bot.dialogs.schedule_view import (
-    generate_dynamic_header,
     get_schedule_data,
     on_date_shift,
     on_today_click,
@@ -14,7 +13,6 @@ from bot.dialogs.schedule_view import (
 )
 from bot.dialogs.states import Schedule, MainMenu, SettingsMenu, FindMenu
 from core.config import MOSCOW_TZ
-
 
 @pytest.fixture
 def mock_manager():
@@ -31,45 +29,6 @@ def lessons_sample():
         {'start_time_raw': '09:00', 'end_time_raw': '10:30', 'subject': 'Матан', 'time': '09:00-10:30'},
         {'start_time_raw': '10:40', 'end_time_raw': '12:10', 'subject': 'Физика', 'time': '10:40-12:10'}
     ]
-
-class TestGenerateDynamicHeader:
-
-    # Ожидаемый результат теперь включает HTML-теги, эмодзи и знаки препинания
-    @pytest.mark.parametrize("mock_time_str, expected_header", [
-        ("08:00", "☀️ <b>Доброе утро!</b> Первая пара в 09:00."),
-        ("09:30", "⏳ <b>Идет пара:</b> Матан.\nЗакончится в 10:30."),
-        ("10:35", "☕️ <b>Перерыв до 10:40.</b>\nСледующая пара: Физика."),
-        ("11:00", "⏳ <b>Идет пара:</b> Физика.\nЗакончится в 12:10."),
-        ("13:00", "✅ <b>Пары на сегодня закончились.</b> Отдыхайте!"),
-        ("04:00", "🌙 <b>Поздняя ночь.</b> Скоро утро!"),
-    ])
-    def test_header_for_today(self, mocker, lessons_sample, mock_time_str, expected_header):
-        today = datetime.now(MOSCOW_TZ).date()
-        mock_time = time.fromisoformat(mock_time_str)
-        mocked_now_dt = datetime.combine(today, mock_time, tzinfo=MOSCOW_TZ)
-        
-        mock_datetime = mocker.patch('bot.dialogs.schedule_view.datetime')
-        mock_datetime.now.return_value = mocked_now_dt
-        mock_datetime.strptime = datetime.strptime
-
-        header, progress_bar = generate_dynamic_header(lessons_sample, today)
-        
-        assert header == expected_header
-        assert "Прогресс дня" in progress_bar
-
-    def test_header_not_today(self, lessons_sample):
-        not_today = datetime.now(MOSCOW_TZ).date() + timedelta(days=1)
-        header, progress_bar = generate_dynamic_header(lessons_sample, not_today)
-        assert header == ""
-        assert progress_bar == ""
-
-    def test_header_no_lessons(self, mocker):
-        today = datetime.now(MOSCOW_TZ).date()
-        mocker.patch('bot.dialogs.schedule_view.datetime', MagicMock(now=lambda tz: datetime.combine(today, time(12,0), tzinfo=MOSCOW_TZ)))
-        header, progress_bar = generate_dynamic_header([], today)
-        assert "Сегодня занятий нет" in header
-        assert progress_bar == ""
-
 
 @pytest.mark.asyncio
 class TestScheduleViewHandlers:

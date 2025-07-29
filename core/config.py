@@ -14,30 +14,38 @@ DAY_MAP = ['Понедельник', 'Вторник', 'Среда', 'Четве
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # --- Настройки базы данных и Redis ---
-DATABASE_FILENAME = Path('data/users.db')
 # Интервал проверки изменений в расписании на сайте (в минутах)
 CHECK_INTERVAL_MINUTES = 30
 # Имена ключей в Redis
 REDIS_SCHEDULE_CACHE_KEY = "timetable:schedule_cache"
 REDIS_SCHEDULE_HASH_KEY = "timetable:schedule_hash"
 
-# --- Пути к медиафайлам ---
+# --- Пути к медиа- и скриншот-файлам ---
 MEDIA_PATH = BASE_DIR / "bot" / "media"
+SCREENSHOTS_PATH = BASE_DIR / "bot" / "screenshots"
+
+# Основные медиа
 WELCOME_IMAGE_PATH = MEDIA_PATH / "welcome.png"
 NO_LESSONS_IMAGE_PATH = MEDIA_PATH / "no_lessons.png"
+
+# Медиа для диалога поиска
 SEARCH_IMAGE_PATH = MEDIA_PATH / "search_main.png"
 TEACHER_IMAGE_PATH = MEDIA_PATH / "search_teacher.png"
 CLASSROOM_IMAGE_PATH = MEDIA_PATH / "search_classroom.png"
 
+# Скриншоты для туториала (About)
+ABOUT_WELCOME_IMG = SCREENSHOTS_PATH / "about_welcome.png"
+ABOUT_MAIN_SCREEN_IMG = SCREENSHOTS_PATH / "about_main_screen.png"
+ABOUT_SEARCH_IMG = SCREENSHOTS_PATH / "about_search.png"
+ABOUT_NOTIFICATIONS_IMG = SCREENSHOTS_PATH / "about_notifications.png"
+ABOUT_INLINE_IMG = SCREENSHOTS_PATH / "about_inline.png"
 
+# --- Настройки API ---
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
-# ID города Санкт-Петербург (можно найти на https://openweathermap.org/find?q=Saint+Petersburg)
-OPENWEATHERMAP_CITY_ID = "498817" # Saint Petersburg, Russia
-# Единицы измерения: metric (Цельсий), imperial (Фаренгейт), standard (Кельвин)
+OPENWEATHERMAP_CITY_ID = "498817"
 OPENWEATHERMAP_UNITS = "metric"
 
-
-
+# --- Настройки администратора и обратной связи ---
 admin_ids_str = os.getenv("ADMIN_ID")
 ADMIN_IDS = []
 if admin_ids_str:
@@ -45,7 +53,5 @@ if admin_ids_str:
         ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(',') if admin_id.strip()]
     except ValueError:
         print("ОШИБКА: Неверный формат ADMIN_IDS. ID должны быть числами, разделенными запятой.")
-        
-        
         
 FEEDBACK_CHAT_ID = os.getenv("FEEDBACK_CHAT_ID")

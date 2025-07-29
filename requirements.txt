@@ -13,9 +13,9 @@ attrs==25.3.0
 cachetools==5.5.2
 certifi==2025.6.15
 charset-normalizer==3.4.2
+coverage==7.10.1
 dramatiq==1.18.0
 frozenlist==1.7.0
-gevent==25.5.1
 greenlet==3.2.3
 idna==3.10
 iniconfig==2.1.0
@@ -34,8 +34,10 @@ pydantic_core==2.33.2
 Pygments==2.19.2
 pytest==8.4.1
 pytest-asyncio==1.0.0
+pytest-cov==6.2.1
 pytest-mock==3.14.1
 python-dotenv==1.1.1
+python-json-logger==3.3.0
 pytz==2025.2
 redis==6.2.0
 requests==2.32.4
@@ -46,7 +48,6 @@ typing_extensions==4.14.0
 tzlocal==5.3.1
 urllib3==2.5.0
 watchdog==6.0.0
-watchdog_gevent==0.2.1
 yarl==1.20.1
 zope.event==5.1
 zope.interface==7.2

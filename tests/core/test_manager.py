@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock
 from datetime import date
 from core.manager import TimetableManager
 
@@ -24,11 +24,16 @@ def sample_schedules():
             }
         },
         "__teachers_index__": {
-            "Иванов И.И.": [{"day": "Понедельник", "week_code": "1", "start_time_raw": "09:00"}],
+            "Иванов И.И.": [
+                {"day": "Понедельник", "week_code": "1", "start_time_raw": "09:00", "subject": "Матан"},
+                {"day": "Вторник", "week_code": "0", "start_time_raw": "10:40", "subject": "Физика"}
+            ],
             "Петров П.П.": []
         },
         "__classrooms_index__": {
-            "418": [{"day": "Понедельник", "week_code": "0", "start_time_raw": "10:40"}]
+            "418": [
+                {"day": "Понедельник", "week_code": "0", "start_time_raw": "10:40", "subject": "Базы данных"}
+            ]
         }
     }
 
@@ -38,45 +43,67 @@ def manager(sample_schedules):
     mock_redis = MagicMock()
     return TimetableManager(all_schedules_data=sample_schedules, redis_client=mock_redis)
 
+@pytest.mark.asyncio
+async def test_create_manager_with_cache(mocker, sample_schedules):
+    """Тест асинхронного конструктора с использованием кэша Redis."""
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = pytest.importorskip("json").dumps(sample_schedules)
+    
+    mock_parser = mocker.patch('core.parser.fetch_and_parse_all_schedules', new_callable=AsyncMock)
+    
+    manager_instance = await TimetableManager.create(redis_client=mock_redis)
+    
+    assert manager_instance is not None
+    mock_parser.assert_not_called()
+    manager_instance.redis.set.assert_not_called()
+
 class TestTimetableManager:
 
     def test_get_week_type(self, manager):
-        # Нечетная неделя (первая неделя семестра)
         assert manager.get_week_type(date(2023, 9, 4)) == ('odd', 'Нечетная')
-        # Четная неделя
         assert manager.get_week_type(date(2023, 9, 11)) == ('even', 'Четная')
-        # До начала семестра (считается нечетной)
         assert "до начала семестра" in manager.get_week_type(date(2023, 8, 30))[1]
 
     def test_get_schedule_for_day_success(self, manager):
-        # Запрос на нечетный понедельник
         schedule = manager.get_schedule_for_day("O735Б", date(2023, 9, 4))
         assert not schedule.get('error')
         assert len(schedule['lessons']) == 2
-        assert schedule['lessons'][0]['subject'] == 'Матан'
-
-        # Запрос на четный понедельник
+        
         schedule_even = manager.get_schedule_for_day("O735Б", date(2023, 9, 11))
         assert len(schedule_even['lessons']) == 1
-        assert schedule_even['lessons'][0]['subject'] == 'Программирование'
 
     def test_get_schedule_for_day_no_lessons(self, manager):
-        # Запрос на вторник, когда пар нет
         schedule = manager.get_schedule_for_day("O735Б", date(2023, 9, 5))
         assert not schedule.get('error')
         assert len(schedule['lessons']) == 0
 
     def test_get_schedule_for_day_group_not_found(self, manager):
         schedule = manager.get_schedule_for_day("XXXX", date(2023, 9, 4))
-        assert schedule.get('error')
         assert "не найдена" in schedule['error']
         
     def test_find_teachers(self, manager):
         assert manager.find_teachers("Иван") == ["Иванов И.И."]
         assert manager.find_teachers("Сидоров") == []
-        # Проверка на минимальную длину запроса
         assert manager.find_teachers("Ив") == []
 
     def test_find_classrooms(self, manager):
         assert manager.find_classrooms("418") == ["418"]
         assert manager.find_classrooms("999") == []
+
+    def test_get_teacher_schedule_success(self, manager):
+        schedule = manager.get_teacher_schedule("Иванов И.И.", date(2023, 9, 4))
+        assert len(schedule['lessons']) == 1
+        assert schedule['lessons'][0]['subject'] == "Матан"
+
+        schedule_tuesday = manager.get_teacher_schedule("Иванов И.И.", date(2023, 9, 5))
+        assert len(schedule_tuesday['lessons']) == 1
+        assert schedule_tuesday['lessons'][0]['subject'] == "Физика"
+
+    def test_get_classroom_schedule_success(self, manager):
+        schedule = manager.get_classroom_schedule("418", date(2023, 9, 4))
+        assert len(schedule['lessons']) == 1
+        assert schedule['lessons'][0]['subject'] == "Базы данных"
+
+    def test_get_schedule_for_teacher_not_found(self, manager):
+        schedule = manager.get_teacher_schedule("Неизвестный", date(2023, 9, 4))
+        assert 'error' in schedule

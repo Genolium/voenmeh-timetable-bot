@@ -21,32 +21,25 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      migrator:
-        condition: service_completed_successfully
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
     command: python main.py
 
   worker:
     <<: *base-app-service
     container_name: voenmeh_worker
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      migrator:
-        condition: service_completed_successfully
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrator: { condition: service_completed_successfully }
     command: python -m dramatiq bot.tasks 
 
   migrator:
     <<: *base-app-service
     container_name: voenmeh_migrator
     depends_on:
-      db:
-        condition: service_healthy
+      db: { condition: service_healthy }
     command: sh -c "python -m alembic upgrade head && python migrate_data.py"
     restart: "no"
 
@@ -55,8 +48,7 @@ services:
     container_name: voenmeh_postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    env_file:
-      - .env
+    env_file: [ .env ]
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
@@ -69,8 +61,7 @@ services:
     container_name: voenmeh_redis
     volumes:
       - redis_data:/data
-    env_file: 
-      - .env
+    env_file: [ .env ]
     command: redis-server --requirepass ${REDIS_PASSWORD}
     restart: unless-stopped
     healthcheck:
@@ -85,12 +76,8 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
-    ports:
-      - "9090:9090" 
-    command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-    depends_on:
-      - bot
+    ports: [ "9090:9090" ]
+    command: [ '--config.file=/etc/prometheus/prometheus.yml' ]
     restart: unless-stopped
     
   grafana:
@@ -99,13 +86,31 @@ services:
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
+    ports: [ "3000:3000" ]
+    env_file: [ .env ]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:2.9.0
+    container_name: voenmeh_loki
+    command: -config.file=/etc/loki/local-config.yaml
     ports:
-      - "3000:3000" 
-    env_file:
-      - .env
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:2.9.0
+    container_name: voenmeh_promtail
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock # Даем доступ к логам Docker
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml
+      - promtail_data:/var/lib/promtail/positions # Сохраняем позицию чтения логов
     depends_on:
-      - prometheus
-      - db
+      - loki
     restart: unless-stopped
 
 volumes:
@@ -113,3 +118,5 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
+  loki_data:       
+  promtail_data:   
