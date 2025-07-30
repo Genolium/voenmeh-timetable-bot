@@ -95,7 +95,7 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                 
                 if reminder_dt > now_in_moscow:
                     scheduler.add_job(send_lesson_reminder_task.send, trigger=DateTrigger(run_date=reminder_dt),
-                                      args=(user_id, lessons[0], "first", None), id=f"reminder_{user_id}_{today.isoformat()}_first", replace_existing=True)
+                                      args=(user_id, lessons[0], "first", None, reminder_time), id=f"reminder_{user_id}_{today.isoformat()}_first", replace_existing=True)
             except (ValueError, KeyError) as e:
                 logger.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
 
@@ -114,7 +114,7 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                         break_duration = int((datetime.combine(today, next_start_time_obj) - datetime.combine(today, end_time_obj)).total_seconds() / 60)
                     
                     scheduler.add_job(send_lesson_reminder_task.send, trigger=DateTrigger(run_date=reminder_dt),
-                                      args=(user_id, next_lesson, reminder_type, break_duration), id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}", replace_existing=True)
+                                      args=(user_id, next_lesson, reminder_type, break_duration, None), id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}", replace_existing=True)
             except (ValueError, KeyError) as e:
                  logger.warning(f"Ошибка планирования напоминания в перерыве для user_id={user_id}: {e}")
 

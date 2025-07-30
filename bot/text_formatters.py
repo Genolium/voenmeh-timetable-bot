@@ -280,10 +280,10 @@ def generate_morning_intro(weather_forecast: Dict[str, Any] | None) -> str:
         weather_block = f"За окном сейчас {description.capitalize()}, {temp}°C."
     return f"{greeting_line}\n{weather_block}\n"
 
-def generate_reminder_text(lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None) -> str | None:
+def generate_reminder_text(lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None, reminder_time_minutes: int | None = 20) -> str | None:
     text = ""
     if reminder_type == "first" and lesson:
-        greetings = ["Первая пара через 20 минут!", "Скоро начало, не опаздывайте!", "Готовимся к первой паре!"]
+        greetings = [f"Первая пара через {reminder_time_minutes} минут!", "Скоро начало, не опаздывайте!", "Готовимся к первой паре!"]
         text = f"🔔 <b>{random.choice(greetings)}</b>\n\n"
     elif reminder_type == "break" and lesson:
         next_lesson_time = lesson.get('time', 'N/A').split('-')[0].strip()

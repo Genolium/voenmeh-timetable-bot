@@ -73,6 +73,7 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: voenmeh_prometheus
+    profiles: ["monitoring"]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -83,6 +84,7 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     container_name: voenmeh_grafana
+    profiles: ["monitoring"]
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
@@ -93,6 +95,7 @@ services:
   loki:
     image: grafana/loki:2.9.0
     container_name: voenmeh_loki
+    profiles: ["monitoring"]
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
@@ -104,6 +107,7 @@ services:
   promtail:
     image: grafana/promtail:2.9.0
     container_name: voenmeh_promtail
+    profiles: ["monitoring"]
     command: -config.file=/etc/promtail/config.yml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Даем доступ к логам Docker
@@ -119,4 +123,4 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:       
-  promtail_data:   
+  promtail_data:

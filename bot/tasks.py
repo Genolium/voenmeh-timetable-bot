@@ -60,9 +60,9 @@ def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
     LOOP.run_until_complete(_copy_message(user_id, from_chat_id, message_id))
 
 @dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
-def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None):
+def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None, reminder_time_minutes: int | None = None):
     try:
-        text_to_send = generate_reminder_text(lesson, reminder_type, break_duration)
+        text_to_send = generate_reminder_text(lesson, reminder_type, break_duration, reminder_time_minutes)
         if text_to_send:
             send_message_task.send(user_id, text_to_send)
     except Exception as e:

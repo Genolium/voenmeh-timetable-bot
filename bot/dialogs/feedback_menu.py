@@ -37,6 +37,8 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     await message.answer(
         "✅ <b>Спасибо! Ваш отзыв отправлен.</b>\n"
         "Мы ценим вашу помощь в улучшении бота!\n\n"
+        "P.S. Все новости и обновления мы публикуем в нашем канале "
+        "<a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a>. Подписывайтесь, чтобы быть в курсе!\n\n"
         "<i>Вы можете вернуться в главное меню командой /start.</i>"
     )
     await manager.done()
