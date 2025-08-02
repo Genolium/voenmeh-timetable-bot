@@ -1,3 +1,6 @@
+import random
+from thefuzz import process
+
 from aiogram.types import Message, CallbackQuery
 from aiogram_dialog import Dialog, Window, DialogManager, StartMode
 from aiogram_dialog.widgets.text import Const, Format
@@ -11,14 +14,43 @@ from core.manager import TimetableManager
 from core.user_data import UserDataManager
 from core.config import WELCOME_IMAGE_PATH
 
+async def get_main_menu_data(dialog_manager: DialogManager, **kwargs):
+    """
+    Выбирает случайную группу для примера в приветственном сообщении.
+    """
+    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
+    # Получаем список групп, исключая служебные ключи
+    groups = [g for g in manager._schedules.keys() if not g.startswith('__')]
+    
+    # Выбираем случайную группу или используем запасной вариант
+    random_group = random.choice(groups) if groups else "О735Б"
+    
+    return {"random_group": random_group}
+
+
 async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager):
     group_name = message.text.upper()
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    all_groups = [g for g in timetable_manager._schedules.keys() if not g.startswith('__')]
 
-    if group_name not in timetable_manager._schedules:
-        await message.answer(f"❌ Группа <b>{group_name}</b> не найдена.\nПопробуйте еще раз. Например: <i>О735Б</i>")
-        return
+    # Проверяем прямое совпадение
+    if group_name not in all_groups:
+        # Если прямого совпадения нет, ищем похожие
+        suggestions = process.extract(group_name, all_groups, limit=3)
+        good_suggestions = [s[0] for s in suggestions if s[1] > 75]
 
+        if good_suggestions:
+            # Форматируем каждый предложенный вариант
+            formatted_suggestions = [f"<code>{s}</code>" for s in good_suggestions]
+            # Соединяем варианты через ", или " для правильного перечисления
+            suggestion_text = ", или ".join(formatted_suggestions)
+            await message.answer(f"❌ Группа <b>{group_name}</b> не найдена.\nВозможно, вы имели в виду: {suggestion_text}?")
+        else:
+            # Если нет даже похожих, выводим стандартное сообщение
+            await message.answer(f"❌ Группа <b>{group_name}</b> не найдена.\nПопробуйте еще раз.")
+        return # В любом случае, если не было точного совпадения, выходим
+
+    # Этот код выполнится только если было точное совпадение
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.register_user(
         user_id=message.from_user.id,
@@ -28,6 +60,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
     
     manager.dialog_data[DialogDataKeys.GROUP] = group_name
     await manager.switch_to(MainMenu.offer_tutorial)
+
 
 async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     group_name = manager.dialog_data.get(DialogDataKeys.GROUP)
@@ -39,10 +72,13 @@ async def on_show_tutorial_clicked(callback: CallbackQuery, button: Button, mana
 dialog = Dialog(
     Window(
         StaticMedia(path=WELCOME_IMAGE_PATH),
-        Const("👋 Привет! Я бот расписания Военмеха.\n\n"
-              "Чтобы начать, введите номер вашей группы:"),
+        Format("👋 Привет! Я бот расписания Военмеха.\n\n"
+               "Чтобы начать, введите номер вашей группы:\n"
+               "<i>Например: {random_group}</i>"),
         MessageInput(on_group_entered),
         state=MainMenu.enter_group,
+        getter=get_main_menu_data,
+        parse_mode="HTML"
     ),
     Window(
         Format(
