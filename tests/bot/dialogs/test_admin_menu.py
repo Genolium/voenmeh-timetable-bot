@@ -4,7 +4,8 @@ from datetime import datetime
 
 from bot.dialogs.admin_menu import (
     on_test_morning, on_test_evening, on_broadcast_received, get_stats_data, 
-    on_period_selected, on_user_id_input, on_new_group_input
+    on_period_selected, on_user_id_input, on_new_group_input,
+    on_test_alert, on_segment_criteria_input, on_template_input_message, get_preview_data, on_confirm_segment_send
 )
 from bot.tasks import copy_message_task 
 from core.metrics import TASKS_SENT_TO_QUEUE 
@@ -133,3 +134,51 @@ class TestAdminMenu:
         udm.set_user_group.assert_called_once_with(12345, "О735Б")
         mock_message.answer.assert_called_once()
         mock_manager.switch_to.assert_called_once_with(Admin.user_manage)
+
+    async def test_on_test_alert(self, mock_manager):
+        mock_callback = AsyncMock()
+        await on_test_alert(mock_callback, None, mock_manager)
+        mock_callback.answer.assert_called_once()
+        bot = mock_manager.middleware_data["bot"]
+        bot.send_message.assert_called()
+
+    async def test_on_segment_criteria_input_parse(self, mock_manager):
+        mock_message = AsyncMock(text="О7|7")
+        await on_segment_criteria_input(mock_message, None, mock_manager, mock_message.text)
+        assert mock_manager.dialog_data['segment_group_prefix'] == "О7"
+        assert mock_manager.dialog_data['segment_days_active'] == 7
+        mock_manager.switch_to.assert_called_with(Admin.template_input)
+
+    async def test_on_template_input_and_preview(self, mock_manager):
+        mock_message = AsyncMock(text="Hi {user_id} {username} {group}")
+        await on_template_input_message(mock_message, None, mock_manager)
+        assert mock_manager.dialog_data['segment_template']
+        mock_manager.switch_to.assert_called_with(Admin.preview)
+
+        # подготовим данные для превью
+        udm = mock_manager.middleware_data["user_data_manager"]
+        mock_manager.dialog_data['segment_group_prefix'] = ""
+        mock_manager.dialog_data['segment_days_active'] = None
+        udm.get_all_user_ids.return_value = [1]
+        user = User(user_id=1, username="u", group="G")
+        udm.get_full_user_info.return_value = user
+
+        data = await get_preview_data(dialog_manager=mock_manager)
+        assert data['selected_count'] == 1
+        assert "Hi" in data['preview_text']
+
+    async def test_on_confirm_segment_send(self, mock_manager, mocker):
+        udm = mock_manager.middleware_data["user_data_manager"]
+        mock_manager.dialog_data['segment_template'] = "Hello {user_id}"
+        mock_manager.dialog_data['segment_selected_ids'] = [1, 2]
+        udm.get_full_user_info.side_effect = [
+            User(user_id=1, username="a", group="G"),
+            User(user_id=2, username="b", group="H"),
+        ]
+        send_mock = mocker.patch('bot.dialogs.admin_menu.send_message_task.send')
+        mocker.patch('core.metrics.TASKS_SENT_TO_QUEUE.labels', return_value=MagicMock(inc=MagicMock()))
+
+        mock_callback = AsyncMock()
+        await on_confirm_segment_send(mock_callback, None, mock_manager)
+        assert send_mock.call_count == 2
+        mock_manager.switch_to.assert_called_with(Admin.menu)

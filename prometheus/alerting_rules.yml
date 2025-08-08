@@ -1,0 +1,30 @@
+groups:
+- name: voenmeh_bot_alerts
+  rules:
+  - alert: HighErrorRate
+    expr: increase(bot_errors_total{source=~"parser|weather|handler|tasks"}[5m]) > 20
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High error rate detected"
+      description: "bot_errors_total increased by more than 20 in the last 5 minutes."
+
+  - alert: RetryStorm
+    expr: increase(bot_retries_total{component=~"parser|weather|tasks"}[5m]) > 50
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Retries are surging"
+      description: "bot_retries_total increased by more than 50 in the last 5 minutes."
+
+  - alert: ScheduleStale
+    expr: time() - bot_last_schedule_update_timestamp > 3600
+    for: 15m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Schedule cache is stale"
+      description: "No schedule updates recorded for more than 1 hour."
+

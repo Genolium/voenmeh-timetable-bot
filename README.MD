@@ -100,13 +100,28 @@ cd voenmeh-timetable-bot
 ### 4. Управление и доступ к сервисам
 
 - **Grafana (метрики):** `http://localhost:3000` (login/pass: `admin`/`admin`)
-- **Prometheus:** `http://localhost:9090`
+- **Prometheus:** `http://localhost:9090` (алёрты → Alertmanager → Webhook → бот уведомляет `ADMIN_IDS`)
 
 - **Посмотреть логи всех сервисов в реальном времени:**
   ```bash
   docker-compose logs -f
   ```
 - **Остановить все сервисы:**
+
+## 🔔 Алёрты и уведомления администраторов
+
+Проект содержит Prometheus-правила алёртов (`prometheus/alerting_rules.yml`) и экспортирует метрики:
+
+- `bot_errors_total{source}` — ошибки по источникам (`parser`, `weather`, `handler`, `tasks`)
+- `bot_retries_total{component}` — ретраи (`parser`, `weather`, `tasks`)
+- `bot_last_schedule_update_timestamp` — метка времени последнего успешного обновления расписания
+
+Чтобы подключить алёрты:
+
+1. Prometheus уже читает `alerting_rules.yml` (см. `prometheus/prometheus.yml`).
+2. В составе docker-compose поднят `alertmanager` (порт `9093`) с маршрутом webhook на `http://bot:8010/alerts`.
+3. Бот принимает алёрты и шлет сообщения всем `ADMIN_IDS`.
+
   ```bash
   docker-compose down
   ```

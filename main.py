@@ -6,16 +6,18 @@ import sys
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandStart
-from aiogram.fsm.storage.redis import RedisStorage, DefaultKeyBuilder
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
 from dotenv import load_dotenv
 from prometheus_client import start_http_server 
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger.json import JsonFormatter
 from redis.asyncio.client import Redis
 
 # --- Импорты ядра ---
 from core.config import ADMIN_IDS
+from core.alert_webhook import run_alert_webhook_server
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
 
@@ -43,7 +45,7 @@ def setup_logging():
     """Настраивает JSON логирование."""
     logHandler = logging.StreamHandler()
     # Используем JsonFormatter для вывода логов в формате JSON
-    formatter = jsonlogger.JsonFormatter(
+    formatter = JsonFormatter(
         '%(asctime)s %(name)s %(levelname)s %(message)s %(user_id)s %(event_type)s'
     )
     logHandler.setFormatter(formatter)
@@ -76,7 +78,15 @@ async def set_bot_commands(bot: Bot):
 
 # --- Обработчики команд ---
 async def start_command_handler(message: Message, dialog_manager: DialogManager):
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
+    if not isinstance(user_data_manager, UserDataManager):
+        logging.error("UserDataManager is not available or has an invalid type in middleware data.")
+        return
+
+    if not message.from_user or not hasattr(message.from_user, "id"):
+        logging.error("Message.from_user is None or does not have an 'id' attribute.")
+        return
+
     saved_group = await user_data_manager.get_user_group(message.from_user.id)
     if saved_group:
         await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
@@ -112,19 +122,19 @@ async def main():
         logging.critical("Одна из критически важных переменных окружения не найдена (BOT_TOKEN, REDIS_URL, DATABASE_URL).")
         return
 
-    redis_client = Redis.from_url(redis_url)
+    redis_client = Redis.from_url(redis_url or "")
     
     timetable_manager = await TimetableManager.create(redis_client=redis_client)
     if not timetable_manager:
         logging.critical("Критическая ошибка: не удалось инициализировать TimetableManager. Запуск отменен.")
         return
     
-    user_data_manager = UserDataManager(db_url=db_url)
+    user_data_manager = UserDataManager(db_url=db_url or "")
     logging.info("Менеджеры данных инициализированы.")
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))
     default_properties = DefaultBotProperties(parse_mode="HTML")
-    bot = Bot(token=bot_token, default=default_properties)
+    bot = Bot(token=bot_token or "", default=default_properties)
     dp = Dispatcher(storage=storage)
 
     scheduler = setup_scheduler(
@@ -156,14 +166,15 @@ async def main():
         dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
     dp.inline_query.register(inline_query_handler)
 
-    logging.info("Запуск бота, планировщика и сервера метрик...")
+    logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
     try:
         await set_bot_commands(bot)
         scheduler.start()
         
         await asyncio.gather(
             dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
-            run_metrics_server()
+            run_metrics_server(),
+            run_alert_webhook_server(bot, ADMIN_IDS)
         )
     finally:
         scheduler.shutdown()

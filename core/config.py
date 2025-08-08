@@ -15,7 +15,7 @@ MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # --- Настройки базы данных и Redis ---
 # Интервал проверки изменений в расписании на сайте (в минутах)
-CHECK_INTERVAL_MINUTES = 30
+CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 30))
 # Имена ключей в Redis
 REDIS_SCHEDULE_CACHE_KEY = "timetable:schedule_cache"
 REDIS_SCHEDULE_HASH_KEY = "timetable:schedule_hash"

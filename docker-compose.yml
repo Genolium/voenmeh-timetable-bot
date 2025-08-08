@@ -23,8 +23,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-      migrator: { condition: service_completed_successfully }
-    command: python main.py
+    command: sh -c "python -m alembic upgrade head && python main.py"
 
   worker:
     <<: *base-app-service
@@ -32,16 +31,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-      migrator: { condition: service_completed_successfully }
     command: python -m dramatiq bot.tasks 
-
-  migrator:
-    <<: *base-app-service
-    container_name: voenmeh_migrator
-    depends_on:
-      db: { condition: service_healthy }
-    command: sh -c "python -m alembic upgrade head && python migrate_data.py"
-    restart: "no"
 
   db:
     image: postgres:15-alpine
@@ -73,9 +63,9 @@ services:
   prometheus:
     image: prom/prometheus:v2.53.0
     container_name: voenmeh_prometheus
-    profiles: ["monitoring"]
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus/alerting_rules.yml:/etc/prometheus/alerting_rules.yml
       - prometheus_data:/prometheus
     ports: [ "9090:9090" ]
     command: [ '--config.file=/etc/prometheus/prometheus.yml' ]
@@ -84,18 +74,27 @@ services:
   grafana:
     image: grafana/grafana:11.1.0
     container_name: voenmeh_grafana
-    profiles: ["monitoring"]
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana_data:/var/lib/grafana
     ports: [ "3000:3000" ]
     env_file: [ .env ]
+    environment:
+      - GF_ALERTING_ENABLED=true
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    container_name: voenmeh_alertmanager
+    ports: [ "9093:9093" ]
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command: [ '--config.file=/etc/alertmanager/alertmanager.yml' ]
     restart: unless-stopped
 
   loki:
     image: grafana/loki:2.9.0
     container_name: voenmeh_loki
-    profiles: ["monitoring"]
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
@@ -107,7 +106,6 @@ services:
   promtail:
     image: grafana/promtail:2.9.0
     container_name: voenmeh_promtail
-    profiles: ["monitoring"]
     command: -config.file=/etc/promtail/config.yml
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # Даем доступ к логам Docker

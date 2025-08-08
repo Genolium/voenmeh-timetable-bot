@@ -3,6 +3,11 @@ import xml.etree.ElementTree as ET
 import hashlib
 from datetime import datetime, timedelta
 from core.config import API_URL, USER_AGENT
+from core.metrics import ERRORS_TOTAL, RETRIES_TOTAL
+
+# Заготовки для условного кэширования
+_LAST_ETAG: str | None = None
+_LAST_MODIFIED: str | None = None
 
 async def fetch_and_parse_all_schedules() -> dict | None:
     """
@@ -11,10 +16,32 @@ async def fetch_and_parse_all_schedules() -> dict | None:
     """
     print("Асинхронная загрузка полного расписания с сервера...")
     try:
-        async with aiohttp.ClientSession(headers={'User-Agent': USER_AGENT}) as session:
-            async with session.get(API_URL, timeout=15) as response:
-                response.raise_for_status()
-                xml_bytes = await response.read()
+        global _LAST_ETAG, _LAST_MODIFIED
+        headers = {'User-Agent': USER_AGENT}
+        if _LAST_ETAG:
+            headers['If-None-Match'] = _LAST_ETAG
+        if _LAST_MODIFIED:
+            headers['If-Modified-Since'] = _LAST_MODIFIED
+
+        async with aiohttp.ClientSession(headers=headers) as session:
+            attempts = 0
+            while True:
+                try:
+                    attempts += 1
+                    async with session.get(API_URL, timeout=15) as response:
+                        response.raise_for_status()
+                        if response.status == 304:
+                            return None
+                        xml_bytes = await response.read()
+                        _LAST_ETAG = response.headers.get('ETag') or _LAST_ETAG
+                        _LAST_MODIFIED = response.headers.get('Last-Modified') or _LAST_MODIFIED
+                        break
+                except Exception:
+                    ERRORS_TOTAL.labels(source='parser').inc()
+                    if attempts < 3:
+                        RETRIES_TOTAL.labels(component='parser').inc()
+                        continue
+                    raise
         
         xml_data = xml_bytes.decode('utf-16').strip()
         current_hash = hashlib.md5(xml_bytes).hexdigest()
@@ -116,5 +143,6 @@ async def fetch_and_parse_all_schedules() -> dict | None:
         return all_schedules
         
     except Exception as e:
+        ERRORS_TOTAL.labels(source='parser').inc()
         print(f"Произошла ошибка при загрузке и парсинге: {e}")
         return None

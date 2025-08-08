@@ -8,7 +8,6 @@ WORKDIR /app
 
 COPY requirements.txt .
 COPY alembic.ini .
-COPY migrate_data.py .
 COPY migrations/ ./migrations/
 COPY core/ ./core/
 COPY bot/ ./bot/
@@ -31,7 +30,6 @@ COPY --from=builder /app/bot ./bot
 COPY --from=builder /app/core ./core
 COPY --from=builder /app/main.py .
 COPY --from=builder /app/alembic.ini . 
-COPY --from=builder /app/migrate_data.py . 
 COPY --from=builder /app/migrations ./migrations 
 
 COPY --from=builder /app/bot/media ./bot/media 

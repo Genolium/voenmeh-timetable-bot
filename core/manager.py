@@ -2,6 +2,7 @@ import json
 from datetime import date, datetime, timedelta
 from redis.asyncio.client import Redis
 from core.config import DAY_MAP, REDIS_SCHEDULE_CACHE_KEY, CACHE_LIFETIME 
+from rapidfuzz import process, fuzz
 
 class TimetableManager:
     """
@@ -110,6 +111,20 @@ class TimetableManager:
         query_lower = query.lower()
         return sorted([name for name in self._teachers_index if query_lower in name.lower()])
 
+    def find_teachers_fuzzy(self, query: str, limit: int = 5, score_cutoff: int = 70) -> list[str]:
+        """Нечёткий поиск преподавателей по близости к запросу (RapidFuzz)."""
+        if len(query.strip()) < 2:
+            return []
+        candidates = list(self._teachers_index.keys())
+        results = process.extract(
+            query,
+            candidates,
+            scorer=fuzz.WRatio,
+            score_cutoff=score_cutoff,
+            limit=limit,
+        )
+        return [name for name, score, _ in results]
+
     def get_teacher_schedule(self, teacher_name: str, target_date: date) -> dict | None:
         """Возвращает расписание преподавателя на конкретный день."""
         if teacher_name not in self._teachers_index:
@@ -147,6 +162,20 @@ class TimetableManager:
         """Находит аудитории, номер которых начинается с поискового запроса."""
         if not query: return []
         return sorted([number for number in self._classrooms_index if number.startswith(query)])
+
+    def find_classrooms_fuzzy(self, query: str, limit: int = 5, score_cutoff: int = 75) -> list[str]:
+        """Нечёткий поиск аудитории (по номеру/строке), полезно для опечаток."""
+        if len(query.strip()) < 2:
+            return []
+        candidates = list(self._classrooms_index.keys())
+        results = process.extract(
+            query,
+            candidates,
+            scorer=fuzz.WRatio,
+            score_cutoff=score_cutoff,
+            limit=limit,
+        )
+        return [room for room, score, _ in results]
 
     def get_classroom_schedule(self, classroom_number: str, target_date: date) -> dict | None:
         """Возвращает расписание аудитории на конкретный день."""

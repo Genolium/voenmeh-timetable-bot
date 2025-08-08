@@ -15,8 +15,9 @@ from core.config import (
     OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS, REDIS_SCHEDULE_HASH_KEY
 )
 from core.manager import TimetableManager
-from core.metrics import SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL
+from core.metrics import SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL, LAST_SCHEDULE_UPDATE_TS, ERRORS_TOTAL
 from core.parser import fetch_and_parse_all_schedules
+from datetime import datetime as _dt
 from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
 
@@ -123,6 +124,11 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
     old_hash = (await redis_client.get(REDIS_SCHEDULE_HASH_KEY) or b'').decode()
     new_schedule_data = await fetch_and_parse_all_schedules()
 
+    if new_schedule_data is None:
+        # 304 Not Modified / ошибка сети — ничего не делаем
+        logger.info("Данные расписания не изменились или недоступны (условный запрос).")
+        return
+
     if not new_schedule_data:
         logger.error("Не удалось получить расписание с сервера вуза.")
         return
@@ -136,6 +142,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
         await new_manager.save_to_cache()
         global global_timetable_manager_instance
         global_timetable_manager_instance = new_manager
+        LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
         
         all_users = await user_data_manager.get_all_user_ids()
         message_text = "❗️ <b>ВНИМАНИЕ! Обновление расписания!</b>\n\nРасписание в боте было обновлено. Пожалуйста, проверьте актуальное расписание своей группы."
@@ -144,6 +151,23 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
     else:
         logger.info("Изменений в расписании не обнаружено.")
+
+
+# --- Резервные копии расписания ---
+BACKUP_PREFIX = "timetable:backup:"
+
+async def backup_current_schedule(redis_client: Redis):
+    try:
+        data = await redis_client.get(REDIS_SCHEDULE_HASH_KEY)
+        # Сохраняем «снапшот» ключа хеша и дамп данных кэша расписания
+        from core.config import REDIS_SCHEDULE_CACHE_KEY
+        cached_json = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
+        if cached_json:
+            ts = _dt.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')
+            await redis_client.set(f"{BACKUP_PREFIX}{ts}", cached_json)
+            logger.info("Создана резервная копия расписания: %s", ts)
+    except Exception as e:
+        logger.error("Ошибка при создании резервной копии расписания: %s", e)
 
 async def collect_db_metrics(user_data_manager: UserDataManager):
     try:
@@ -165,5 +189,7 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     scheduler.add_job(lesson_reminders_planner, 'cron', hour=6, minute=0, args=[scheduler, user_data_manager])
     scheduler.add_job(monitor_schedule_changes, 'interval', minutes=CHECK_INTERVAL_MINUTES, args=[user_data_manager, redis_client])
     scheduler.add_job(collect_db_metrics, 'interval', minutes=1, args=[user_data_manager]) 
+    # Периодические резервные копии каждые 6 часов
+    scheduler.add_job(backup_current_schedule, 'cron', hour='*/6', args=[redis_client])
     
     return scheduler

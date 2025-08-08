@@ -73,6 +73,22 @@
         }
       ]
     }
+    , { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }, "id": 500, "title": "Секция 5: Алёрты и стабильность", "type": "row" }
+    , {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 }, "id": 9, "title": "Errors (5m)", "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_errors_total[5m]) by (source)", "legendFormat": "{{source}}" } ]
+    }
+    , {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 }, "id": 10, "title": "Retries (5m)", "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_retries_total[5m]) by (component)", "legendFormat": "{{component}}" } ]
+    }
+    , {
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 43 }, "id": 11, "title": "Last Schedule Update", "type": "stat",
+      "options": { "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_last_schedule_update_timestamp", "legendFormat": "last update" } ]
+    }
   ],
   "refresh": "10s",
   "schemaVersion": 39,

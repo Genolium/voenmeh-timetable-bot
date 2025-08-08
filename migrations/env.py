@@ -15,8 +15,13 @@ from core.db.models import Base
 
 config = context.config
 
-# if config.config_file_name is not None:
-#     fileConfig(config.config_file_name)
+# Безопасная настройка логирования Alembic: пропускаем, если в alembic.ini нет секций логирования
+try:
+    if config.config_file_name is not None:
+        fileConfig(config.config_file_name, disable_existing_loggers=False)
+except Exception:
+    # Нет секций loggers/handlers/formatters — логирование Alembic пропускаем
+    pass
 
 DB_HOST = os.getenv("POSTGRES_HOST")
 DB_PORT = os.getenv("POSTGRES_PORT")

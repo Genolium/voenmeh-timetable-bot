@@ -9,7 +9,7 @@ from aiogram_dialog.widgets.input import MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
-from bot.tasks import copy_message_task
+from bot.tasks import copy_message_task, send_message_task
 from bot.scheduler import morning_summary_broadcast, evening_broadcast
 from bot.text_formatters import generate_reminder_text
 from core.manager import TimetableManager
@@ -61,6 +61,129 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
                 await bot.send_message(admin_id, f"⚠️ Ошибка обработки расписания: {e}")
     
     await bot.send_message(admin_id, "✅ <b>Тестирование планировщика напоминаний завершено.</b>")
+
+async def on_test_alert(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    await callback.answer("🧪 Отправляю тестовый алёрт...")
+    text = (
+        "ALERTMANAGER: FIRING (1 alert)\n\n"
+        "⚠️ ScheduleStale [critical]\n"
+        "No update > 1h\n"
+        "source=scheduler\n"
+        "startsAt=now"
+    )
+    await bot.send_message(admin_id, text)
+
+# --- Сегментированная рассылка с шаблонами ---
+async def build_segment_users(user_data_manager: UserDataManager, group_prefix: str | None, days_active: int | None):
+    group_prefix_up = (group_prefix or "").upper().strip()
+    all_ids = await user_data_manager.get_all_user_ids()
+    selected_ids: list[int] = []
+    from datetime import timezone
+    from datetime import datetime as dt
+    threshold = None
+    if days_active and days_active > 0:
+        threshold = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_active)
+    for uid in all_ids:
+        info = await user_data_manager.get_full_user_info(uid)
+        if not info:
+            continue
+        if group_prefix_up and not (info.group or "").upper().startswith(group_prefix_up):
+            continue
+        if threshold and (not info.last_active_date or info.last_active_date < threshold):
+            continue
+        selected_ids.append(uid)
+    return selected_ids
+
+def render_template(template_text: str, user_info) -> str:
+    placeholders = {
+        "user_id": user_info.user_id,
+        "username": user_info.username or "",
+        "group": user_info.group or "",
+    }
+    try:
+        return template_text.format(**placeholders)
+    except Exception:
+        return template_text
+
+async def on_segment_criteria_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    dialog_data = manager.dialog_data
+    # ожидаем ввод в формате: PREFIX|DAYS (например: О7|7). Пусто для всех
+    raw = (message.text or "").strip()
+    if "|" in raw:
+        prefix, days_str = raw.split("|", 1)
+        days = None
+        try:
+            days = int(days_str) if days_str.strip() else None
+        except ValueError:
+            days = None
+        dialog_data['segment_group_prefix'] = prefix.strip()
+        dialog_data['segment_days_active'] = days
+    else:
+        dialog_data['segment_group_prefix'] = raw
+        dialog_data['segment_days_active'] = None
+    await manager.switch_to(Admin.template_input)
+
+async def on_template_input_message(message: Message, message_input: MessageInput, manager: DialogManager):
+    manager.dialog_data['segment_template'] = message.text or ""
+    await manager.switch_to(Admin.preview)
+
+async def get_preview_data(dialog_manager: DialogManager, **kwargs):
+    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    prefix = dialog_manager.dialog_data.get('segment_group_prefix')
+    days_active = dialog_manager.dialog_data.get('segment_days_active')
+    template = dialog_manager.dialog_data.get('segment_template', "")
+    users = await build_segment_users(user_data_manager, prefix, days_active)
+    preview_text = ""
+    if users:
+        info = await user_data_manager.get_full_user_info(users[0])
+        preview_text = render_template(template, info)
+    dialog_manager.dialog_data['segment_selected_ids'] = users
+    return {
+        "preview_text": preview_text or "(не удалось сформировать превью)",
+        "selected_count": len(users)
+    }
+
+async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    udm: UserDataManager = manager.middleware_data.get("user_data_manager")
+    template = manager.dialog_data.get('segment_template', "")
+    user_ids = manager.dialog_data.get('segment_selected_ids', [])
+    await callback.answer("🚀 Рассылка по сегменту поставлена в очередь...")
+    count = 0
+    for uid in user_ids:
+        info = await udm.get_full_user_info(uid)
+        if not info:
+            continue
+        text = render_template(template, info)
+        send_message_task.send(uid, text)
+        TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+        count += 1
+    await bot.send_message(admin_id, f"✅ Отправка по сегменту запущена. Поставлено задач: {count}")
+    await manager.switch_to(Admin.menu)
+
+async def get_search_results(dialog_manager: DialogManager, **kwargs):
+    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
+    # Получаем текст из поля ввода предыдущего шага
+    query = dialog_manager.find("search_input").get_value() if dialog_manager.find("search_input") else ""
+    query = (query or "").strip()
+    results_lines = []
+    if len(query) >= 2:
+        # Группы: префиксный поиск
+        group_hits = [g for g in manager._schedules.keys() if g.startswith(query.upper())][:10]
+        # Преподаватели: fuzzy
+        teacher_hits = manager.find_teachers_fuzzy(query, limit=10)
+        # Аудитории: fuzzy
+        classroom_hits = manager.find_classrooms_fuzzy(query, limit=10)
+        if group_hits:
+            results_lines.append("<b>Группы:</b> " + ", ".join(group_hits))
+        if teacher_hits:
+            results_lines.append("<b>Преподаватели:</b> " + ", ".join(teacher_hits))
+        if classroom_hits:
+            results_lines.append("<b>Аудитории:</b> " + ", ".join(classroom_hits))
+    return {"search_text": "\n".join(results_lines) or "Ничего не найдено"}
 
 async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     """Обновляет период в `dialog_data` при нажатии на кнопку."""
@@ -196,11 +319,27 @@ admin_dialog = Dialog(
         Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
         SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
         SwitchTo(Const("👤 Управление пользователем"), id="manage_user", state=Admin.enter_user_id),
+        SwitchTo(Const("🔎 Поиск (группы/преподы)"), id="search", state=Admin.search_enter),
         SwitchTo(Const("📣 Сделать рассылку"), id=WidgetIds.BROADCAST, state=Admin.broadcast),
+        SwitchTo(Const("🎯 Сегментированная рассылка"), id="segmented", state=Admin.segment_menu),
         Button(Const("⚙️ Тест утренней рассылки"), id=WidgetIds.TEST_MORNING, on_click=on_test_morning),
         Button(Const("⚙️ Тест вечерней рассылки"), id=WidgetIds.TEST_EVENING, on_click=on_test_evening),
         Button(Const("🧪 Тест напоминаний о парах"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
+        Button(Const("🧪 Тест алёрта"), id="test_alert", on_click=on_test_alert),
         state=Admin.menu
+    ),
+    Window(
+        Const("Введите запрос для поиска (минимум 2 символа):"),
+        TextInput(id="search_input", on_success=lambda m,w,man,data: man.switch_to(Admin.search_results)),
+        Back(Const("◀️ Назад")),
+        state=Admin.search_enter
+    ),
+    Window(
+        Format("Результаты:\n\n{search_text}"),
+        Back(Const("◀️ Назад")),
+        getter=get_search_results,
+        state=Admin.search_results,
+        parse_mode="HTML"
     ),
     Window(
         Format("{stats_text}"),
@@ -222,6 +361,26 @@ admin_dialog = Dialog(
         Back(Const("◀️ Назад")),
         getter=get_stats_data,
         state=Admin.stats,
+        parse_mode="HTML"
+    ),
+    Window(
+        Const("Введите критерии сегментации в формате PREFIX|DAYS (например: О7|7). Пусто — все."),
+        TextInput(id="segment_input", on_success=on_segment_criteria_input),
+        Back(Const("◀️ Назад")),
+        state=Admin.segment_menu
+    ),
+    Window(
+        Const("Введите шаблон сообщения. Доступные плейсхолдеры: {user_id}, {username}, {group}"),
+        MessageInput(on_template_input_message, content_types=[ContentType.TEXT]),
+        Back(Const("◀️ Назад")),
+        state=Admin.template_input
+    ),
+    Window(
+        Format("Предпросмотр (1-й получатель):\n\n{preview_text}\n\nВсего получателей: {selected_count}"),
+        Button(Const("🚀 Отправить"), id="confirm_segment_send", on_click=on_confirm_segment_send),
+        Back(Const("◀️ Назад")),
+        getter=get_preview_data,
+        state=Admin.preview,
         parse_mode="HTML"
     ),
     Window(

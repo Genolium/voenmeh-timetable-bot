@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
 
 from sqlalchemy import select, update, func, or_, case
@@ -20,7 +20,7 @@ class UserDataManager:
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             if user:
-                user.last_active_date = datetime.now(UTC).replace(tzinfo=None)
+                user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
                 user = User(user_id=user_id, username=username)
                 session.add(user)
@@ -84,7 +84,7 @@ class UserDataManager:
 
     async def get_new_users_count(self, days: int) -> int:
         async with self.async_session_maker() as session:
-            start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
+            start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             stmt = select(func.count(User.user_id)).where(User.registration_date >= start_date)
             result = await session.scalar(stmt)
             return result or 0
@@ -99,7 +99,7 @@ class UserDataManager:
 
     async def get_active_users_by_period(self, days: int) -> int:
         async with self.async_session_maker() as session:
-            start_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
+            start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
             stmt = select(func.count(User.user_id)).where(User.last_active_date >= start_date)
             result = await session.scalar(stmt)
             return result or 0
@@ -114,7 +114,7 @@ class UserDataManager:
                 .limit(limit)
             )
             result = await session.execute(stmt)
-            return result.all()
+            return [tuple(row) for row in result.all()]
 
     async def get_unsubscribed_count(self) -> int:
         """Считает количество пользователей, отписавшихся от ВСЕХ рассылок."""
@@ -159,30 +159,30 @@ class UserDataManager:
             ).group_by("group_size_category").order_by("group_size_category")
             
             result = await session.execute(stmt)
-            return dict(result.all())
+            return {row.group_size_category: row.number_of_groups for row in result}
 
     async def get_all_user_ids(self) -> List[int]:
         async with self.async_session_maker() as session:
             stmt = select(User.user_id)
             result = await session.scalars(stmt)
-            return result.all()
+            return list(result)
 
     # --- Методы для рассылок ---
     async def get_users_for_evening_notify(self) -> List[Tuple[int, str]]:
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group).where(User.evening_notify == True, User.group.isnot(None))
             result = await session.execute(stmt)
-            return result.all()
+            return [tuple(row) for row in result.all()]
 
     async def get_users_for_morning_summary(self) -> List[Tuple[int, str]]:
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group).where(User.morning_summary == True, User.group.isnot(None))
             result = await session.execute(stmt)
-            return result.all()
+            return [tuple(row) for row in result.all()]
 
     async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int]]:
         """Получает пользователей для напоминаний о парах, включая время напоминания."""
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(User.lesson_reminders == True, User.group.isnot(None))
             result = await session.execute(stmt)
-            return result.all()
+            return [tuple(row) for row in result.all()]

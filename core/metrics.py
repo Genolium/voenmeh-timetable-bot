@@ -37,3 +37,23 @@ TASKS_SENT_TO_QUEUE = Counter(
     'Total count of tasks sent to the queue',
     ['actor_name']
 )
+
+# Общие ошибки по источникам (handler, parser, weather, db, tasks)
+ERRORS_TOTAL = Counter(
+    'bot_errors_total',
+    'Total count of errors by source',
+    ['source']
+)
+
+# Ретраи по компонентам (weather, parser, tasks)
+RETRIES_TOTAL = Counter(
+    'bot_retries_total',
+    'Total retry attempts by component',
+    ['component']
+)
+
+# Момент последнего успешного обновления расписания (unix timestamp)
+LAST_SCHEDULE_UPDATE_TS = Gauge(
+    'bot_last_schedule_update_timestamp',
+    'Unix timestamp of last successful schedule update'
+)
