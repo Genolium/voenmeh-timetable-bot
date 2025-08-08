@@ -12,11 +12,9 @@ def set_mock_datetime(mocker, dt: datetime):
         @classmethod
         def now(cls, tz=None):
             return dt.astimezone(tz)
-
         @classmethod
         def combine(cls, d, t, tzinfo=None):
             return datetime.combine(d, t, tzinfo=tzinfo)
-
     mocker.patch('bot.scheduler.datetime', MockDateTime)
 
 
@@ -29,21 +27,15 @@ async def test_planner_handles_invalid_times_safely(mocker):
     udm.get_users_for_lesson_reminders.return_value = [(1, 'G', 20)]
 
     tt_manager = MagicMock()
-    # Некорректные времена вызовут исключения внутри планировщика, ветка except должна покрыться
     tt_manager.get_schedule_for_day.return_value = {
         'lessons': [
             {'start_time_raw': 'bad', 'end_time_raw': 'bad'},
             {'start_time_raw': '10:00', 'end_time_raw': 'bad'},
         ]
     }
-    mocker.patch.object(scheduler_module, 'global_timetable_manager_instance', tt_manager)
-
+    
     mock_now = MOSCOW_TZ.localize(datetime.combine(date.today(), time(5, 0)))
     set_mock_datetime(mocker, mock_now)
 
-    await lesson_reminders_planner(mock_scheduler, udm)
-
-    # jobs не должны добавиться из-за некорректных времён
+    await lesson_reminders_planner(mock_scheduler, udm, tt_manager)
     mock_scheduler.add_job.assert_not_called()
-
-

@@ -1,11 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from datetime import datetime, time, date, timezone
+from datetime import datetime, time, date
 
 from bot.scheduler import lesson_reminders_planner
 from core.config import MOSCOW_TZ
-
-from bot import scheduler as scheduler_module
 
 @pytest.fixture
 def mock_scheduler():
@@ -20,14 +18,13 @@ def mock_user_data_manager():
     return udm
 
 @pytest.fixture
-def mock_timetable_manager(mocker):
+def mock_timetable_manager():
     tt_manager = MagicMock()
     today_lessons = [
         {'start_time_raw': '09:00', 'end_time_raw': '10:30'},
         {'start_time_raw': '10:50', 'end_time_raw': '12:20'}
     ]
     tt_manager.get_schedule_for_day.return_value = {'lessons': today_lessons}
-    mocker.patch.object(scheduler_module, 'global_timetable_manager_instance', tt_manager)
     return tt_manager
 
 def mock_datetime(mocker, target_dt: datetime):
@@ -58,7 +55,7 @@ class TestLessonRemindersPlanner:
         mock_now = MOSCOW_TZ.localize(datetime.combine(date.today(), time.fromisoformat(mock_current_time_str)))
         mock_datetime(mocker, mock_now)
         
-        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager)
+        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
         
         assert mock_scheduler.add_job.call_count == expected_call_count
 
@@ -66,7 +63,7 @@ class TestLessonRemindersPlanner:
         mock_now = MOSCOW_TZ.localize(datetime.combine(date.today(), time(5, 0)))
         mock_datetime(mocker, mock_now)
 
-        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager)
+        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
 
         calls = mock_scheduler.add_job.call_args_list
         assert len(calls) == 3
@@ -85,5 +82,5 @@ class TestLessonRemindersPlanner:
         mock_now = MOSCOW_TZ.localize(datetime.combine(date.today(), time(5, 0)))
         mock_datetime(mocker, mock_now)
 
-        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager)
+        await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
         mock_scheduler.add_job.assert_not_called()
