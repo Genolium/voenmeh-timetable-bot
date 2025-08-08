@@ -23,7 +23,8 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: sh -c "python -m alembic upgrade head && python main.py"
+    # ИСПРАВЛЕНО: Миграции убраны из автозапуска. Теперь бот просто стартует.
+    command: python main.py
 
   worker:
     <<: *base-app-service

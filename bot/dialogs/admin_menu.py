@@ -21,14 +21,16 @@ from .constants import WidgetIds
 
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
+    timetable_manager = manager.middleware_data.get("manager")
     await callback.answer("🚀 Запускаю постановку задач на утреннюю рассылку...")
-    await morning_summary_broadcast(user_data_manager)
+    await morning_summary_broadcast(user_data_manager, timetable_manager)
     await callback.message.answer("✅ Задачи для утренней рассылки поставлены в очередь.")
 
 async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
+    timetable_manager = manager.middleware_data.get("manager")
     await callback.answer("🚀 Запускаю постановку задач на вечернюю рассылку...")
-    await evening_broadcast(user_data_manager)
+    await evening_broadcast(user_data_manager, timetable_manager)
     await callback.message.answer("✅ Задачи для вечерней рассылки поставлены в очередь.")
 
 async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -164,27 +166,6 @@ async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manag
     await bot.send_message(admin_id, f"✅ Отправка по сегменту запущена. Поставлено задач: {count}")
     await manager.switch_to(Admin.menu)
 
-async def get_search_results(dialog_manager: DialogManager, **kwargs):
-    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
-    # Получаем текст из поля ввода предыдущего шага
-    query = dialog_manager.find("search_input").get_value() if dialog_manager.find("search_input") else ""
-    query = (query or "").strip()
-    results_lines = []
-    if len(query) >= 2:
-        # Группы: префиксный поиск
-        group_hits = [g for g in manager._schedules.keys() if g.startswith(query.upper())][:10]
-        # Преподаватели: fuzzy
-        teacher_hits = manager.find_teachers_fuzzy(query, limit=10)
-        # Аудитории: fuzzy
-        classroom_hits = manager.find_classrooms_fuzzy(query, limit=10)
-        if group_hits:
-            results_lines.append("<b>Группы:</b> " + ", ".join(group_hits))
-        if teacher_hits:
-            results_lines.append("<b>Преподаватели:</b> " + ", ".join(teacher_hits))
-        if classroom_hits:
-            results_lines.append("<b>Аудитории:</b> " + ", ".join(classroom_hits))
-    return {"search_text": "\n".join(results_lines) or "Ничего не найдено"}
-
 async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     """Обновляет период в `dialog_data` при нажатии на кнопку."""
     manager.dialog_data['stats_period'] = int(item_id)
@@ -319,7 +300,6 @@ admin_dialog = Dialog(
         Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
         SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
         SwitchTo(Const("👤 Управление пользователем"), id="manage_user", state=Admin.enter_user_id),
-        SwitchTo(Const("🔎 Поиск (группы/преподы)"), id="search", state=Admin.search_enter),
         SwitchTo(Const("📣 Сделать рассылку"), id=WidgetIds.BROADCAST, state=Admin.broadcast),
         SwitchTo(Const("🎯 Сегментированная рассылка"), id="segmented", state=Admin.segment_menu),
         Button(Const("⚙️ Тест утренней рассылки"), id=WidgetIds.TEST_MORNING, on_click=on_test_morning),
@@ -327,19 +307,6 @@ admin_dialog = Dialog(
         Button(Const("🧪 Тест напоминаний о парах"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
         Button(Const("🧪 Тест алёрта"), id="test_alert", on_click=on_test_alert),
         state=Admin.menu
-    ),
-    Window(
-        Const("Введите запрос для поиска (минимум 2 символа):"),
-        TextInput(id="search_input", on_success=lambda m,w,man,data: man.switch_to(Admin.search_results)),
-        Back(Const("◀️ Назад")),
-        state=Admin.search_enter
-    ),
-    Window(
-        Format("Результаты:\n\n{search_text}"),
-        Back(Const("◀️ Назад")),
-        getter=get_search_results,
-        state=Admin.search_results,
-        parse_mode="HTML"
     ),
     Window(
         Format("{stats_text}"),
@@ -358,7 +325,7 @@ admin_dialog = Dialog(
                 on_click=on_period_selected
             )
         ),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ В админ-панель"), id="stats_back", state=Admin.menu),
         getter=get_stats_data,
         state=Admin.stats,
         parse_mode="HTML"
@@ -366,19 +333,19 @@ admin_dialog = Dialog(
     Window(
         Const("Введите критерии сегментации в формате PREFIX|DAYS (например: О7|7). Пусто — все."),
         TextInput(id="segment_input", on_success=on_segment_criteria_input),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ В админ-панель"), id="segment_back", state=Admin.menu),
         state=Admin.segment_menu
     ),
     Window(
         Const("Введите шаблон сообщения. Доступные плейсхолдеры: {user_id}, {username}, {group}"),
         MessageInput(on_template_input_message, content_types=[ContentType.TEXT]),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ Назад"), id="template_back", state=Admin.segment_menu),
         state=Admin.template_input
     ),
     Window(
         Format("Предпросмотр (1-й получатель):\n\n{preview_text}\n\nВсего получателей: {selected_count}"),
         Button(Const("🚀 Отправить"), id="confirm_segment_send", on_click=on_confirm_segment_send),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ Назад"), id="preview_back", state=Admin.template_input),
         getter=get_preview_data,
         state=Admin.preview,
         parse_mode="HTML"
@@ -386,19 +353,19 @@ admin_dialog = Dialog(
     Window(
         Const("Введите сообщение для рассылки. Можно отправить текст, фото, видео или стикер."),
         MessageInput(on_broadcast_received, content_types=[ContentType.ANY]),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ В админ-панель"), id="broadcast_back", state=Admin.menu),
         state=Admin.broadcast
     ),
     Window(
         Const("Введите ID пользователя для управления:"),
         TextInput(id="input_user_id", on_success=on_user_id_input),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ В админ-панель"), id="user_id_back", state=Admin.menu),
         state=Admin.enter_user_id
     ),
     Window(
         Format("{user_info_text}"),
         SwitchTo(Const("🔄 Сменить группу"), id="change_group", state=Admin.change_group_confirm),
-        SwitchTo(Const("◀️ К меню"), id="back_to_admin_menu", state=Admin.menu),
+        SwitchTo(Const("◀️ Новый поиск"), id="back_to_user_search", state=Admin.enter_user_id),
         state=Admin.user_manage,
         getter=get_user_manage_data,
         parse_mode="HTML"
@@ -406,7 +373,7 @@ admin_dialog = Dialog(
     Window(
         Const("Введите новый номер группы для пользователя:"),
         TextInput(id="input_new_group", on_success=on_new_group_input),
-        Back(Const("◀️ Назад")),
+        SwitchTo(Const("◀️ Назад"), id="change_group_back", state=Admin.user_manage),
         state=Admin.change_group_confirm
     )
 )

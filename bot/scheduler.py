@@ -21,10 +21,9 @@ from datetime import datetime as _dt
 from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
 
-global_timetable_manager_instance = None
 logger = logging.getLogger(__name__)
 
-async def evening_broadcast(user_data_manager: UserDataManager):
+async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
     logger.info(f"Начинаю постановку задач на вечернюю рассылку для даты {tomorrow.date().isoformat()}")
     
@@ -39,7 +38,7 @@ async def evening_broadcast(user_data_manager: UserDataManager):
         return
 
     for user_id, group_name in users_to_notify:
-        schedule_info = global_timetable_manager_instance.get_schedule_for_day(group_name, target_date=tomorrow.date())
+        schedule_info = timetable_manager.get_schedule_for_day(group_name, target_date=tomorrow.date())
         has_lessons = bool(schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'))
         
         text_body = f"<b>Ваше расписание на завтра:</b>\n\n{format_schedule_text(schedule_info)}" if has_lessons else "🎉 <b>Завтра занятий нет!</b>"
@@ -48,7 +47,7 @@ async def evening_broadcast(user_data_manager: UserDataManager):
         send_message_task.send(user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
 
-async def morning_summary_broadcast(user_data_manager: UserDataManager):
+async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     today = datetime.now(MOSCOW_TZ)
     logger.info(f"Начинаю постановку задач на утреннюю рассылку для даты {today.date().isoformat()}")
 
@@ -63,13 +62,13 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager):
         return
 
     for user_id, group_name in users_to_notify:
-        schedule_info = global_timetable_manager_instance.get_schedule_for_day(group_name, target_date=today.date())
+        schedule_info = timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
             text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{format_schedule_text(schedule_info)}{UNSUBSCRIBE_FOOTER}"
             send_message_task.send(user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
 
-async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manager: UserDataManager):
+async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     now_in_moscow = datetime.now(MOSCOW_TZ)
     today = now_in_moscow.date()
     logger.info(f"Запуск планировщика напоминаний о парах для даты {today.isoformat()}")
@@ -79,7 +78,7 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
         return
 
     for user_id, group_name, reminder_time in users_to_plan:
-        schedule_info = global_timetable_manager_instance.get_schedule_for_day(group_name, target_date=today)
+        schedule_info = timetable_manager.get_schedule_for_day(group_name, target_date=today)
         if not (schedule_info and not schedule_info.get('error') and schedule_info.get('lessons')):
             continue
         
@@ -119,14 +118,17 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
             except (ValueError, KeyError) as e:
                  logger.warning(f"Ошибка планирования напоминания в перерыве для user_id={user_id}: {e}")
 
-async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis):
+async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot):
     logger.info("Проверка изменений в расписании...")
+    
+    global global_timetable_manager_instance # Оставляем для возможности переприсвоения
+    
     old_hash = (await redis_client.get(REDIS_SCHEDULE_HASH_KEY) or b'').decode()
     new_schedule_data = await fetch_and_parse_all_schedules()
 
     if new_schedule_data is None:
-        # 304 Not Modified / ошибка сети — ничего не делаем
         logger.info("Данные расписания не изменились или недоступны (условный запрос).")
+        LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
         return
 
     if not new_schedule_data:
@@ -140,9 +142,9 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
         
         new_manager = TimetableManager(new_schedule_data, redis_client)
         await new_manager.save_to_cache()
-        global global_timetable_manager_instance
+        
+        # Переприсваиваем глобальный экземпляр
         global_timetable_manager_instance = new_manager
-        LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
         
         all_users = await user_data_manager.get_all_user_ids()
         message_text = "❗️ <b>ВНИМАНИЕ! Обновление расписания!</b>\n\nРасписание в боте было обновлено. Пожалуйста, проверьте актуальное расписание своей группы."
@@ -151,6 +153,9 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
     else:
         logger.info("Изменений в расписании не обнаружено.")
+
+    # Обновляем метку времени при КАЖДОЙ успешной проверке
+    LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
 
 
 # --- Резервные копии расписания ---
@@ -184,12 +189,11 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     global global_timetable_manager_instance
     global_timetable_manager_instance = manager
 
-    scheduler.add_job(evening_broadcast, 'cron', hour=20, minute=0, args=[user_data_manager])
-    scheduler.add_job(morning_summary_broadcast, 'cron', hour=8, minute=0, args=[user_data_manager])
-    scheduler.add_job(lesson_reminders_planner, 'cron', hour=6, minute=0, args=[scheduler, user_data_manager])
-    scheduler.add_job(monitor_schedule_changes, 'interval', minutes=CHECK_INTERVAL_MINUTES, args=[user_data_manager, redis_client])
+    scheduler.add_job(evening_broadcast, 'cron', hour=20, minute=0, args=[user_data_manager, manager])
+    scheduler.add_job(morning_summary_broadcast, 'cron', hour=8, minute=0, args=[user_data_manager, manager])
+    scheduler.add_job(lesson_reminders_planner, 'cron', hour=6, minute=0, args=[scheduler, user_data_manager, manager])
+    scheduler.add_job(monitor_schedule_changes, 'interval', minutes=CHECK_INTERVAL_MINUTES, args=[user_data_manager, redis_client, bot])
     scheduler.add_job(collect_db_metrics, 'interval', minutes=1, args=[user_data_manager]) 
-    # Периодические резервные копии каждые 6 часов
     scheduler.add_job(backup_current_schedule, 'cron', hour='*/6', args=[redis_client])
     
     return scheduler

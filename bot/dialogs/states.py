@@ -40,5 +40,3 @@ class Admin(StatesGroup):
     template_input = State()
     preview = State()
     confirm_send = State()
-    search_enter = State()
-    search_results = State()
