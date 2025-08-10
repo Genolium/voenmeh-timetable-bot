@@ -1,38 +1,20 @@
+FROM python:3.11-slim
 
-# --- Этап 1: Сборка зависимостей и копирование исходников (builder) ---
-FROM python:3.11-slim as builder
-
-# Устанавливаем рабочую директорию
 WORKDIR /app
 
-
+# Сначала копируем только requirements.txt, чтобы кэшировать установку зависимостей
 COPY requirements.txt .
-COPY alembic.ini .
-COPY migrations/ ./migrations/
-COPY core/ ./core/
-COPY bot/ ./bot/
-COPY main.py .
 
-# Устанавливаем зависимости
-# Используем --no-cache-dir для уменьшения размера образа и ускорения билда
+# Устанавливаем системные зависимости для Pillow
+RUN apt-get update && apt-get install -y libfreetype6 --no-install-recommends && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir playwright==1.46.0 && playwright install --with-deps chromium
+
+# Устанавливаем зависимости Python
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# --- Этап 2: Финальный образ (final) ---
-FROM python:3.11-slim as final
+# Теперь копируем ВСЕ остальные файлы проекта (включая папку assets)
+COPY . .
 
-# Устанавливаем рабочую директорию
-WORKDIR /app
-
-COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
-
-COPY --from=builder /app/bot ./bot
-COPY --from=builder /app/core ./core
-COPY --from=builder /app/main.py .
-COPY --from=builder /app/alembic.ini . 
-COPY --from=builder /app/migrations ./migrations 
-
-COPY --from=builder /app/bot/media ./bot/media 
-COPY --from=builder /app/bot/screenshots ./bot/screenshots
-
+# Команда для запуска приложения
 CMD ["python", "main.py"]

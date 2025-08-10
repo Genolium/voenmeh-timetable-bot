@@ -6,7 +6,11 @@
       {
         "builtIn": 1,
         "datasource": { "type": "grafana", "uid": "-- Grafana --" },
-        "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
       }
     ]
   },
@@ -17,87 +21,265 @@
   "liveNow": false,
   "panels": [
     { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "title": "Секция 1: Ключевые показатели", "type": "row" },
+
     {
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 }, "id": 1, "title": "Total Users", "type": "stat",
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "auto" },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_users_total", "legendFormat": "Всего пользователей" } ]
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
+      "id": 1,
+      "title": "Total Users",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_users_total" } ]
     },
     {
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 }, "id": 2, "title": "Subscribed Users", "type": "stat",
-      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false } },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_subscribed_users", "legendFormat": "С подписками" } ]
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
+      "id": 2,
+      "title": "Subscribed Users",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_subscribed_users" } ]
     },
     {
-      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 }, "id": 3, "title": "Event Rate (per minute)", "type": "timeseries",
-      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "none" } },
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 1 },
+      "id": 3,
+      "title": "Events per minute",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_events_processed_total[1m])) by (event_type) * 60", "legendFormat": "{{event_type}}" } ]
     },
-    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "id": 200, "title": "Секция 2: Производительность приложения", "type": "row" },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }, "id": 200, "title": "Секция 2: Производительность", "type": "row" },
+
     {
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 }, "id": 4, "title": "Handler Duration (p95)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "id": 4,
+      "title": "Handler Duration p95",
+      "type": "timeseries",
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_handler_duration_seconds_bucket[5m])) by (le, handler_name))", "legendFormat": "p95 {{handler_name}}" } ]
     },
     {
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 }, "id": 5, "title": "Task Queue Rate (per minute)", "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "id": 5,
+      "title": "Task Queue Rate (per minute)",
+      "type": "timeseries",
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_tasks_sent_total[1m])) by (actor_name) * 60", "legendFormat": "{{actor_name}}" } ]
     },
-    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "id": 300, "title": "Секция 3: Вовлеченность пользователей", "type": "row" },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 }, "id": 250, "title": "Секция 3: Кэш изображений и генерация", "type": "row" },
+
     {
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 }, "id": 6, "title": "User Growth & Subscription Dynamics", "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+      "id": 20,
+      "title": "Image Cache Hits/Misses (rate)",
+      "type": "timeseries",
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_users_total", "legendFormat": "Всего пользователей" },
-        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_subscribed_users", "legendFormat": "С подписками" }
-      ]
-    },
-    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 }, "id": 400, "title": "Секция 4: Журналы и Ошибки", "type": "row" },
-    {
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 25 }, "id": 7, "title": "Live Log Stream", "type": "logs",
-      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
-      "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
-          "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"}"
-        }
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_image_cache_hits_total[5m])) by (cache_type)", "legendFormat": "hits {{cache_type}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_image_cache_misses_total[5m])) by (cache_type)", "legendFormat": "misses {{cache_type}}" }
       ]
     },
     {
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 25 }, "id": 8, "title": "Application Errors", "type": "logs",
-      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+      "id": 21,
+      "title": "Cache Hit Rate",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "hidden" }, "tooltip": { "mode": "multi" } },
       "targets": [
-        {
-          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
-          "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"} |= `ERROR`"
-        }
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_image_cache_hits_total[5m])) / clamp_min(sum(rate(bot_image_cache_hits_total[5m])) + sum(rate(bot_image_cache_misses_total[5m])), 1e-9)", "legendFormat": "hit_rate" }
       ]
-    }
-    , { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 }, "id": 500, "title": "Секция 5: Алёрты и стабильность", "type": "row" }
-    , {
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 35 }, "id": 9, "title": "Errors (5m)", "type": "timeseries",
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+      "id": 22,
+      "title": "Cache Size",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_image_cache_size{cache_type=\"files\"}", "legendFormat": "files" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_image_cache_size{cache_type=\"size_mb\"}", "legendFormat": "size_mb" }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 22 },
+      "id": 23,
+      "title": "Schedule Generation p95",
+      "type": "timeseries",
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_errors_total[5m]) by (source)", "legendFormat": "{{source}}" } ]
-    }
-    , {
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 35 }, "id": 10, "title": "Retries (5m)", "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_schedule_generation_duration_seconds_bucket[5m])) by (le, schedule_type))", "legendFormat": "p95 {{schedule_type}}" }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 22 },
+      "id": 24,
+      "title": "Generation Count (rate)",
+      "type": "timeseries",
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_retries_total[5m]) by (component)", "legendFormat": "{{component}}" } ]
-    }
-    , {
-      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 43 }, "id": 11, "title": "Last Schedule Update", "type": "stat",
-      "options": { "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "textMode": "value" },
-      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_last_schedule_update_timestamp", "legendFormat": "last update" } ]
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_image_cache_operations_total{operation=\"store\"}[5m]))", "legendFormat": "store ops" }
+      ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 28 }, "id": 300, "title": "Секция 4: Вовлеченность пользователей", "type": "row" },
+
+    {
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 29 },
+      "id": 30,
+      "title": "User Activity (rate)",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_user_activity_daily_total[5m])) by (action_type)", "legendFormat": "{{action_type}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 29 },
+      "id": 31,
+      "title": "Top Groups (24h)",
+      "type": "barchart",
+      "options": { "legend": { "displayMode": "list", "placement": "right" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "topk(10, increase(bot_group_popularity_total[24h]))", "legendFormat": "{{group_name}}" } ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 }, "id": 350, "title": "Секция 5: Уведомления", "type": "row" },
+
+    {
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 36 },
+      "id": 40,
+      "title": "Delivery Success/Failed (rate)",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" }, "fieldConfig": { "defaults": { "custom": { "stacking": { "mode": "normal" } } } } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_notification_delivery_total{delivery_status=\"success\"}[5m])) by (notification_type)", "legendFormat": "success {{notification_type}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_notification_delivery_total{delivery_status=\"failed\"}[5m])) by (notification_type)", "legendFormat": "failed {{notification_type}}" }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 36 },
+      "id": 41,
+      "title": "Failure Rate (all notifications)",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_notification_delivery_total{delivery_status=\"failed\"}[5m])) / clamp_min(sum(rate(bot_notification_delivery_total[5m])), 1e-9)" }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 36 },
+      "id": 42,
+      "title": "Delivery Time p95",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_notification_delivery_time_seconds_bucket[5m])) by (le, notification_type))", "legendFormat": "p95 {{notification_type}}" } ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 }, "id": 400, "title": "Секция 6: API/DB/Parser ресурсы", "type": "row" },
+
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 43 },
+      "id": 50,
+      "title": "API Response p95",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_api_response_time_seconds_bucket[5m])) by (le, api_endpoint, method))", "legendFormat": "{{method}} {{api_endpoint}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 43 },
+      "id": 51,
+      "title": "DB Query p95",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_database_query_duration_seconds_bucket[5m])) by (le, table))", "legendFormat": "p95 {{table}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 43 },
+      "id": 52,
+      "title": "DB Ops Rate",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_database_operations_total[5m])) by (operation, table)", "legendFormat": "{{operation}} {{table}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 49 },
+      "id": 53,
+      "title": "Parser Ops (rate)",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "sum(rate(bot_parser_operations_total[5m])) by (operation, status)", "legendFormat": "{{operation}} {{status}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 49 },
+      "id": 54,
+      "title": "Parser Duration p95",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "histogram_quantile(0.95, sum(rate(bot_parser_duration_seconds_bucket[5m])) by (le, operation_type))", "legendFormat": "p95 {{operation_type}}" } ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 49 },
+      "id": 55,
+      "title": "Memory & Connections",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_memory_usage_bytes", "legendFormat": "mem {{memory_type}}" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_active_connections", "legendFormat": "conn {{connection_type}}" }
+      ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 }, "id": 450, "title": "Секция 7: Логи и события", "type": "row" },
+
+    {
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 56 },
+      "id": 60,
+      "title": "Live Log Stream",
+      "type": "logs",
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
+      "targets": [ { "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" }, "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"}" } ]
+    },
+    {
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 56 },
+      "id": 61,
+      "title": "Errors",
+      "type": "logs",
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
+      "targets": [ { "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" }, "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"} |= `ERROR`" } ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 }, "id": 500, "title": "Секция 8: Надежность", "type": "row" },
+
+    {
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 66 },
+      "id": 70,
+      "title": "Uptime (s)",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_uptime_seconds" } ]
+    },
+    {
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 66 },
+      "id": 71,
+      "title": "Restarts (24h)",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_restart_count_total[24h])" } ]
+    },
+    {
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 66 },
+      "id": 72,
+      "title": "Last Schedule Update",
+      "type": "stat",
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value" },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_last_schedule_update_timestamp" } ]
+    },
+    {
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 66 },
+      "id": 73,
+      "title": "External Services",
+      "type": "timeseries",
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_external_service_status", "legendFormat": "{{service_name}}" } ]
     }
   ],
   "refresh": "10s",
   "schemaVersion": 39,
-  "tags": [],
+  "tags": ["voenmeh", "bot", "prod"],
   "templating": { "list": [] },
-  "time": { "from": "now-1h", "to": "now" },
-  "timepicker": {},
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {"refresh_intervals": ["5s", "10s", "30s", "1m", "5m"]},
   "timezone": "browser",
-  "title": "Bot Health & User Engagement",
+  "title": "Bot Health & Engagement (Enhanced)",
   "uid": "bot-health-dashboard",
-  "version": 6
+  "version": 7
 }

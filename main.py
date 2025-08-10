@@ -18,6 +18,7 @@ from redis.asyncio.client import Redis
 # --- Импорты ядра ---
 from core.config import ADMIN_IDS
 from core.alert_webhook import run_alert_webhook_server
+from core.business_alerts import start_business_monitoring
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
 
@@ -34,7 +35,7 @@ from bot.dialogs.admin_menu import admin_dialog
 from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
-from bot.dialogs.schedule_view import schedule_dialog
+from bot.dialogs.schedule_view import schedule_dialog, on_inline_back
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
@@ -165,16 +166,28 @@ async def main():
     if ADMIN_IDS:
         dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
     dp.inline_query.register(inline_query_handler)
+    # Обработчик inline-кнопки "Назад" на медиа-сообщениях
+    dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
     try:
         await set_bot_commands(bot)
         scheduler.start()
-        
+
+        async def _notify_admins_start():
+            if ADMIN_IDS:
+                for admin_id in ADMIN_IDS:
+                    try:
+                        await bot.send_message(admin_id, "✅ Бот запущен и готов к работе")
+                    except Exception:
+                        pass
+
         await asyncio.gather(
             dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
             run_metrics_server(),
-            run_alert_webhook_server(bot, ADMIN_IDS)
+            run_alert_webhook_server(bot, ADMIN_IDS),
+            start_business_monitoring(),
+            _notify_admins_start(),
         )
     finally:
         scheduler.shutdown()

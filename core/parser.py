@@ -78,12 +78,16 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                     lecturers = [l.text.strip() for l in lesson_element.findall('Lecturers/Lecturer/ShortName') if l.text and l.text.strip()]
                     classroom = classroom_tag.text.strip(';* ') if classroom_tag is not None and classroom_tag.text and classroom_tag.text.strip() else None
 
-                    start_time_str = time_raw.split()[0]
+                    start_time_token = time_raw.split()[0]
                     try:
-                        start_dt_obj = datetime.strptime(start_time_str, '%H:%M')
+                        start_dt_obj = datetime.strptime(start_time_token, '%H:%M')
+                        # Нормализуем к 2-значному часу
+                        start_time_str = start_dt_obj.strftime('%H:%M')
                         end_dt_obj = start_dt_obj + timedelta(minutes=90)
                         end_time_str = end_dt_obj.strftime('%H:%M')
                     except ValueError:
+                        # Если формат неожиданно иной, оставляем как есть
+                        start_time_str = start_time_token
                         end_time_str = "N/A"
 
                     lesson_info = {

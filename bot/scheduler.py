@@ -20,6 +20,7 @@ from core.parser import fetch_and_parse_all_schedules
 from datetime import datetime as _dt
 from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
+from core.image_cache_manager import ImageCacheManager
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,13 @@ async def collect_db_metrics(user_data_manager: UserDataManager):
     except Exception as e:
         logger.error(f"Ошибка при сборе метрик из БД: {e}")
 
+async def cleanup_image_cache(redis_client: Redis):
+    try:
+        cache = ImageCacheManager(redis_client, cache_ttl_hours=24)
+        await cache.cleanup_expired_cache()
+    except Exception as e:
+        logger.error(f"Ошибка при плановой очистке кэша изображений: {e}")
+
 def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: UserDataManager, redis_client: Redis) -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=str(MOSCOW_TZ))
     
@@ -195,5 +203,7 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     scheduler.add_job(monitor_schedule_changes, 'interval', minutes=CHECK_INTERVAL_MINUTES, args=[user_data_manager, redis_client, bot])
     scheduler.add_job(collect_db_metrics, 'interval', minutes=1, args=[user_data_manager]) 
     scheduler.add_job(backup_current_schedule, 'cron', hour='*/6', args=[redis_client])
+    # Ежечасная очистка устаревших изображений из кэша
+    scheduler.add_job(cleanup_image_cache, 'cron', minute=5, args=[redis_client])
     
     return scheduler

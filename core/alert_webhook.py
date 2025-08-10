@@ -61,4 +61,3 @@ async def run_alert_webhook_server(bot, admin_ids: List[int], port: int = 8010):
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-

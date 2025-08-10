@@ -15,6 +15,7 @@ from bot.text_formatters import generate_reminder_text
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.user_data import UserDataManager
+from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 
 from .states import Admin
 from .constants import WidgetIds
@@ -295,6 +296,43 @@ async def get_user_manage_data(dialog_manager: DialogManager, **kwargs):
         )
     }
 
+async def on_clear_cache(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    
+    await callback.answer("🧹 Очищаю кэш картинок...")
+    
+    # Получаем информацию о кэше до очистки
+    cache_info_before = await get_cache_info()
+    
+    # Очищаем кэш
+    await cleanup_old_cache()
+    
+    # Получаем информацию о кэше после очистки
+    cache_info_after = await get_cache_info()
+    
+    if "error" in cache_info_before or "error" in cache_info_after:
+        await bot.send_message(admin_id, "❌ Ошибка при работе с кэшем")
+        return
+    
+    freed_space = cache_info_before["total_size_mb"] - cache_info_after["total_size_mb"]
+    freed_files = cache_info_before["total_files"] - cache_info_after["total_files"]
+    
+    message = (
+        f"✅ <b>Кэш очищен!</b>\n\n"
+        f"📊 <b>До очистки:</b>\n"
+        f"   • Файлов: {cache_info_before['total_files']}\n"
+        f"   • Размер: {cache_info_before['total_size_mb']} MB\n\n"
+        f"🧹 <b>После очистки:</b>\n"
+        f"   • Файлов: {cache_info_after['total_files']}\n"
+        f"   • Размер: {cache_info_after['total_size_mb']} MB\n\n"
+        f"💾 <b>Освобождено:</b>\n"
+        f"   • Файлов: {freed_files}\n"
+        f"   • Места: {freed_space} MB"
+    )
+    
+    await bot.send_message(admin_id, message, parse_mode="HTML")
+
 admin_dialog = Dialog(
     Window(
         Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
@@ -306,6 +344,7 @@ admin_dialog = Dialog(
         Button(Const("⚙️ Тест вечерней рассылки"), id=WidgetIds.TEST_EVENING, on_click=on_test_evening),
         Button(Const("🧪 Тест напоминаний о парах"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
         Button(Const("🧪 Тест алёрта"), id="test_alert", on_click=on_test_alert),
+        Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache", on_click=on_clear_cache),
         state=Admin.menu
     ),
     Window(

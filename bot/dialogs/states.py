@@ -7,6 +7,7 @@ class MainMenu(StatesGroup):
 class Schedule(StatesGroup):
     view = State()
     full_week_view = State()
+    week_image_view = State()
 
 class SettingsMenu(StatesGroup):
     main = State()
