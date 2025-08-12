@@ -233,7 +233,7 @@ def _prepare_days(schedule_data: dict) -> List[dict]:
         items = []
         for l in lessons:
             title = f"{l.get('subject', '')}{' (' + l.get('type','') + ')' if l.get('type') else ''}"
-            room_raw = (l.get('room', '') or '').strip()
+            room_raw = (l.get('room', '') or '').strip('; ')  # Удаляем только точку с запятой и пробелы, сохраняем звездочки
             room_lower = room_raw.lower()
             # Считаем такие значения отсутствием кабинета
             if not room_raw or ('кабинет' in room_lower and 'не указан' in room_lower):

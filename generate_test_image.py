@@ -21,7 +21,7 @@ def create_test_schedule_data():
             {
                 "subject": "СИСТЕМНОЕ ПО",
                 "type": "",
-                "room": "325",
+                "room": "325*",
                 "time": "10:50 - 12:20",
                 "start_time_raw": "10:50"
             },
@@ -42,7 +42,7 @@ def create_test_schedule_data():
             {
                 "subject": "ТОЭ",
                 "type": "",
-                "room": "429",
+                "room": "429*",
                 "time": "16:45 - 18:15",
                 "start_time_raw": "16:45"
             }
@@ -104,7 +104,7 @@ def create_test_schedule_data():
             {
                 "subject": "ФИЗКУЛЬТУРА",
                 "type": "",
-                "room": "Спортзал",
+                "room": "",
                 "time": "12:40 - 14:10",
                 "start_time_raw": "12:40"
             }

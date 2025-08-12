@@ -76,7 +76,7 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                     disc_parts = discipline_raw.split(' ', 1)
                     
                     lecturers = [l.text.strip() for l in lesson_element.findall('Lecturers/Lecturer/ShortName') if l.text and l.text.strip()]
-                    classroom = classroom_tag.text.strip(';* ') if classroom_tag is not None and classroom_tag.text and classroom_tag.text.strip() else None
+                    classroom = classroom_tag.text.strip('; ') if classroom_tag is not None and classroom_tag.text and classroom_tag.text.strip() else None
 
                     start_time_token = time_raw.split()[0]
                     try:

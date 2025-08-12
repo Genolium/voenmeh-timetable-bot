@@ -137,23 +137,19 @@
     }
     
     /* Ключевой элемент: строка с информацией о паре. */
-    /* display: grid; — идеальный инструмент для создания ровных колонок. */
-    /* grid-template-columns: 1fr auto auto; — создаёт 3 колонки: */
-    /* 1. Название (1fr): занимает всё оставшееся свободное место. */
-    /* 2. Аудитория (auto): сжимается под своё содержимое. */
-    /* 3. Время (auto): также сжимается под содержимое. */
-    /* gap: 5rem; — устанавливает одинаковый отступ (50px) между всеми тремя колонками. */
+    /* display: grid; — используем 12-колоночную сетку для точного контроля. */
     .lesson-row {
       display: grid;
-      grid-template-columns: 1fr auto auto;
+      grid-template-columns: repeat(12, 1fr);
       align-items: center;
-      gap: 5rem;
+      gap: 0.5rem;
       font-size: 3.8rem;
       height: 4.7rem;
     }
 
-    /* Название предмета. text-overflow: ellipsis; добавляет "..." в конце, если текст не помещается. */
+    /* Название предмета. Занимает колонки 1-8 (8 колонок). */
     .lesson-title {
+      grid-column: 1 / 9;
       font-weight: 400;
       color: var(--text-main);
       white-space: nowrap;
@@ -161,20 +157,27 @@
       text-overflow: ellipsis;
     }
 
-    /* Номер аудитории. */
+    /* Номер аудитории. Занимает колонки 9-10 (2 колонки). */
     .lesson-room {
+      grid-column: 9 / 11;
       font-weight: 400;
       color: var(--color-accent);
-      text-align: right;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      justify-self: start;
     }
 
-    /* Временной интервал пары. */
+    /* Временной интервал пары. Занимает колонки 11-12 (2 колонки). */
     .lesson-time {
+      grid-column: 11 / 13;
       font-family: 'Segoe UI Light', 'Segoe UI', sans-serif;
       font-weight: 300;
       color: var(--text-light);
       white-space: nowrap;
       text-align: right;
+      justify-self: end;
     }
     
     /* Текст для выходного дня. */
@@ -246,9 +249,10 @@
       .day-card { padding: 3rem; }
       /* Плашка с временем становится частью потока, а не висит сбоку. */
       .badge-first-lesson { position: static; margin-bottom: 2rem; align-self: flex-start; }
-      /* В строке с парой скрываем время, чтобы не ломать вёрстку. */
-      .lesson-row { grid-template-columns: 1fr auto; }
-      .lesson-time { display: none; }
+      /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
+      .lesson-room { display: none; }
+      .lesson-title { grid-column: 1 / 11; }
+      .lesson-time { grid-column: 11 / 13; }
     }
   </style>
 </head>
