@@ -1,7 +1,7 @@
 import logging
 import random
-from datetime import datetime, time, date
-from typing import Dict, Any
+from datetime import datetime, time, date, timedelta
+from typing import Dict, Any, List, Optional, Tuple
 
 from core.config import MOSCOW_TZ
 
@@ -226,7 +226,17 @@ def generate_dynamic_header(lessons: list, target_date: date) -> tuple[str, str]
 
 # --- ТЕКСТЫ ДЛЯ УВЕДОМЛЕНИЙ ---
 
+# --- Константы для текстов ---
 UNSUBSCRIBE_FOOTER = "\n\n<tg-spoiler><i>Отключить эту рассылку можно в «⚙️ Настройки»</i></tg-spoiler>"
+
+# Реклама канала с новостями разработки (показывается в 30% случаев)
+CHANNEL_PROMO = "\n\n📢 <i>Новости разработки бота: <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a></i>"
+
+def get_footer_with_promo() -> str:
+    """Возвращает footer с возможной рекламой канала (30% вероятность)"""
+    if random.random() < 0.3:  # 30% вероятность показа рекламы
+        return UNSUBSCRIBE_FOOTER + CHANNEL_PROMO
+    return UNSUBSCRIBE_FOOTER
 
 EVENING_GREETINGS = ["Добрый вечер! 👋", "Привет! Готовимся к завтрашнему дню.", "Вечерняя сводка на подходе."]
 MORNING_GREETINGS = ["Доброе утро! ☀️", "Утро доброе! Учеба ждет.", "Утренняя сводка готова!"]

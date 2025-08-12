@@ -19,7 +19,7 @@ def mock_template_files(tmp_path):
     
     # Создаем фейковый HTML-шаблон
     template_file = templates_dir / "schedule_template.html"
-    template_file.write_text("<h1>{{ week_type }}</h1><p>{{ schedule_days[0].title }}</p>")
+    template_file.write_text("<h1>{{ week_type }}</h1><p>{{ schedule_days[0].name }}</p>")
 
     # Создаем фейковый файл генератора, чтобы Path(__file__) работал предсказуемо
     generator_file = core_dir / "image_generator.py"
@@ -34,6 +34,13 @@ def mock_playwright(mocker):
     mock_page = AsyncMock()
     mock_browser.new_page.return_value = mock_page
     
+    # Мокируем логику измерения высоты контента
+    mock_content_element = AsyncMock()
+    mock_content_element.bounding_box.return_value = {
+        'x': 0, 'y': 0, 'width': 2800, 'height': 1500
+    }
+    mock_page.query_selector.return_value = mock_content_element
+    
     mock_launcher = AsyncMock()
     mock_launcher.launch.return_value = mock_browser
     
@@ -46,7 +53,7 @@ def mock_playwright(mocker):
 
 
 @pytest.mark.asyncio
-async def test_generate_schedule_image_success(mock_template_files, mock_playwright):
+async def test_generate_schedule_image_success(mock_template_files, mock_playwright, tmp_path):
     """
     Тест успешного сценария: шаблон найден, HTML сгенерирован, скриншот сделан.
     """
@@ -61,7 +68,7 @@ async def test_generate_schedule_image_success(mock_template_files, mock_playwri
             {'start_time_raw': '09:00', 'subject': 'Матан', 'type': 'лек', 'room': '101', 'time': '9-10'}
         ]
     }
-    output_path = str(project_root / "test.png")
+    output_path = str(tmp_path / "test.png")
 
     result = await generate_schedule_image(
         schedule_data=schedule_data,
@@ -72,7 +79,10 @@ async def test_generate_schedule_image_success(mock_template_files, mock_playwri
     
     assert result is True
     
-    mock_playwright.set_viewport_size.assert_called_once_with({"width": 1280, "height": 830})
+    # Проверяем что viewport устанавливался хотя бы один раз
+    assert mock_playwright.set_viewport_size.call_count >= 1
+    # Первый вызов - начальный viewport (новые размеры)
+    mock_playwright.set_viewport_size.assert_any_call({"width": 2800, "height": 4000})
     
     html_content_call = mock_playwright.set_content.call_args
     html_content = html_content_call.args[0]
@@ -82,11 +92,18 @@ async def test_generate_schedule_image_success(mock_template_files, mock_playwri
     mock_playwright.screenshot.assert_called_once_with(path=output_path, type="png")
 
 @pytest.mark.asyncio
-async def test_generate_schedule_image_template_not_found(monkeypatch, mocker):
+async def test_generate_schedule_image_template_not_found(monkeypatch, mocker, tmp_path):
     """
     Тест сценария, когда шаблон не найден.
     Имитируем ошибку с помощью мока.
     """
+    # Сбрасываем глобальные кэши перед тестом
+    import core.image_generator
+    core.image_generator._template_cache = None
+    core.image_generator._bg_images_cache = {}
+    core.image_generator._browser_instance = None
+    core.image_generator._browser_lock = None
+    
     # Мокируем FileSystemLoader так, чтобы он падал с ошибкой TemplateNotFound
     from jinja2.exceptions import TemplateNotFound
     mock_loader = MagicMock()
@@ -96,19 +113,19 @@ async def test_generate_schedule_image_template_not_found(monkeypatch, mocker):
     mock_print = MagicMock()
     monkeypatch.setattr('builtins.print', mock_print)
 
-    result = await generate_schedule_image({}, "", "", "test.png")
+    result = await generate_schedule_image({}, "", "", str(tmp_path / "test.png"))
     
-    # 1. Проверяем, что функция вернула False (неудача)
-    assert result is False
+    # Теперь при ошибках функция возвращает True (fallback), а не False
+    assert result is True
     
-    # 2. Проверяем, что в консоль было выведено сообщение об ошибке
-    mock_print.assert_called_once()
-    error_message = mock_print.call_args.args[0]
-    assert "Ошибка при генерации изображения" in error_message
-    assert "schedule_template.html" in str(mock_print.call_args) # Проверяем, что имя файла есть в ошибке
+    # Проверяем, что в консоль было выведено сообщение об ошибке
+    mock_print.assert_called()
+    # Ищем вызов с сообщением об ошибке
+    error_calls = [call for call in mock_print.call_args_list if "Ошибка при генерации изображения" in str(call)]
+    assert len(error_calls) > 0
 
 @pytest.mark.asyncio
-async def test_generate_schedule_image_playwright_fails(mock_template_files, mock_playwright, monkeypatch):
+async def test_generate_schedule_image_playwright_fails(mock_template_files, mock_playwright, monkeypatch, tmp_path):
     """
     Тест сценария, когда Playwright падает на этапе скриншота.
     """
@@ -116,15 +133,45 @@ async def test_generate_schedule_image_playwright_fails(mock_template_files, moc
     import core.image_generator
     core.image_generator.__file__ = str(generator_file)
     
+    # Сбрасываем глобальные кэши перед тестом
+    core.image_generator._template_cache = None
+    core.image_generator._bg_images_cache = {}
+    core.image_generator._browser_instance = None
+    core.image_generator._browser_lock = None
+    
     mock_playwright.screenshot.side_effect = Exception("Browser crashed")
     
     mock_print = MagicMock()
     monkeypatch.setattr('builtins.print', mock_print)
 
-    result = await generate_schedule_image({}, "Нечётная", "FAIL", "fail.png")
+    result = await generate_schedule_image({}, "Нечётная", "FAIL", str(tmp_path / "fail.png"))
     
-    assert result is False
+    # Теперь при ошибках функция возвращает True (fallback), а не False
+    assert result is True
     
-    mock_print.assert_called_once()
-    error_message = mock_print.call_args.args[0]
-    assert "Ошибка при генерации изображения: Browser crashed" in error_message
+    mock_print.assert_called()
+    # Ищем вызов с сообщением об ошибке
+    error_calls = [call for call in mock_print.call_args_list if "Ошибка при генерации изображения" in str(call)]
+    assert len(error_calls) > 0
+
+@pytest.mark.asyncio
+async def test_generate_schedule_image_fallback(monkeypatch, tmp_path):
+    # Подменим модуль, чтобы форсировать PIL-фолбэк
+    import core.image_generator as ig
+    ig.async_playwright = None
+    
+    # Сбрасываем глобальные кэши перед тестом
+    ig._template_cache = None
+    ig._bg_images_cache = {}
+    ig._browser_instance = None
+    ig._browser_lock = None
+
+    schedule_data = {
+        "ПОНЕДЕЛЬНИК": [
+            {"start_time_raw": "09:00", "subject": "Т", "type": "лек", "room": "101", "time": "09:00-10:30"}
+        ]
+    }
+    out = tmp_path / "out.png"
+    ok = await ig.generate_schedule_image(schedule_data, "Чётная", "G1", str(out))
+    assert ok is True
+    assert out.exists() and out.stat().st_size > 0

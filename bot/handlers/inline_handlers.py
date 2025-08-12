@@ -1,5 +1,6 @@
 import logging
 import re
+import random
 from datetime import date, timedelta, datetime
 from uuid import uuid4
 
@@ -102,6 +103,10 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager):
         result_description = "🎉 Занятий нет, можно отдыхать!"
     
     formatted_text = format_schedule_text(schedule_info)
+    
+    # Добавляем рекламу канала в 20% случаев
+    if random.random() < 0.2:
+        formatted_text += "\n\n📢 <i>Новости разработки: <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a></i>"
 
     result = InlineQueryResultArticle(
         id=f"{group_name}:{target_date.isoformat()}",

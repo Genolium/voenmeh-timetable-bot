@@ -1,65 +1,285 @@
 <!doctype html>
 <html lang="ru">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Расписание — {{ week_type }}</title>
-    <style>
-      * { box-sizing: border-box; }
-      @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
-      @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
-      @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
-      @font-face { font-family: 'Saira'; src: url('{{ assets_base }}/fonts/Saira.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
-      body { font-family: 'Segoe UI', 'Noto Sans', sans-serif; }
-      .adjustLetterSpacing { letter-spacing: 0.015em; }
-      .no-wrap { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .time-range { font-family: 'Segoe UI', sans-serif; font-weight: 300; }
-      .badge-text { font-family: 'Saira', 'sans-serif; font-weight: 700; }
-    </style>
-  </head>
-  <body class="min-h-screen">
-    <div id="scale-root" style="width:100%; overflow-x:hidden;">
-      <div id="scale-canvas" style="width:100%; transform-origin: top left;">
-        <div id="app" data-name="Расписание" style="min-height:100vh; background-position:center; background-size:cover; background-repeat:no-repeat; padding:150px; display:flex; align-items:flex-start; justify-content:flex-start; background-image:url('{{ bg_image }}')">
-          <div data-name="Content" style="display:flex; flex-direction:column; gap:90px; align-items:flex-start; justify-content:flex-start;">
-            <header data-name="Header" style="color:#ffffff; line-height:1;">
-              <h1 style="font-family:'Saira', sans-serif; font-weight:600; letter-spacing:2.325px; font-size:155px; margin:0;">Расписание</h1>
-              <p style="font-weight:400; letter-spacing:0.96px; font-size:64px; margin:0;">{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}</p>
-            </header>
-            <section id="daysGrid" style="display:flex; flex-wrap:wrap; width:2669px; gap:65px; align-items:flex-start; justify-content:flex-start;">
-              {% for day in schedule_days %}
-              <article data-name="День недели" style="position:relative; background:#ffffff; border-radius:40px; padding:45px 60px; display:flex; gap:40px; align-items:flex-start; min-height:300px; height:510px; width:1282px;">
-                <div data-name="Контент дня" style="display:flex; flex-direction:column; gap:20px; flex:1 1 auto; height:100%; justify-content:center;">
-                  <div style="text-align:left; font-weight:700; font-size:64px; letter-spacing:0.96px; color: {{ '#ff2f00' if week_slug=='odd' else '#6555f0' }}; min-width:1px; white-space:nowrap;">{{ day.name }}</div>
-                  {% if day.lessons %}
-                    {% for l in day.lessons %}
-                    <div data-name="Пара" style="display:flex; align-items:center; gap:50px; text-align:left; font-size:48px; line-height:1; white-space:nowrap;">
-                      <div class="adjustLetterSpacing" style="color:#000000; font-weight:400; min-width:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ l.title }}</div>
-                      <div style="font-style:normal; color: {{ '#ff2f00' if week_slug=='odd' else '#6555f0' }}; min-width:1px; white-space:nowrap;">{{ l.room }}</div>
-                      <div class="time-range" style="font-style:normal; font-weight:300 !important; color:#323232; min-width:1px; white-space:nowrap;">{{ l.time }}</div>
-                    </div>
-                    {% endfor %}
-                  {% else %}
-                    <div class="adjustLetterSpacing" style="color:#000000; font-size:48px; letter-spacing:0.72px; line-height:40px; white-space:nowrap;">Выходной, пар нет</div>
-                  {% endif %}
-                </div>
-                {% if day.lessons %}
-                <div data-name="Первая пара" style="position:absolute; top:45px; right:60px; width:160px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                  <div data-name="Время начала" style="border-radius:20px; color:#ffffff; padding:20px 33px; text-align:center; display:flex; align-items:center; justify-content:center; background-color: {{ '#ff656f' if week_slug=='odd' else '#8274fb' }};">
-                    <div class="badge-text" style="font-size:40px; line-height:40px;">{{ day.firstStart }}</div>
-                  </div>
-                  <div class="badge-text" style="text-align:center; font-size:20px; height:40.095px; line-height:40px; color: {{ '#ff656f' if week_slug=='odd' else '#8274fb' }};">первая пара</div>
-                </div>
-                {% endif %}
-              </article>
-              {% endfor %}
-            </section>
-          </div>
-        </div>
-      </div>
-    </div>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Расписание — {{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}</title>
+  <style>
+    /* --- 1. Подключение шрифтов --- */
+    /* Этот блок загружает все шрифты, используемые в дизайне. */
+    /* font-display: swap; нужен для того, чтобы текст был виден сразу, не дожидаясь загрузки кастомного шрифта. */
+    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
+    @font-face { font-family: 'Saira'; src: url('{{ assets_base }}/fonts/Saira.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+
+    /* --- 2. Глобальные переменные и цветовая схема (Темизация) --- */
+    /* :root — это корневой элемент документа. Здесь мы объявляем CSS-переменные для удобного управления цветами. */
+    :root {
+      /* Цвета для нечётной недели (оранжево-красная тема) */
+      --color-odd-bg: #F9733E;
+      --color-odd-accent: #ff2f00;
+      --color-odd-badge-bg: #ff656f;
+      
+      /* Цвета для чётной недели (фиолетовая тема) */
+      --color-even-bg: #6555F0;
+      --color-even-accent: #776AEF;
+      --color-even-badge-bg: #776AEF;
+
+      /* Здесь, с помощью шаблонизатора Jinja, мы выбираем нужную палитру в зависимости от типа недели. */
+      /* Это позволяет менять всю тему сайта, просто меняя 'week_slug' в данных. */
+      --color-bg: {{ 'var(--color-odd-bg)' if week_slug == 'odd' else 'var(--color-even-bg)' }};
+      --color-accent: {{ 'var(--color-odd-accent)' if week_slug == 'odd' else 'var(--color-even-accent)' }};
+      --color-badge-bg: {{ 'var(--color-odd-badge-bg)' if week_slug == 'odd' else 'var(--color-even-badge-bg)' }};
+
+      /* Переменные для текстовых цветов для консистентности */
+      --text-main: #000000;
+      --text-light: #323232;
+      --text-white: #FFFFFF;
+    }
+
+    /* --- 3. Базовые стили и сброс --- */
+    /* Универсальный селектор (*) для сброса стандартных отступов у всех элементов. */
+    /* box-sizing: border-box; — ключевое правило, чтобы padding и border не увеличивали итоговый размер элемента. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* Хитрость для удобного перевода px в rem: 16px (стандарт) * 62.5% = 10px. */
+    /* Теперь 1rem = 10px, что упрощает вёрстку по макету (например, 40px = 4rem). */
+    html { font-size: 62.5%; }
+
+    /* Задаём фон, основной шрифт*/
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background-color: var(--color-bg);
+      background-image: url('{{ bg_image }}');
+      background-position: center;
+      background-size: cover;
+      background-repeat: no-repeat;
+    }
+
+    /* --- 4. Структура макета --- */
+
+    /* Ограничиваем максимальную ширину контента и выстраиваем его элементы (заголовок и сетку) в колонку. */
+    .content-wrapper {
+      padding: 10rem; /* Разумные отступы по 100px со всех сторон */
+      width: 100%;
+      max-width: 270rem;
+      display: flex;
+      flex-direction: column;
+      gap: 9rem;
+    }
+
+    /* Стили для главного заголовка "Расписание" и подзаголовка с типом недели. */
+    .schedule-header {
+      color: var(--text-white);
+    }
+    .schedule-header h1 {
+      font-family: 'Saira', sans-serif;
+      font-weight: 600;
+      font-size: 15.5rem;
+      line-height: 1.1;
+      letter-spacing: 0.23rem;
+    }
+    .schedule-header p {
+      font-size: 6.4rem;
+      font-weight: 400;
+      letter-spacing: 0.096rem;
+    }
+
+    /* Основная сетка для карточек с днями. По умолчанию в одну колонку. */
+    /* На больших экранах она станет двухколоночной (см. медиа-запросы в конце). */
+    .days-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6.5rem;
+      width: 100%;
+    }
+
+    /* --- 5. Стилизация компонентов --- */
+
+    /* Стили самой карточки: фон, скругления, отступы. */
+    /* position: relative; — нужно, чтобы абсолютно позиционировать плашку с временем. */
+    /* display: flex; flex-direction: column; — выстраивает контент карточки в колонку. */
+    /* justify-content: center; — ВЕРТИКАЛЬНО ЦЕНТРИРУЕТ контент, если его мало (как во Вторник). */
+    .day-card {
+      position: relative;
+      background: var(--text-white);
+      border-radius: 4rem;
+      padding: 4.5rem 8rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 52rem; 
+    }
+
+    /* Заголовок дня недели (Понедельник, Вторник и т.д.). */
+    /* margin-bottom добавляет нужный отступ до списка пар. */
+    .day-title {
+      font-weight: 700;
+      font-size: 6.4rem;
+      letter-spacing: 0.096rem;
+      color: var(--color-accent);
+      margin-bottom: 2.5rem; 
+    }
+
+    /* Контейнер для всех строк с парами. */
+    .lessons-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
     
-  </body>
-  </html>
+    /* Ключевой элемент: строка с информацией о паре. */
+    /* display: grid; — идеальный инструмент для создания ровных колонок. */
+    /* grid-template-columns: 1fr auto auto; — создаёт 3 колонки: */
+    /* 1. Название (1fr): занимает всё оставшееся свободное место. */
+    /* 2. Аудитория (auto): сжимается под своё содержимое. */
+    /* 3. Время (auto): также сжимается под содержимое. */
+    /* gap: 5rem; — устанавливает одинаковый отступ (50px) между всеми тремя колонками. */
+    .lesson-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      gap: 5rem;
+      font-size: 3.8rem;
+      height: 4.7rem;
+    }
 
+    /* Название предмета. text-overflow: ellipsis; добавляет "..." в конце, если текст не помещается. */
+    .lesson-title {
+      font-weight: 400;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
+    /* Номер аудитории. */
+    .lesson-room {
+      font-weight: 400;
+      color: var(--color-accent);
+      text-align: right;
+    }
+
+    /* Временной интервал пары. */
+    .lesson-time {
+      font-family: 'Segoe UI Light', 'Segoe UI', sans-serif;
+      font-weight: 300;
+      color: var(--text-light);
+      white-space: nowrap;
+      text-align: right;
+    }
+    
+    /* Текст для выходного дня. */
+    .holiday-text {
+        font-size: 3.8rem;
+        color: var(--text-main);
+    }
+
+    /* Плашка с временем первой пары. */
+    /* position: absolute; — "вырывает" плашку из общего потока и позволяет разместить её в углу карточки. */
+    /* top: 4.5rem; right: 6rem; — координаты относительно родительского .day-card. */
+    .badge-first-lesson {
+      position: absolute;
+      top: 4.5rem;
+      right: 6rem;
+      display: flex;
+      width: 16rem;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Верхняя часть плашки с цифрами времени. */
+    .badge-time {
+      background-color: var(--color-badge-bg);
+      color: var(--text-white);
+      border-radius: 2rem;
+      padding: 1.5rem 3rem;
+      font-family: 'Saira', sans-serif;
+      font-weight: 700;
+      font-size: 4rem;
+      line-height: 1;
+    }
+
+    /* Нижняя часть плашки с текстом "первая пара". */
+    .badge-text {
+      font-family: 'Saira', sans-serif;
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--color-badge-bg);
+      text-transform: lowercase;
+      margin-top: 0.5rem;
+    }
+    
+    /* --- 6. Адаптивность (Responsive Design) --- */
+    /* Правила ниже применяются только на экранах определённой ширины. */
+
+    /* Для больших десктопов (ширина от 1600px): */
+    /* Переключаем сетку в 2 колонки. */
+    @media (min-width: 1600px) {
+      .days-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+    
+    /* Для планшетов и небольших экранов (ширина до 768px): */
+    /* Пропорционально уменьшаем все размеры через базовый font-size. */
+    @media (max-width: 768px) {
+      html { font-size: 50%; }
+      body { padding: 3rem; }
+      .content-wrapper { gap: 5rem; }
+      .day-card { padding: 3rem 4rem; min-height: 0; } /* Убираем min-height, чтобы карточки не были слишком высокими. */
+    }
+
+    /* Для мобильных телефонов (ширина до 480px): */
+    @media (max-width: 480px) {
+      /* Ещё больше уменьшаем размеры. */
+      html { font-size: 40%; }
+      body { padding: 2rem; }
+      .day-card { padding: 3rem; }
+      /* Плашка с временем становится частью потока, а не висит сбоку. */
+      .badge-first-lesson { position: static; margin-bottom: 2rem; align-self: flex-start; }
+      /* В строке с парой скрываем время, чтобы не ломать вёрстку. */
+      .lesson-row { grid-template-columns: 1fr auto; }
+      .lesson-time { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="content-wrapper">
+    <header class="schedule-header">
+      <h1>Расписание</h1>
+      <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}</p>
+    </header>
+    <section class="days-grid">
+      {% for day in schedule_days %}
+      <article class="day-card">
+        <div class="badge-first-lesson {% if not day.lessons %}hidden{% endif %}">
+          <div class="badge-time">{{ day.firstStart }}</div>
+          <div class="badge-text">первая пара</div>
+        </div>
+        <div>
+            <h2 class="day-title">{{ day.name }}</h2>
+            {% if day.lessons %}
+              <div class="lessons-list">
+                {% for l in day.lessons %}
+                <div class="lesson-row">
+                  <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
+                  <div class="lesson-room">{{ l.room }}</div>
+                  <div class="lesson-time">{{ l.time }}</div>
+                </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="holiday-text">
+                Выходной, пар нет
+              </p>
+            {% endif %}
+        </div>
+      </article>
+      {% endfor %}
+    </section>
+  </div>
+  <style>.hidden { display: none; }</style>
+</body>
+</html>

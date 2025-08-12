@@ -35,7 +35,7 @@ from bot.dialogs.admin_menu import admin_dialog
 from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
-from bot.dialogs.schedule_view import schedule_dialog, on_inline_back
+from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
@@ -111,6 +111,27 @@ async def run_metrics_server(port: int = 8000):
     logging.info(f"Prometheus metrics server started on http://localhost:{port}")
 
 # --- Основная функция запуска ---
+# Простой входной рейт-лимит через throttling middleware
+class SimpleRateLimiter:
+    def __init__(self, max_per_sec: float = 10.0):
+        self._bucket: dict[int, list[float]] = {}
+        self._max_per_sec = max_per_sec
+
+    async def __call__(self, handler, event, data):
+        user_id = getattr(getattr(event, 'from_user', None), 'id', None)
+        if not user_id:
+            return await handler(event, data)
+        from time import monotonic
+        now = monotonic()
+        history = self._bucket.setdefault(user_id, [])
+        # чистим события старше 1 сек
+        history[:] = [t for t in history if now - t < 1.0]
+        if len(history) >= self._max_per_sec:
+            # Молча дропаем событие, чтобы не спамить
+            return
+        history.append(now)
+        return await handler(event, data)
+
 async def main():
     setup_logging()  # Вызываем настройку логирования
     load_dotenv()
@@ -149,7 +170,8 @@ async def main():
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
-    dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot}))
+    dp.update.middleware(SimpleRateLimiter(max_per_sec=5))  # анти-флуд на входящие события
+    dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler}))
 
     # Регистрация диалогов и хэндлеров
     all_dialogs = [
@@ -168,6 +190,7 @@ async def main():
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
+    # Времено отключено: кнопки "полное качество" и проверка подписки
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
     try:

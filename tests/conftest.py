@@ -1,6 +1,27 @@
 import sys
 import os
+import pytest
+from unittest.mock import MagicMock, AsyncMock
 
 # Добавляем корневую директорию проекта в пути поиска модулей
 # Это гарантирует, что pytest найдет папки 'core' и 'bot'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+@pytest.fixture
+def mock_dialog_manager():
+    """Фикстура для мока DialogManager"""
+    mock_manager = MagicMock()
+    
+    # Мокаем current_context
+    mock_context = MagicMock()
+    mock_context.dialog_data = {}
+    mock_manager.current_context.return_value = mock_context
+    
+    # Мокаем middleware_data
+    mock_manager.middleware_data = {}
+    
+    # Мокаем методы
+    mock_manager.switch_to = AsyncMock()
+    mock_manager.start = AsyncMock()
+    
+    return mock_manager

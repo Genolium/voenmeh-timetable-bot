@@ -1,5 +1,6 @@
 from aiohttp import web
 from typing import List, Dict, Any
+import os
 
 
 def format_alertmanager_message(payload: Dict[str, Any]) -> str:
@@ -34,6 +35,13 @@ def create_alert_app(bot, admin_ids: List[int]) -> web.Application:
     app = web.Application()
 
     async def handle_alert(request: web.Request) -> web.Response:
+        # Простая авторизация по ключу: Header "Authorization: Bearer <ALERT_WEBHOOK_API_KEY>"
+        expected_key = os.getenv("ALERT_WEBHOOK_API_KEY")
+        if expected_key:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer ") or auth_header.split(" ", 1)[1] != expected_key:
+                return web.Response(status=401, text="unauthorized")
+
         try:
             payload = await request.json()
         except Exception:

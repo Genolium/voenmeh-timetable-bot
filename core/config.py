@@ -55,3 +55,7 @@ if admin_ids_str:
         print("ОШИБКА: Неверный формат ADMIN_IDS. ID должны быть числами, разделенными запятой.")
         
 FEEDBACK_CHAT_ID = os.getenv("FEEDBACK_CHAT_ID")
+
+# --- Премиум/подписка для полного качества изображения ---
+# Может быть ID канала (например, -1001234567890) или @username
+SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL")

@@ -3,6 +3,12 @@ from unittest.mock import MagicMock, AsyncMock
 from datetime import date
 from core.manager import TimetableManager
 
+class DummyRedis:
+    async def get(self, *_):
+        return None
+    async def set(self, *_ , **__):
+        return None
+
 @pytest.fixture
 def sample_schedules():
     """Фикстура с примером данных расписания."""
@@ -107,3 +113,83 @@ class TestTimetableManager:
     def test_get_schedule_for_teacher_not_found(self, manager):
         schedule = manager.get_teacher_schedule("Неизвестный", date(2023, 9, 4))
         assert 'error' in schedule
+
+@pytest.mark.asyncio
+def test_manager_week_type_none_without_period():
+    data = {'__metadata__': {}}  # без period
+    mgr = TimetableManager(data, DummyRedis())
+    assert mgr.get_week_type(date.today()) is None
+
+
+def test_find_teachers_query_too_short():
+    mgr = TimetableManager({'__metadata__': {}, '__teachers_index__': {'Иванов': []}, 'G': {}}, DummyRedis())
+    assert mgr.find_teachers('iv') == []
+
+
+def test_teacher_not_found():
+    mgr = TimetableManager({'__metadata__': {}, '__teachers_index__': {}, 'G': {}}, DummyRedis())
+    err = mgr.get_teacher_schedule('Петров', date.today())
+    assert 'не найден' in err['error']
+
+
+def test_classroom_not_found():
+    mgr = TimetableManager({'__metadata__': {}, '__classrooms_index__': {}, 'G': {}}, DummyRedis())
+    err = mgr.get_classroom_schedule('505', date.today())
+    assert 'не найдена' in err['error']
+
+
+def make_manager():
+    data = {
+        '__metadata__': {},
+        '__teachers_index__': {
+            'Иванов': [], 'Петров': [], 'Сидоров': [],
+        },
+        '__classrooms_index__': {
+            '505': [], '400а': [], '401': [],
+        },
+        'G': {}
+    }
+    return TimetableManager(data, DummyRedis())
+
+
+def test_teachers_fuzzy_basic():
+    m = make_manager()
+    res = m.find_teachers_fuzzy('иванов')
+    assert 'Иванов' in res
+
+
+def test_teachers_fuzzy_short_returns_empty():
+    m = make_manager()
+    assert m.find_teachers_fuzzy('a') == []
+
+
+def test_classrooms_fuzzy():
+    m = make_manager()
+    res = m.find_classrooms_fuzzy('505')
+    assert '505' in res
+
+@pytest.mark.asyncio
+def test_teacher_and_classroom_schedule_paths():
+    data = {
+        '__metadata__': {'period': {'StartYear': '2024', 'StartMonth': '9', 'StartDay': '1'}},
+        'G1': {
+            'odd': {'Понедельник': [{'start_time_raw': '09:00', 'end_time_raw': '10:30'}]},
+            'even': {}
+        },
+        '__teachers_index__': {
+            'Иванов': [
+                {'day': 'Понедельник', 'week_code': '1', 'start_time_raw': '09:00', 'end_time_raw': '10:30'}
+            ]
+        },
+        '__classrooms_index__': {
+            '101': [
+                {'day': 'Понедельник', 'week_code': '1', 'start_time_raw': '09:00', 'end_time_raw': '10:30'}
+            ]
+        },
+        '__current_xml_hash__': 'h1'
+    }
+    mgr = TimetableManager(data, DummyRedis())
+    today = date(2024, 9, 2)  # понедельник, нечётная неделя
+    t = mgr.get_teacher_schedule('Иванов', today)
+    c = mgr.get_classroom_schedule('101', today)
+    assert t and c and t['lessons'] and c['lessons']

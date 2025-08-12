@@ -76,16 +76,45 @@ function buildLessonRow(lesson, accentColor) {
   row.className = 'flex flex-row items-center gap-[50px] text-left text-[48px] leading-none';
 
   const title = document.createElement('div');
-  title.className = 'adjustLetterSpacing text-black font-normal';
+  title.className = 'adjustLetterSpacing text-black font-normal flex-1 min-w-0';
+  title.style.wordWrap = 'break-word';
+  title.style.overflowWrap = 'break-word';
+  title.style.maxWidth = '750px';
+  
+  // Адаптивный размер шрифта для названия предмета
+  const baseFontSize = 48;
+  const maxWidth = 750;
+  
+  // Автоматически уменьшаем шрифт для длинных названий
+  let fontSize = baseFontSize;
+  if (lesson.title.length > 25) {
+    fontSize = Math.max(32, baseFontSize - Math.floor((lesson.title.length - 25) * 1.5));
+  }
+  
+  const tempSpan = document.createElement('span');
+  tempSpan.style.fontSize = `${fontSize}px`;
+  tempSpan.style.fontFamily = 'Segoe UI, Noto Sans, sans-serif';
+  tempSpan.style.fontWeight = '400';
+  tempSpan.textContent = lesson.title;
+  document.body.appendChild(tempSpan);
+  
+  // Дополнительная проверка по ширине
+  while (tempSpan.offsetWidth > maxWidth && fontSize > 20) {
+    fontSize -= 2;
+    tempSpan.style.fontSize = `${fontSize}px`;
+  }
+  
+  document.body.removeChild(tempSpan);
+  title.style.fontSize = `${fontSize}px`;
   title.textContent = lesson.title;
 
   const room = document.createElement('div');
-  room.className = 'not-italic';
+  room.className = 'not-italic flex-shrink-0';
   room.style.color = accentColor || '#6555f0';
   room.textContent = lesson.room;
 
   const time = document.createElement('div');
-  time.className = 'not-italic text-[#323232] font-light';
+  time.className = 'not-italic text-[#323232] font-light flex-shrink-0';
   time.textContent = lesson.time;
 
   row.append(title, room, time);
@@ -95,11 +124,11 @@ function buildLessonRow(lesson, accentColor) {
 function buildDayCard(day, accent, weekType) {
   const card = document.createElement('article');
   card.setAttribute('data-name', 'День недели');
-  card.className = 'bg-white rounded-[40px] px-[60px] py-[45px] flex flex-row gap-10 items-start min-h-[300px] h-[510px] w-[1282px]';
+  card.className = 'bg-white rounded-[40px] px-[60px] py-[45px] flex flex-row gap-10 items-start min-h-[300px] h-[580px] w-[1400px]';
 
   const dayContent = document.createElement('div');
   dayContent.setAttribute('data-name', 'Контент дня');
-  dayContent.className = 'flex flex-col gap-5 grow h-full justify-center';
+  dayContent.className = 'flex flex-col gap-5 grow h-full justify-start pt-20';
 
   const dayTitle = document.createElement('div');
   dayTitle.className = 'text-left font-bold text-[64px] tracking-[0.96px]';
@@ -173,7 +202,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderWeek(state);
   // Масштабирование канвы под ширину экрана
   const canvas = document.getElementById('scale-canvas');
-  const baseWidth = 2969; // ширина канвы (150px паддинги *2 + 2669 контент)
+  const baseWidth = 3100; // ширина канвы (150px паддинги *2 + 2800 контент)
   function rescale() {
     const vw = window.innerWidth;
     const scale = Math.min(1, vw / baseWidth);

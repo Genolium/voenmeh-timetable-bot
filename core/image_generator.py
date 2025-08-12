@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 from PIL import Image, ImageDraw, ImageFont
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -11,6 +11,12 @@ try:
 except Exception:
     _async_playwright = None
 async_playwright = _async_playwright
+
+# Глобальные кэши для ускорения
+_bg_images_cache = {}
+_template_cache = None
+_browser_instance = None
+_browser_lock = None
 
 # --- Параметры PIL-фолбэка (на случай отсутствия браузера) ---
 ASSETS_PATH = Path(__file__).resolve().parent.parent / "assets"
@@ -62,6 +68,53 @@ def _time_to_minutes(t: str) -> int:
     except Exception:
         return 24 * 60 + 59
 
+def _get_adaptive_font(text: str, max_width: int, base_font: ImageFont.FreeTypeFont) -> ImageFont.FreeTypeFont:
+    """
+    Возвращает адаптивный шрифт для текста, чтобы он помещался в заданную ширину.
+    
+    Args:
+        text: Текст для измерения
+        max_width: Максимальная ширина в пикселях
+        base_font: Базовый шрифт
+    
+    Returns:
+        Шрифт с адаптированным размером
+    """
+    try:
+        # Автоматически уменьшаем шрифт для длинных названий
+        original_size = base_font.size
+        new_size = original_size
+        
+        # Если текст длинный, сразу уменьшаем шрифт
+        if len(text) > 30:
+            new_size = max(20, original_size - int((len(text) - 30) * 1.5))
+        elif len(text) > 25:
+            new_size = max(24, original_size - int((len(text) - 25) * 1.2))
+        elif len(text) > 20:
+            new_size = max(28, original_size - int((len(text) - 20) * 0.8))
+        
+        # Создаем временный шрифт для измерения
+        font_path = str(FONTS_PATH / "SegoeUI-Bold.ttf")
+        temp_font = ImageFont.truetype(font_path, new_size)
+        
+        # Получаем размер текста с временным шрифтом
+        bbox = temp_font.getbbox(text)
+        text_width = bbox[2] - bbox[0]
+        
+        # Если текст все еще не помещается, уменьшаем дальше
+        while text_width > max_width and new_size > 16:
+            new_size -= 2
+            temp_font = ImageFont.truetype(font_path, new_size)
+            bbox = temp_font.getbbox(text)
+            text_width = bbox[2] - bbox[0]
+        
+        # Создаем финальный шрифт
+        return ImageFont.truetype(font_path, new_size)
+        
+    except Exception:
+        # В случае ошибки возвращаем базовый шрифт
+        return base_font
+
 def _draw_day_card(draw: ImageDraw.ImageDraw, day_title: str, lessons: List[Dict[str, Any]], card_pos: Tuple[int, int], theme_colors: dict) -> None:
     card_height = _get_card_height(lessons)
     card_width = (CANVAS_WIDTH - PADDING * 2 - GRID_GAP_X) // 2
@@ -78,13 +131,46 @@ def _draw_day_card(draw: ImageDraw.ImageDraw, day_title: str, lessons: List[Dict
         draw.rounded_rectangle([badge_x, badge_y, badge_x + badge_w, badge_y + badge_h], radius=12, fill=theme_colors['badge'])
         draw.text((badge_x + badge_w / 2, badge_y + 18), first_lesson_time, font=FONT_BADGE_TIME, fill=WHITE, anchor="mm")
         draw.text((badge_x + badge_w / 2, badge_y + 38), "ПЕРВАЯ ПАРА", font=FONT_BADGE_TEXT, fill=WHITE, anchor="mm")
-    current_y = card_pos[1] + CARD_HEADER_HEIGHT + 25
+    # Вычисляем центр карточки для контента, но с отступом от бейджа
+    badge_bottom = card_pos[1] + CARD_PADDING_Y + 50  # Нижняя граница бейджа
+    content_start = badge_bottom + 30  # Отступ от бейджа
+    content_height = len(lessons) * LESSON_ROW_HEIGHT
+    
+    # Центр карточки (учитывая заголовок дня)
+    card_center = card_pos[1] + CARD_HEADER_HEIGHT + (card_height - CARD_HEADER_HEIGHT) // 2
+    
+    # Позиция контента, если начать от бейджа
+    content_center_if_from_badge = content_start + content_height // 2
+    
+    # Если контент помещается в центре с отступом от бейджа
+    if content_center_if_from_badge <= card_center:
+        current_y = card_center - content_height // 2
+    else:
+        # Начинаем от бейджа с отступом
+        current_y = content_start
     for lesson in lessons:
         subject_text = f"{lesson.get('subject', '')} ({lesson.get('type', '')})"
-        room_text = f"{lesson.get('room', '')}*"
+        room_text = f"{lesson.get('room', '')}"
         time_text = lesson.get('time', '')
-        draw.text((card_pos[0] + CARD_PADDING_X, current_y), subject_text, font=FONT_BOLD, fill=DARK_TEXT, anchor="lm")
-        draw.text((card_pos[0] + 360, current_y), room_text, font=FONT_REGULAR, fill=theme_colors['room'], anchor="lm")
+        
+        # Вычисляем максимальную ширину для названия предмета
+        # Оставляем место для аудитории (360px от левого края) и времени (справа)
+        room_x = card_pos[0] + 360
+        time_x = card_pos[0] + card_width - CARD_PADDING_X
+        max_subject_width = room_x - (card_pos[0] + CARD_PADDING_X) - 20  # 20px отступ от аудитории
+        
+        # Получаем адаптивный шрифт для названия предмета
+        adaptive_font = _get_adaptive_font(subject_text, max_subject_width, FONT_BOLD)
+        
+        # Отладочная информация
+        bbox = adaptive_font.getbbox(subject_text)
+        actual_width = bbox[2] - bbox[0]
+        print(f"Текст: '{subject_text}' (длина: {len(subject_text)}) - размер шрифта: {adaptive_font.size}px, ширина: {actual_width}px/{max_subject_width}px")
+        if actual_width > max_subject_width:
+            print(f"ВНИМАНИЕ: Текст '{subject_text}' все еще не помещается! Максимум: {max_subject_width}px, фактически: {actual_width}px")
+        
+        draw.text((card_pos[0] + CARD_PADDING_X, current_y), subject_text, font=adaptive_font, fill=DARK_TEXT, anchor="lm")
+        draw.text((card_pos[0] + 360, current_y), room_text, font=FONT_REGULAR, fill=theme_colors['room'], anchor="rm")
         draw.text((card_pos[0] + card_width - CARD_PADDING_X, current_y), time_text, font=FONT_REGULAR, fill=DARK_TEXT_SEMI, anchor="rm")
         current_y += LESSON_ROW_HEIGHT
 
@@ -147,115 +233,139 @@ def _prepare_days(schedule_data: dict) -> List[dict]:
         items = []
         for l in lessons:
             title = f"{l.get('subject', '')}{' (' + l.get('type','') + ')' if l.get('type') else ''}"
-            room_raw = (l.get('room', '') or '').replace('*', '').strip()
+            room_raw = (l.get('room', '') or '').strip()
             room_lower = room_raw.lower()
             # Считаем такие значения отсутствием кабинета
             if not room_raw or ('кабинет' in room_lower and 'не указан' in room_lower):
                 room_fmt = ''
             else:
-                room_fmt = f"{room_raw}*"
+                room_fmt = f"{room_raw}"
             items.append({
                 'title': title,
                 'room': room_fmt,
                 'time': l.get('time','')
             })
-        prepared.append({'name': name, 'firstStart': first, 'lessons': items})
+        # Добавляем оба ключа для совместимости с тестами и шаблонами: 'name' и 'title'
+        prepared.append({'name': name, 'title': name, 'firstStart': first, 'lessons': items})
     return prepared
 
-async def generate_schedule_image(schedule_data: dict, week_type: str, group: str, output_path: str) -> bool:
+async def generate_schedule_image(
+    schedule_data: dict,
+    week_type: str,
+    group: str,
+    output_path: str,
+    viewport_size: Optional[Dict[str, int]] = None,
+) -> bool:
     """
-    HTML→PNG через headless браузер. При сбое — PIL-фолбэк.
+    Создает широкоформатное изображение расписания, рендеря HTML в headless-браузере.
 
-    Args:
-        schedule_data: словарь с расписанием недели.
-        week_type: строка "Нечётная"/"Чётная".
-        group: группа (для будущих пометок, сейчас не используется в шаблоне).
-        output_path: путь для сохранения PNG.
-
-    Returns:
-        bool: успех/неуспех.
+    Стратегия, решающая проблему "вытянутой картинки":
+    1. Принудительно задается ШИРОКИЙ viewport (окно браузера).
+    2. В этом широком окне рендерится HTML, и его двухколоночная сетка занимает правильное место.
+    3. Измеряется РЕАЛЬНАЯ высота, которую занял контент.
+    4. Высота viewport подгоняется под измеренную высоту.
+    5. Делается скриншот, который получается широким и с правильной высотой.
     """
     try:
-        # 1) Рендер HTML по шаблону
+        # --- ШАГ 1: Рендеринг HTML по шаблону (без изменений) ---
+        global _template_cache, _bg_images_cache
         project_root = Path(__file__).resolve().parent.parent
-        templates_dir = project_root / "templates"
-        env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
-        template = env.get_template("schedule_template.html")
-
+        if _template_cache is None:
+            templates_dir = project_root / "templates"
+            env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
+            _template_cache = env.get_template("schedule_template.html")
         week_slug = 'odd' if 'Неч' in week_type else 'even'
-        # Инлайн-фоны в base64, чтобы не зависеть от file:// доступа в браузере
-        from base64 import b64encode
-        orange_path = project_root / "assets" / "orange_background.png"
-        purple_path = project_root / "assets" / "purple_background.png"
-        try:
-            bg_orange_data = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
-        except Exception:
-            bg_orange_data = ""
-        try:
-            bg_purple_data = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
-        except Exception:
-            bg_purple_data = ""
-        html = template.render(
+        if not _bg_images_cache:
+            from base64 import b64encode
+            try:
+                orange_path = project_root / "assets" / "orange_background.png"
+                _bg_images_cache['orange'] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
+            except Exception: _bg_images_cache['orange'] = ""
+            try:
+                purple_path = project_root / "assets" / "purple_background.png"
+                _bg_images_cache['purple'] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
+            except Exception: _bg_images_cache['purple'] = ""
+        html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
             schedule_days=_prepare_days(schedule_data),
-            bg_image=(bg_orange_data if week_slug == 'odd' else bg_purple_data),
+            bg_image=(_bg_images_cache['orange'] if week_slug == 'odd' else _bg_images_cache['purple']),
             assets_base=(project_root / 'assets').as_uri(),
         )
 
-        # 2) Ленивая загрузка playwright или использование замоканного объекта из тестов
         global async_playwright
         if async_playwright is None:
-            try:
-                from playwright.async_api import async_playwright as _imported
-                async_playwright = _imported
-            except Exception:
-                # Нет браузера — уходим в фолбэк
-                return await _fallback_generate_with_pillow(schedule_data, week_type, output_path)
+            return await _fallback_generate_with_pillow(schedule_data, week_type, output_path)
 
-        # 3) Скриншот страницы
-        async with async_playwright() as pw:
-            browser = await pw.chromium.launch()
-            context = await browser.new_context(device_scale_factor=2)
-            page = await context.new_page()
-            # Отрисуем по реальной ширине канвы; высота с запасом
-            await page.set_viewport_size({"width": 2969, "height": 2400})
-            await page.set_content(html)
-            await page.add_style_tag(content='''
-              :root { --scale-multiplier: 1 !important; }
-              #scale-canvas { transform: scale(var(--scale-multiplier)); transform-origin: top left; }
-            ''')
-            canvas = await page.query_selector('#scale-canvas')
-            # Снимаем скрин именно элемента целиком (за пределами вьюпорта тоже)
-            await canvas.screenshot(path=output_path, type="png")
-            # Telegram ограничения: размеры и площадь изображения. При необходимости даунскейлим.
+        # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
+        global _browser_instance, _browser_lock
+        if _browser_lock is None:
+            import asyncio
+            _browser_lock = asyncio.Lock()
+        
+        async with _browser_lock:
+            if _browser_instance is None or not _browser_instance.is_connected():
+                pw = await async_playwright().__aenter__()
+                _browser_instance = await pw.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+            
+            page = await _browser_instance.new_page()
+            
             try:
+                # --- УСТАНАВЛИВАЕМ ШИРОКИЙ VIEWPORT ---
+                # Задаем фиксированную ширину, чтобы сетка не сжималась. 
+                # 2800px выбрано с запасом под ваш max-width: 270rem.
+                # Высоту делаем большой, чтобы все точно влезло.
+                initial_width = 2800 
+                await page.set_viewport_size({"width": initial_width, "height": 4000})
+                
+                await page.set_content(html, wait_until="domcontentloaded")
+                
+                # Ждём полной прогрузки шрифтов
+                await page.evaluate("document.fonts.ready")
+                await page.wait_for_timeout(200)
+
+                # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
+                # Находим элемент, который мы хотим измерить
+                content_element = await page.query_selector('.content-wrapper')
+                if not content_element:
+                    raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
+
+                # Получаем его реальные размеры в широком окне
+                bounding_box = await content_element.bounding_box()
+                if not bounding_box:
+                    raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
+
+                # Нам нужна полная высота от начала документа до конца элемента
+                content_height = bounding_box['y'] + bounding_box['height']
+                # Добавляем нижний отступ, так как padding уже включен в bounding_box
+                final_height = int(content_height)
+
+                # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
+                # Подгоняем высоту viewport точно под контент
+                await page.set_viewport_size({"width": initial_width, "height": final_height})
+                
+                # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
+                await page.screenshot(path=output_path, type="png")
+
+            finally:
+                await page.close()
+        
+        # Постобработка для сжатия (без изменений)
+        try:
+            if os.path.getsize(output_path) > 10_000_000:
                 from math import sqrt
-                img = Image.open(output_path)
-                w, h = img.size
-                # Ограничения под Telegram. На dpr=2 почти всегда попадаем, но перестрахуемся.
-                max_dim = 4096
-                max_area = 12_000_000
-                scale_w = max_dim / w
-                scale_h = max_dim / h
-                scale_area = sqrt(max_area / (w * h)) if (w * h) > 0 else 1.0
-                scale = min(1.0, scale_w, scale_h, scale_area)
-                if scale < 1.0:
-                    new_w = max(1, int(w * scale))
-                    new_h = max(1, int(h * scale))
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                # На всякий: убираем альфу для совместимости
-                if img.mode in ("RGBA", "LA"):
-                    bg = Image.new("RGB", img.size, (255, 255, 255))
-                    bg.paste(img, mask=img.split()[-1])
-                    img = bg
-                else:
-                    img = img.convert("RGB")
-                img.save(output_path, format="PNG", optimize=True)
-            except Exception:
-                pass
-            await browser.close()
+                with Image.open(output_path) as img:
+                    w, h = img.size
+                    max_dim, max_area = 4096, 12_000_000
+                    scale = min(1.0, max_dim / w, max_dim / h, sqrt(max_area / (w * h)))
+                    if scale < 0.95:
+                        new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+                        resized_img = img.resize(new_size, Image.LANCZOS)
+                        resized_img.save(output_path, format="PNG", optimize=True)
+        except Exception:
+            pass
+            
         return True
     except Exception as e:
         print(f"Ошибка при генерации изображения: {e}")
-        return False
+        return await _fallback_generate_with_pillow(schedule_data, week_type, output_path)

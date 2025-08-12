@@ -47,26 +47,37 @@ class WeatherAPI:
             "lang": "ru" # Русский язык
         }
         
-        async with aiohttp.ClientSession() as session:
-            # Исправление таймаута в session.get
-            for attempt in range(3):
-                try:
-                    logging.info(f"Выполняю запрос к OpenWeatherMap API для {cache_key} (попытка {attempt + 1})...")
-                    async with session.get(self.BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
-                        response.raise_for_status()
-                        data = await response.json()
-                        break
-                except asyncio.TimeoutError:
-                    logging.warning(f"Таймаут при получении погоды (попытка {attempt+1})")
-                    RETRIES_TOTAL.labels(component='weather').inc()
-                except aiohttp.ClientError as e:
-                    logging.error(f"Ошибка HTTP при запросе погоды: {e}")
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Исправление таймаута в session.get
+                for attempt in range(3):
+                    try:
+                        logging.info(f"Выполняю запрос к OpenWeatherMap API для {cache_key} (попытка {attempt + 1})...")
+                        async with session.get(self.BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                            response.raise_for_status()
+                            data = await response.json()
+                            break
+                    except asyncio.TimeoutError:
+                        logging.warning(f"Таймаут при получении погоды (попытка {attempt+1})")
+                        RETRIES_TOTAL.labels(component='weather').inc()
+                    except aiohttp.ClientError as e:
+                        logging.error(f"Ошибка HTTP при запросе погоды: {e}")
+                        ERRORS_TOTAL.labels(source='weather').inc()
+                        return None
+                    except Exception as e:
+                        # На практике aiohttp.raise_for_status поднимает ClientResponseError (наследник ClientError),
+                        # но для устойчивости обработаем и общий Exception из тестов/моков.
+                        logging.error(f"Неожиданная ошибка при запросе погоды: {e}")
+                        ERRORS_TOTAL.labels(source='weather').inc()
+                        return None
+                else:
+                    logging.error("Все попытки получить прогноз погоды завершились неудачей.")
                     ERRORS_TOTAL.labels(source='weather').inc()
                     return None
-            else:
-                logging.error("Все попытки получить прогноз погоды завершились неудачей.")
-                ERRORS_TOTAL.labels(source='weather').inc()
-                return None
+        except Exception as e:
+            logging.error(f"Критическая ошибка при обращении к погодному API: {e}")
+            ERRORS_TOTAL.labels(source='weather').inc()
+            return None
 
         closest_forecast_item = None
         min_diff = timedelta(days=999)

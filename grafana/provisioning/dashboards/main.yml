@@ -9,3 +9,5 @@ providers:
     editable: true
     options:
       path: /etc/grafana/provisioning/dashboards
+      # Явно укажем searchWildcards, чтобы Grafana не пыталась парсить YAML как JSON
+      foldersFromFilesStructure: true

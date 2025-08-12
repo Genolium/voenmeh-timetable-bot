@@ -6,6 +6,7 @@ from aiogram_dialog.widgets.text import Const, Format, Jinja
 from .states import SettingsMenu
 from .constants import WidgetIds
 from core.user_data import UserDataManager
+from bot.scheduler import cancel_reminders_for_user, plan_reminders_for_user
 
 def get_status_text(status: bool) -> str:
     return "✅ Включена" if status else "❌ Отключена"
@@ -40,6 +41,8 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
 
 async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    scheduler = manager.middleware_data.get("scheduler")
+    timetable_manager = manager.middleware_data.get("manager")
     user_id = callback.from_user.id
     setting_name = button.widget_id
     
@@ -48,20 +51,54 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
     
     new_status = not current_status
     await user_data_manager.update_setting(user_id, setting_name, new_status)
+
+    # Управляем ближайшими задачами для напоминаний о парах
+    if setting_name == WidgetIds.LESSON_REMINDERS and scheduler and timetable_manager:
+        if not new_status:
+            await cancel_reminders_for_user(scheduler, user_id)
+        else:
+            await cancel_reminders_for_user(scheduler, user_id)
+            await plan_reminders_for_user(scheduler, user_data_manager, timetable_manager, user_id)
+
     await callback.answer("Настройка обновлена.")
     await manager.switch_to(SettingsMenu.main)
 
 async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    scheduler = manager.middleware_data.get("scheduler")
+    timetable_manager = manager.middleware_data.get("manager")
     user_id = callback.from_user.id
     selected_time = int(item_id)
     
     await user_data_manager.set_reminder_time(user_id, selected_time)
+
+    # Перепланировать с новым окном
+    if scheduler and timetable_manager:
+        await cancel_reminders_for_user(scheduler, user_id)
+        await plan_reminders_for_user(scheduler, user_data_manager, timetable_manager, user_id)
+
     await callback.answer(f"Время напоминания установлено на {selected_time} минут.")
     await manager.switch_to(SettingsMenu.main)
 
 async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.done()
+
+async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Открывает канал с новостями разработки"""
+    await callback.answer("📢 Переходим к новостям разработки!")
+    await callback.message.answer(
+        "🚀 <b>Новости разработки бота</b>\n\n"
+        "Все обновления, планы и новости о разработке бота публикуются в нашем канале:\n\n"
+        "📢 <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a>\n\n"
+        "Там вы узнаете:\n"
+        "• О новых функциях первыми\n"
+        "• О планах развития\n"
+        "• Сможете повлиять на разработку\n"
+        "• Увидите закулисье проекта\n\n"
+        "<i>Подписывайтесь, чтобы быть в курсе! 👆</i>",
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
 
 settings_dialog = Dialog(
     Window(
@@ -79,7 +116,10 @@ settings_dialog = Dialog(
         ),
         Format("{reminder_time_text}", when="are_reminders_enabled"),
 
-        Button(Const("◀️ Назад"), id="back_to_schedule", on_click=on_back_click),
+        Row(
+            Button(Const("📢 Новости разработки"), id="news_btn", on_click=on_news_clicked),
+            Button(Const("◀️ Назад"), id="back_to_schedule", on_click=on_back_click),
+        ),
         state=SettingsMenu.main, getter=get_settings_data, parse_mode="HTML"
     ),
     Window(
