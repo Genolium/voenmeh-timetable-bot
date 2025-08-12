@@ -314,9 +314,11 @@ async def generate_schedule_image(
                 # --- УСТАНАВЛИВАЕМ ШИРОКИЙ VIEWPORT ---
                 # Задаем фиксированную ширину, чтобы сетка не сжималась. 
                 # 2800px выбрано с запасом под ваш max-width: 270rem.
-                # Высоту делаем большой, чтобы все точно влезло.
+                # Высоту делаем разумной, чтобы не было лишнего пространства.
                 initial_width = 2800 
-                await page.set_viewport_size({"width": initial_width, "height": 4000})
+                initial_height =  int(initial_width * 2/3) #соотношение сторон 2:3
+                
+                await page.set_viewport_size({"width": initial_width, "height": initial_height})
                 
                 await page.set_content(html, wait_until="domcontentloaded")
                 
@@ -335,10 +337,13 @@ async def generate_schedule_image(
                 if not bounding_box:
                     raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
 
-                # Нам нужна полная высота от начала документа до конца элемента
-                content_height = bounding_box['y'] + bounding_box['height']
-                # Добавляем нижний отступ, так как padding уже включен в bounding_box
-                final_height = int(content_height)
+                # Вычисляем правильную высоту с одинаковыми отступами сверху и снизу
+                content_height = bounding_box['height']
+                top_margin = bounding_box['y']  # Отступ сверху
+                
+                # Добавляем такой же отступ снизу для симметрии, но не более 100px
+                bottom_margin = min(top_margin, 100)
+                final_height = int(content_height + top_margin + bottom_margin)
 
                 # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
                 # Подгоняем высоту viewport точно под контент

@@ -55,6 +55,11 @@
       background-position: center;
       background-size: cover;
       background-repeat: no-repeat;
+      display: flex;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 0;
     }
 
     /* --- 4. Структура макета --- */
@@ -64,9 +69,11 @@
       padding: 10rem; /* Разумные отступы по 100px со всех сторон */
       width: 100%;
       max-width: 270rem;
+      margin: 0 auto; /* Центрируем контент */
       display: flex;
       flex-direction: column;
       gap: 9rem;
+      flex: 1; /* Занимает всю доступную высоту */
     }
 
     /* Стили для главного заголовка "Расписание" и подзаголовка с типом недели. */
