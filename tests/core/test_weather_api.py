@@ -59,6 +59,7 @@ async def test_weather_api_success(monkeypatch):
                     }
                 ]
             }
+        status = 200
 
     class Session:
         async def __aenter__(self):

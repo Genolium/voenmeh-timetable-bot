@@ -12,6 +12,24 @@ except Exception:
     _async_playwright = None
 async_playwright = _async_playwright
 
+def print_progress_bar(current: int, total: int, prefix: str = "Прогресс", suffix: str = "", length: int = 30):
+    """
+    Выводит прогресс-бар в консоль для генерации изображений.
+    
+    Args:
+        current: Текущий прогресс
+        total: Общее количество
+        prefix: Префикс сообщения
+        suffix: Суффикс сообщения
+        length: Длина прогресс-бара
+    """
+    filled_length = int(length * current // total)
+    bar = '█' * filled_length + '-' * (length - filled_length)
+    percent = f"{100 * current // total}%"
+    print(f'\r{prefix} |{bar}| {percent} {suffix}', end='', flush=True)
+    if current == total:
+        print()  # Новая строка в конце
+
 # Глобальные кэши для ускорения
 _bg_images_cache = {}
 _template_cache = None
@@ -174,7 +192,7 @@ def _draw_day_card(draw: ImageDraw.ImageDraw, day_title: str, lessons: List[Dict
         draw.text((card_pos[0] + card_width - CARD_PADDING_X, current_y), time_text, font=FONT_REGULAR, fill=DARK_TEXT_SEMI, anchor="rm")
         current_y += LESSON_ROW_HEIGHT
 
-async def _fallback_generate_with_pillow(schedule_data: dict, week_type: str, output_path: str) -> bool:
+async def _fallback_generate_with_pillow(schedule_data: dict, week_type: str, group: str, output_path: str) -> bool:
     try:
         is_odd_week = "Нечётная" in week_type
         theme_colors = {
@@ -193,7 +211,8 @@ async def _fallback_generate_with_pillow(schedule_data: dict, week_type: str, ou
         image = Image.new("RGBA", (CANVAS_WIDTH, int(total_height)), theme_colors['bg'])
         draw = ImageDraw.Draw(image)
         draw.text((PADDING, PADDING), "РАСПИСАНИЕ", font=FONT_HEADER, fill=WHITE)
-        draw.text((PADDING, PADDING + 60), week_type, font=FONT_SUBHEADER, fill=TEXT_SEMI_TRANSPARENT)
+        week_type_with_group = f"{week_type}: {group}"
+        draw.text((PADDING, PADDING + 60), week_type_with_group, font=FONT_SUBHEADER, fill=TEXT_SEMI_TRANSPARENT)
         y_col1 = PADDING + HEADER_HEIGHT
         y_col2 = PADDING + HEADER_HEIGHT
         x_col1 = PADDING
@@ -267,7 +286,9 @@ async def generate_schedule_image(
     5. Делается скриншот, который получается широким и с правильной высотой.
     """
     try:
-        # --- ШАГ 1: Рендеринг HTML по шаблону (без изменений) ---
+        # --- ШАГ 1: Рендеринг HTML по шаблону ---
+        print_progress_bar(1, 5, f"Генерация {group}", "Подготовка шаблона")
+        
         global _template_cache, _bg_images_cache
         project_root = Path(__file__).resolve().parent.parent
         if _template_cache is None:
@@ -288,6 +309,7 @@ async def generate_schedule_image(
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
+            group=group,
             schedule_days=_prepare_days(schedule_data),
             bg_image=(_bg_images_cache['orange'] if week_slug == 'odd' else _bg_images_cache['purple']),
             assets_base=(project_root / 'assets').as_uri(),
@@ -295,9 +317,11 @@ async def generate_schedule_image(
 
         global async_playwright
         if async_playwright is None:
-            return await _fallback_generate_with_pillow(schedule_data, week_type, output_path)
+            return await _fallback_generate_with_pillow(schedule_data, week_type, group, output_path)
 
         # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
+        print_progress_bar(2, 5, f"Генерация {group}", "Запуск браузера")
+        
         global _browser_instance, _browser_lock
         if _browser_lock is None:
             import asyncio
@@ -320,6 +344,7 @@ async def generate_schedule_image(
                 
                 await page.set_viewport_size({"width": initial_width, "height": initial_height})
                 
+                print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
                 await page.set_content(html, wait_until="domcontentloaded")
                 
                 # Ждём полной прогрузки шрифтов
@@ -327,6 +352,8 @@ async def generate_schedule_image(
                 await page.wait_for_timeout(200)
 
                 # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
+                print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
+                
                 # Находим элемент, который мы хотим измерить
                 content_element = await page.query_selector('.content-wrapper')
                 if not content_element:
@@ -346,6 +373,8 @@ async def generate_schedule_image(
                 final_height = int(content_height + top_margin + bottom_margin)
 
                 # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
+                print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
+                
                 # Подгоняем высоту viewport точно под контент
                 await page.set_viewport_size({"width": initial_width, "height": final_height})
                 
@@ -355,7 +384,7 @@ async def generate_schedule_image(
             finally:
                 await page.close()
         
-        # Постобработка для сжатия (без изменений)
+        # Постобработка для сжатия 
         try:
             if os.path.getsize(output_path) > 10_000_000:
                 from math import sqrt
@@ -373,4 +402,4 @@ async def generate_schedule_image(
         return True
     except Exception as e:
         print(f"Ошибка при генерации изображения: {e}")
-        return await _fallback_generate_with_pillow(schedule_data, week_type, output_path)
+        return await _fallback_generate_with_pillow(schedule_data, week_type, group, output_path)

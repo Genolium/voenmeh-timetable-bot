@@ -1,6 +1,7 @@
 from datetime import timedelta
 import pytz, os
 from pathlib import Path
+from pydantic_settings import BaseSettings
 
 # Определяем базовую директорию проекта
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -14,15 +15,35 @@ DAY_MAP = ['Понедельник', 'Вторник', 'Среда', 'Четве
 MOSCOW_TZ = pytz.timezone('Europe/Moscow')
 
 # --- Настройки базы данных и Redis ---
-# Интервал проверки изменений в расписании на сайте (в минутах)
-CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", 30))
 # Имена ключей в Redis
 REDIS_SCHEDULE_CACHE_KEY = "timetable:schedule_cache"
 REDIS_SCHEDULE_HASH_KEY = "timetable:schedule_hash"
 
 # --- Пути к медиа- и скриншот-файлам ---
-MEDIA_PATH = BASE_DIR / "bot" / "media"
-SCREENSHOTS_PATH = BASE_DIR / "bot" / "screenshots"
+class Settings(BaseSettings):
+    BOT_TOKEN: str
+    REDIS_URL: str
+    DATABASE_URL: str
+    MEDIA_PATH: str = "bot/media"
+    SCREENSHOTS_PATH: str = "bot/screenshots"
+    # Optional environment variables
+    OPENWEATHERMAP_API_KEY: str | None = None
+    ADMIN_ID: str | None = None
+    FEEDBACK_CHAT_ID: str | None = None
+    SUBSCRIPTION_CHANNEL: str | None = None
+    CHECK_INTERVAL_MINUTES: int = 30
+    model_config = {
+        "env_file": ".env",
+        "extra": "ignore"
+    }
+
+settings = Settings()
+
+# Интервал проверки изменений в расписании на сайте (в минутах)
+CHECK_INTERVAL_MINUTES = settings.CHECK_INTERVAL_MINUTES
+
+MEDIA_PATH = Path(settings.MEDIA_PATH)
+SCREENSHOTS_PATH = Path(settings.SCREENSHOTS_PATH)
 
 # Основные медиа
 WELCOME_IMAGE_PATH = MEDIA_PATH / "welcome.png"
@@ -41,12 +62,12 @@ ABOUT_NOTIFICATIONS_IMG = SCREENSHOTS_PATH / "about_notifications.png"
 ABOUT_INLINE_IMG = SCREENSHOTS_PATH / "about_inline.png"
 
 # --- Настройки API ---
-OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
+OPENWEATHERMAP_API_KEY = settings.OPENWEATHERMAP_API_KEY
 OPENWEATHERMAP_CITY_ID = "498817"
 OPENWEATHERMAP_UNITS = "metric"
 
 # --- Настройки администратора и обратной связи ---
-admin_ids_str = os.getenv("ADMIN_ID")
+admin_ids_str = settings.ADMIN_ID
 ADMIN_IDS = []
 if admin_ids_str:
     try:
@@ -54,8 +75,8 @@ if admin_ids_str:
     except ValueError:
         print("ОШИБКА: Неверный формат ADMIN_IDS. ID должны быть числами, разделенными запятой.")
         
-FEEDBACK_CHAT_ID = os.getenv("FEEDBACK_CHAT_ID")
+FEEDBACK_CHAT_ID = settings.FEEDBACK_CHAT_ID
 
 # --- Премиум/подписка для полного качества изображения ---
 # Может быть ID канала (например, -1001234567890) или @username
-SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL")
+SUBSCRIPTION_CHANNEL = settings.SUBSCRIPTION_CHANNEL

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Расписание — {{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}</title>
+  <title>Расписание — {{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: {{ group }}</title>
   <style>
     /* --- 1. Подключение шрифтов --- */
     /* Этот блок загружает все шрифты, используемые в дизайне. */
@@ -93,6 +93,10 @@
       letter-spacing: 0.096rem;
     }
 
+    .group-name{
+      font-weight: 700;
+    }
+
     /* Основная сетка для карточек с днями. По умолчанию в одну колонку. */
     /* На больших экранах она станет двухколоночной (см. медиа-запросы в конце). */
     .days-grid {
@@ -147,7 +151,7 @@
       height: 4.7rem;
     }
 
-    /* Название предмета. Занимает колонки 1-8 (8 колонок). */
+    /* Название предмета */
     .lesson-title {
       grid-column: 1 / 9;
       font-weight: 400;
@@ -157,9 +161,9 @@
       text-overflow: ellipsis;
     }
 
-    /* Номер аудитории. Занимает колонки 9-10 (2 колонки). */
+    /* Номер аудитории */
     .lesson-room {
-      grid-column: 9 / 11;
+      grid-column: 9 / 10;
       font-weight: 400;
       color: var(--color-accent);
       text-align: left;
@@ -167,15 +171,18 @@
       overflow: hidden;
       text-overflow: ellipsis;
       justify-self: start;
+      font-size: 3rem;
     }
 
-    /* Временной интервал пары. Занимает колонки 11-12 (2 колонки). */
+    /* Временной интервал пары */
     .lesson-time {
       grid-column: 11 / 13;
       font-family: 'Segoe UI Light', 'Segoe UI', sans-serif;
       font-weight: 300;
       color: var(--text-light);
       white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
       text-align: right;
       justify-self: end;
     }
@@ -214,7 +221,7 @@
     /* Нижняя часть плашки с текстом "первая пара". */
     .badge-text {
       font-family: 'Saira', sans-serif;
-      font-size: 2rem;
+      font-size: 2.3rem;
       font-weight: 700;
       color: var(--color-badge-bg);
       text-transform: lowercase;
@@ -260,7 +267,7 @@
   <div class="content-wrapper">
     <header class="schedule-header">
       <h1>Расписание</h1>
-      <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}</p>
+      <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: <span class="group-name">{{ group }}</span></p>
     </header>
     <section class="days-grid">
       {% for day in schedule_days %}

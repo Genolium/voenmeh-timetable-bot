@@ -150,6 +150,15 @@ def create_test_schedule_data():
         ]
     }
 
+def print_progress_bar(current: int, total: int, prefix: str = "Прогресс", suffix: str = "", length: int = 50):
+    """Выводит прогресс-бар в консоль."""
+    filled_length = int(length * current // total)
+    bar = '█' * filled_length + '-' * (length - filled_length)
+    percent = f"{100 * current // total}%"
+    print(f'\r{prefix} |{bar}| {percent} {suffix}', end='', flush=True)
+    if current == total:
+        print()
+
 async def main():
     """Основная функция"""
     # Создаем папку для результатов, если её нет
@@ -165,9 +174,13 @@ async def main():
         ("Чётная неделя", "test_schedule_even.png")
     ]
     
-    for week_type, filename in week_types:
+    total_images = len(week_types)
+    print(f"Начинаю генерацию {total_images} тестовых изображений...")
+    print_progress_bar(0, total_images, "Генерация тестовых изображений", "0/2 изображений")
+    
+    for i, (week_type, filename) in enumerate(week_types):
         output_path = output_dir / filename
-        print(f"Генерируем изображение для {week_type}...")
+        print_progress_bar(i, total_images, "Генерация тестовых изображений", f"{i}/{total_images} изображений")
         
         success = await generate_schedule_image(
             schedule_data=test_data,
@@ -177,9 +190,9 @@ async def main():
         )
         
         if success:
-            print(f"[OK] Изображение успешно создано: {output_path}")
+            print_progress_bar(i + 1, total_images, "Генерация тестовых изображений", f"{i + 1}/{total_images} изображений")
         else:
-            print(f"[ERROR] Ошибка при создании изображения: {output_path}")
+            print(f"\n[ERROR] Ошибка при создании изображения: {output_path}")
     
     print("\n[SUCCESS] Генерация тестовых изображений завершена!")
 

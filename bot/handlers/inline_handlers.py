@@ -90,7 +90,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager):
         return
 
     # Получаем расписание
-    schedule_info = manager.get_schedule_for_day(group_name, target_date)
+    schedule_info = await manager.get_schedule_for_day(group_name, target_date)
     
     # Формируем ответ
     result_title = f"Расписание для {group_name} на {target_date.strftime('%d.%m')} ({schedule_info.get('day_name', '')})"

@@ -40,11 +40,11 @@ class TestInlineHandler:
     def mock_manager(self):
         manager = MagicMock()
         manager._schedules = {"О735Б": {}}
-        manager.get_schedule_for_day.return_value = {
+        manager.get_schedule_for_day = AsyncMock(return_value={
             "date": date.today(),
             "day_name": "Тестовый день",
             "lessons": [{"time": "9:00-10:30", "subject": "Тестовый предмет"}]
-        }
+        })
         return manager
 
     async def test_inline_query_success(self, mock_query, mock_manager, mocker):
@@ -66,7 +66,7 @@ class TestInlineHandler:
     async def test_inline_query_no_lessons(self, mock_query, mock_manager, mocker):
         mocker.patch('bot.handlers.inline_handlers.format_schedule_text', return_value="Formatted Text No Lessons")
         mock_query.query = "О735Б завтра"
-        mock_manager.get_schedule_for_day.return_value = {"date": date.today(), "day_name": "Завтра", "lessons": []}
+        mock_manager.get_schedule_for_day = AsyncMock(return_value={"date": date.today(), "day_name": "Завтра", "lessons": []})
         
         await inline_query_handler(mock_query, mock_manager)
         

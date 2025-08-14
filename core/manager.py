@@ -36,23 +36,24 @@ class TimetableManager:
         """
         print("Инициализация TimetableManager...")
         
-        cached_data = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
-        
-        if cached_data:
-            print("Найден кэш расписания в Redis.")
-            data = json.loads(cached_data)
-            return cls(data, redis_client)
-        else:
-            print("Кэш в Redis не найден. Загрузка с сервера...")
-            from core.parser import fetch_and_parse_all_schedules
-            new_data = await fetch_and_parse_all_schedules()
-            if new_data:
-                temp_instance = cls(new_data, redis_client)
-                await temp_instance.save_to_cache()
-                print("Новое расписание загружено и сохранено в кэш Redis.")
-                return temp_instance
+        async with redis_client.lock("timetable_init_lock"):
+            cached_data = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
+            
+            if cached_data:
+                print("Найден кэш расписания в Redis.")
+                data = json.loads(cached_data)
+                return cls(data, redis_client)
             else:
-                return None
+                print("Кэш в Redis не найден. Загрузка с сервера...")
+                from core.parser import fetch_and_parse_all_schedules
+                new_data = await fetch_and_parse_all_schedules()
+                if new_data:
+                    temp_instance = cls(new_data, redis_client)
+                    await temp_instance.save_to_cache()
+                    print("Новое расписание загружено и сохранено в кэш Redis.")
+                    return temp_instance
+                else:
+                    return None
 
     async def save_to_cache(self):
         """Сохраняет текущее состояние менеджера в кэш Redis."""
@@ -80,17 +81,95 @@ class TimetableManager:
         week_number = ((target_date - self.semester_start_date).days // 7) + 1
         return ('odd', 'Нечетная') if week_number % 2 == 1 else ('even', 'Четная')
 
-    def get_schedule_for_day(self, group_number: str, target_date: date = None) -> dict | None:
+    async def get_academic_week_type(self, target_date: date) -> tuple[str, str]:
+        """
+        Определяет тип недели на основе академического календаря.
+        
+        Правила:
+        - 1 сентября всегда нечетная неделя
+        - Первая неделя зимнего семестра (обычно январь) - нечетная
+        - Недели чередуются: нечетная -> четная -> нечетная -> четная
+        """
+        year = target_date.year
+        
+        # Пытаемся получить настройки из базы данных
+        fall_semester_start = None
+        spring_semester_start = None
+        
+        # Если есть доступ к настройкам семестров, используем их
+        if hasattr(self, '_semester_settings_manager'):
+            try:
+                # Пытаемся получить настройки из менеджера
+                settings = await self._semester_settings_manager.get_semester_settings()
+                if settings:
+                    fall_semester_start, spring_semester_start = settings
+            except:
+                # Если не удалось получить настройки, используем значения по умолчанию
+                pass
+        
+        # Если настройки не получены, используем значения по умолчанию
+        if fall_semester_start is None:
+            fall_semester_start = date(year, 9, 1)  # 1 сентября
+        if spring_semester_start is None:
+            spring_semester_start = date(year + 1, 2, 9)  # 9 февраля следующего года
+        
+        # Если дата до начала осеннего семестра, используем предыдущий год
+        if target_date < fall_semester_start:
+            year -= 1
+            fall_semester_start = date(year, 9, 1)
+            spring_semester_start = date(year + 1, 2, 9)
+        
+        # Определяем, в каком семестре мы находимся
+        if fall_semester_start <= target_date < spring_semester_start:
+            # Осенний семестр
+            semester_start = fall_semester_start
+            semester_name = "осеннего"
+        elif target_date >= spring_semester_start:
+            # Весенний семестр
+            semester_start = spring_semester_start
+            semester_name = "весеннего"
+        else:
+            # Лето - используем осенний семестр предыдущего года
+            semester_start = date(year - 1, 9, 1)
+            semester_name = "осеннего"
+        
+        # Вычисляем номер недели от начала семестра
+        # Используем целочисленное деление на 7 дней
+        days_since_start = (target_date - semester_start).days
+        week_number = (days_since_start // 7) + 1
+        
+        # Определяем тип недели (нечетная = 1, 3, 5...)
+        is_odd = week_number % 2 == 1
+        
+        week_type = 'odd' if is_odd else 'even'
+        week_name = 'Нечетная' if is_odd else 'Четная'
+        
+        return (week_type, week_name)
+
+    async def get_schedule_for_day(self, group_number: str, target_date: date = None) -> dict | None:
         """Возвращает расписание для группы на конкретный день."""
         target_date = target_date or date.today()
         group_schedule = self._schedules.get(group_number.upper())
         if not group_schedule:
-            return {'error': f"Группа '{group_number}' не найдена."}
+            # Проверяем, есть ли похожие группы
+            all_groups = [g for g in self._schedules.keys() if not g.startswith('__')]
+            similar_groups = []
+            
+            # Ищем группы с похожими названиями
+            for group in all_groups:
+                if group_number.upper() in group or group in group_number.upper():
+                    similar_groups.append(group)
+            
+            error_message = f"Группа '{group_number}' не найдена."
+            if similar_groups:
+                error_message += f" Возможно, вы имели в виду: {', '.join(similar_groups[:3])}"
+            else:
+                error_message += " Возможно, группа выпустилась или была переименована."
+            
+            return {'error': error_message}
 
-        week_info = self.get_week_type(target_date)
-        if not week_info:
-            return {'error': "Не удалось определить тип недели."}
-        
+        # Используем новую академическую логику определения недели
+        week_info = await self.get_academic_week_type(target_date)
         week_key, week_name = week_info
         day_name = DAY_MAP[target_date.weekday()]
 
@@ -125,15 +204,13 @@ class TimetableManager:
         )
         return [name for name, score, _ in results]
 
-    def get_teacher_schedule(self, teacher_name: str, target_date: date) -> dict | None:
+    async def get_teacher_schedule(self, teacher_name: str, target_date: date) -> dict | None:
         """Возвращает расписание преподавателя на конкретный день."""
         if teacher_name not in self._teachers_index:
             return {'error': f"Преподаватель '{teacher_name}' не найден в индексе."}
         
-        week_info = self.get_week_type(target_date)
-        if not week_info:
-            return {'error': "Не удалось определить тип недели."}
-        
+        # Используем новую академическую логику определения недели
+        week_info = await self.get_academic_week_type(target_date)
         week_key_num, week_name = week_info
         day_name = DAY_MAP[target_date.weekday()]
 
@@ -177,15 +254,13 @@ class TimetableManager:
         )
         return [room for room, score, _ in results]
 
-    def get_classroom_schedule(self, classroom_number: str, target_date: date) -> dict | None:
+    async def get_classroom_schedule(self, classroom_number: str, target_date: date) -> dict | None:
         """Возвращает расписание аудитории на конкретный день."""
         if classroom_number not in self._classrooms_index:
             return {'error': f"Аудитория '{classroom_number}' не найдена в индексе."}
 
-        week_info = self.get_week_type(target_date)
-        if not week_info:
-            return {'error': "Не удалось определить тип недели."}
-        
+        # Используем новую академическую логику определения недели
+        week_info = await self.get_academic_week_type(target_date)
         week_key_num, week_name = week_info
         day_name = DAY_MAP[target_date.weekday()]
         
@@ -213,3 +288,11 @@ class TimetableManager:
     def get_current_xml_hash(self) -> str:
         """Возвращает хеш текущей версии XML расписания."""
         return self._current_xml_hash
+    
+    def set_semester_settings_manager(self, settings_manager):
+        """Устанавливает менеджер настроек семестров."""
+        self._semester_settings_manager = settings_manager
+    
+    async def get_semester_settings_manager(self):
+        """Получает менеджер настроек семестров."""
+        return self._semester_settings_manager

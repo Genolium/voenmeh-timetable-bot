@@ -1,4 +1,5 @@
 from prometheus_client import Counter, Gauge, Histogram, Summary
+import psutil
 
 # Счетчик обработанных событий (сообщений, колбэков и т.д.)
 # 'event_type' - это метка (label), по которой можно будет фильтровать (например, 'Message', 'CallbackQuery')
@@ -237,3 +238,11 @@ DATABASE_SIZE = Gauge(
     'Database size in bytes',
     ['table_name']
 )
+
+def collect_system_metrics():
+    MEMORY_USAGE.labels('rss').set(psutil.Process().memory_info().rss)
+    # Add CPU
+    CPU_USAGE = Gauge('bot_cpu_usage_percent', 'CPU usage')
+    CPU_USAGE.set(psutil.cpu_percent())
+
+# Call in scheduler or middleware

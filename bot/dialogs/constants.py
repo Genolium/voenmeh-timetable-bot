@@ -47,3 +47,4 @@ class WidgetIds(str, Enum):
     TEST_MORNING = "test_morning"
     TEST_EVENING = "test_evening"
     TEST_REMINDERS = "test_reminders"
+    GENERATE_FULL_SCHEDULE = "generate_full_schedule"

@@ -54,14 +54,26 @@ class WeatherAPI:
                     try:
                         logging.info(f"Выполняю запрос к OpenWeatherMap API для {cache_key} (попытка {attempt + 1})...")
                         async with session.get(self.BASE_URL, params=params, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                            if response.status in (401, 403):
+                                logging.error("Invalid API key for OpenWeatherMap.")
+                                # Send alert
+                                from core.alert_sender import AlertSender
+                                alert_settings = {}  # Load settings
+                                async with AlertSender(alert_settings) as sender:
+                                    await sender.send({"severity": "critical", "summary": "Invalid OpenWeatherMap API key"})
+                                ERRORS_TOTAL.labels(source='weather').inc()
+                                return None
                             response.raise_for_status()
                             data = await response.json()
                             break
                     except asyncio.TimeoutError:
                         logging.warning(f"Таймаут при получении погоды (попытка {attempt+1})")
                         RETRIES_TOTAL.labels(component='weather').inc()
-                    except aiohttp.ClientError as e:
-                        logging.error(f"Ошибка HTTP при запросе погоды: {e}")
+                    except aiohttp.ClientResponseError as e:
+                        if e.status in (401, 403):
+                            # Handle auth error as above
+                            pass
+                        logging.error(f"HTTP error: {e}")
                         ERRORS_TOTAL.labels(source='weather').inc()
                         return None
                     except Exception as e:

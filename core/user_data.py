@@ -104,6 +104,13 @@ class UserDataManager:
             result = await session.scalar(stmt)
             return result or 0
 
+    async def get_all_users_with_groups(self) -> List[Tuple[int, Optional[str]]]:
+        """Получает всех пользователей с их группами."""
+        async with self.async_session_maker() as session:
+            stmt = select(User.user_id, User.group)
+            result = await session.execute(stmt)
+            return [(row.user_id, row.group) for row in result.fetchall()]
+
     async def get_top_groups(self, limit: int = 5) -> List[Tuple[str, int]]:
         async with self.async_session_maker() as session:
             stmt = (

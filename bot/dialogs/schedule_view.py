@@ -23,23 +23,26 @@ import logging
 import asyncio
 
 async def cleanup_old_cache():
-    """Очищает устаревшие картинки из кэша (старше 7 дней)."""
+    """Очищает ВСЕ картинки из кэша."""
     try:
         output_dir = MEDIA_PATH / "generated"
         if not output_dir.exists():
             return
             
-        current_time = datetime.now()
-        cache_lifetime_days = 7  # Храним кэш 7 дней
+        deleted_files = 0
+        deleted_size = 0
         
         for file_path in output_dir.glob("*.png"):
-            file_age = current_time - datetime.fromtimestamp(file_path.stat().st_mtime)
-            if file_age.days > cache_lifetime_days:
-                try:
-                    file_path.unlink()
-                    logging.info(f"Удален устаревший кэш: {file_path}")
-                except Exception as e:
-                    logging.error(f"Ошибка при удалении файла {file_path}: {e}")
+            try:
+                file_size = file_path.stat().st_size
+                file_path.unlink()
+                deleted_files += 1
+                deleted_size += file_size
+                logging.info(f"Удален файл кэша: {file_path}")
+            except Exception as e:
+                logging.error(f"Ошибка при удалении файла {file_path}: {e}")
+        
+        logging.info(f"Очистка кэша завершена: удалено {deleted_files} файлов, {deleted_size / (1024*1024):.2f} MB")
     except Exception as e:
         logging.error(f"Ошибка при очистке кэша: {e}")
 
@@ -52,17 +55,26 @@ async def get_cache_info():
             
         total_files = 0
         total_size_bytes = 0
+        file_list = []
         
         for file_path in output_dir.glob("*.png"):
-            total_files += 1
-            total_size_bytes += file_path.stat().st_size
+            try:
+                file_size = file_path.stat().st_size
+                total_files += 1
+                total_size_bytes += file_size
+                file_list.append(f"{file_path.name} ({file_size / (1024*1024):.2f} MB)")
+            except Exception as e:
+                logging.error(f"Ошибка при получении информации о файле {file_path}: {e}")
             
         total_size_mb = round(total_size_bytes / (1024 * 1024), 2)
+        
+        logging.info(f"Кэш содержит {total_files} файлов: {', '.join(file_list)}")
         
         return {
             "total_files": total_files,
             "total_size_mb": total_size_mb,
-            "cache_dir": str(output_dir)
+            "cache_dir": str(output_dir),
+            "files": file_list
         }
     except Exception as e:
         logging.error(f"Ошибка при получении информации о кэше: {e}")
@@ -81,7 +93,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
     group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
     
-    day_info = manager.get_schedule_for_day(group, target_date=current_date)
+    day_info = await manager.get_schedule_for_day(group, target_date=current_date)
     
     # Метрики активности и популярности
     try:
@@ -100,9 +112,26 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     }
 
 async def on_full_week_image_click(callback: CallbackQuery, button: Button, manager: DialogManager):
-    # Сохраняем user_id, запускаем генерацию и фиксируем состояние на Schedule.view
+    # Защита от спама: проверяем, не нажимал ли пользователь кнопку недавно
     ctx = manager.current_context()
-    ctx.dialog_data["user_id"] = callback.from_user.id
+    user_id = callback.from_user.id
+    
+    # Проверяем время последнего нажатия для этого пользователя
+    last_click_key = f"last_week_click:{user_id}"
+    try:
+        manager_obj = manager.middleware_data.get("manager")
+        last_click_time = await manager_obj.redis.get(last_click_key)
+        if last_click_time:
+            # Если прошло меньше 3 секунд, игнорируем нажатие
+            await callback.answer("⏳ Подождите немного, изображение уже генерируется...", show_alert=True)
+            return
+        # Устанавливаем блокировку на 3 секунды
+        await manager_obj.redis.set(last_click_key, "1", ex=3)
+    except Exception:
+        pass
+    
+    # Сохраняем user_id, запускаем генерацию и фиксируем состояние на Schedule.view
+    ctx.dialog_data["user_id"] = user_id
     await get_week_image_data(manager)
     try:
         await manager.switch_to(Schedule.view)
@@ -214,12 +243,27 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
                     f"Неделя: <b>{week_name}</b>\n"
                     f"Период: <b>с {start_date_str} по {end_date_str}</b>"
                 )
-                sent_msg = await bot.send_photo(
-                    chat_id=user_id,
-                    photo=placeholder_photo,
-                    caption=caption_text,
-                    reply_markup=back_kb,
-                )
+                try:
+                    sent_msg = await bot.send_photo(
+                        chat_id=user_id,
+                        photo=placeholder_photo,
+                        caption=caption_text,
+                        reply_markup=back_kb,
+                        request_timeout=30  # Увеличиваем таймаут до 30 секунд
+                    )
+                except Exception as e:
+                    logging.error(f"Ошибка при отправке плейсхолдера пользователю {user_id}: {e}")
+                    ERRORS_TOTAL.labels(source='schedule_view').inc()
+                    # Пытаемся отправить текстовое сообщение вместо фото
+                    try:
+                        sent_msg = await bot.send_message(
+                            chat_id=user_id,
+                            text=caption_text + "\n\n⏳ Генерирую изображение...",
+                            reply_markup=back_kb
+                        )
+                    except Exception as e2:
+                        logging.error(f"Не удалось отправить даже текстовое сообщение: {e2}")
+                        return
                 ctx.dialog_data[placeholder_flag_key] = True
                 ctx.dialog_data[f"placeholder_msg_id:{cache_key}"] = sent_msg.message_id
 
@@ -252,6 +296,80 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
                     lock_key=lock_key,
                 )
             )
+    else:
+        # Если лок не получен, но пользователь еще не получил плейсхолдер, отправляем его
+        user_id = ctx.dialog_data.get("user_id")
+        if user_id and not placeholder_sent:
+            # Отправляем плейсхолдер и запускаем генерацию в фоне
+            placeholder_path = MEDIA_PATH / "logo.png"
+            if os.path.exists(placeholder_path):
+                placeholder_photo = FSInputFile(placeholder_path)
+                back_kb = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]
+                ])
+                caption_text = (
+                    "⏳ Генерирую расписание на неделю... Это может занять несколько секунд.\n\n"
+                    f"🗓 <b>Расписание для группы {group}</b>\n"
+                    f"Неделя: <b>{week_name}</b>\n"
+                    f"Период: <b>с {start_date_str} по {end_date_str}</b>"
+                )
+                try:
+                    sent_msg = await bot.send_photo(
+                        chat_id=user_id,
+                        photo=placeholder_photo,
+                        caption=caption_text,
+                        reply_markup=back_kb,
+                        request_timeout=30
+                    )
+                    ctx.dialog_data[placeholder_flag_key] = True
+                    ctx.dialog_data[f"placeholder_msg_id:{cache_key}"] = sent_msg.message_id
+                    
+                    # Запускаем генерацию в фоне без Dramatiq
+                    asyncio.create_task(
+                        generate_week_schedule_background(
+                            manager=manager,
+                            group=group,
+                            week_key=week_key,
+                            week_name=week_name,
+                            output_path=str(output_path),
+                            cache_key=cache_key,
+                            bot=bot,
+                            ctx=ctx,
+                            dialog_manager=dialog_manager,
+                            lock_key=lock_key,
+                        )
+                    )
+                except Exception as e:
+                    logging.error(f"Ошибка при отправке плейсхолдера пользователю {user_id}: {e}")
+                    ERRORS_TOTAL.labels(source='schedule_view').inc()
+                    # Пытаемся отправить текстовое сообщение вместо фото
+                    try:
+                        sent_msg = await bot.send_message(
+                            chat_id=user_id,
+                            text=caption_text + "\n\n⏳ Генерирую изображение...",
+                            reply_markup=back_kb
+                        )
+                        ctx.dialog_data[placeholder_flag_key] = True
+                        ctx.dialog_data[f"placeholder_msg_id:{cache_key}"] = sent_msg.message_id
+                        
+                        # Запускаем генерацию в фоне
+                        asyncio.create_task(
+                            generate_week_schedule_background(
+                                manager=manager,
+                                group=group,
+                                week_key=week_key,
+                                week_name=week_name,
+                                output_path=str(output_path),
+                                cache_key=cache_key,
+                                bot=bot,
+                                ctx=ctx,
+                                dialog_manager=dialog_manager,
+                                lock_key=lock_key,
+                            )
+                        )
+                    except Exception as e2:
+                        logging.error(f"Не удалось отправить даже текстовое сообщение: {e2}")
+                        return
 
     return {
         "week_name": week_name,
@@ -275,6 +393,21 @@ async def generate_week_schedule_background(
     """Генерирует расписание в фоне, сохраняет в кэш и отправляет пользователю."""
     try:
         start_time = datetime.now()
+        
+        # Проверяем, не было ли изображение уже сгенерировано другим процессом
+        if os.path.exists(output_path):
+            logging.info(f"Изображение {cache_key} уже существует, пропускаем генерацию")
+            # Просто отправляем существующее изображение
+            await send_generated_image_to_user(
+                output_path=output_path,
+                cache_key=cache_key,
+                group=group,
+                week_name=week_name,
+                bot=bot,
+                ctx=ctx
+            )
+            return
+        
         full_schedule = manager._schedules.get(group.upper(), {})
         week_schedule = full_schedule.get(week_key, {})
 
@@ -301,93 +434,109 @@ async def generate_week_schedule_background(
             except Exception as e:
                 logging.warning(f"Не удалось сохранить изображение в кэш: {e}")
 
-            # Сжимаем изображение для Telegram если нужно
-            safe_image_path = get_telegram_safe_image_path(output_path)
-            photo = FSInputFile(safe_image_path)
-            user_id = ctx.dialog_data.get("user_id")
-            if user_id:
-                # Если есть плейсхолдер, редактируем сообщение, иначе отправляем новое фото
-                placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{cache_key}")
-                if placeholder_msg_id:
-                    final_caption = (
-                        "✅ Расписание на неделю готово!\n\n"
-                        f"🗓 <b>Расписание для группы {group}</b>\n"
-                        f"Неделя: <b>{week_name}</b>\n"
-                        f"Период: <b>с {date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]) - timedelta(days=(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]).weekday())):%d.%m} по {(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]) - timedelta(days=(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]).weekday())) + timedelta(days=6)):%d.%m}</b>"
-                    )
-                    media = InputMediaPhoto(media=photo, caption=final_caption)
-                    back_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]
-                    ])
-                    try:
-                        await bot.edit_message_media(chat_id=user_id, message_id=placeholder_msg_id, media=media, reply_markup=back_kb)
-                    except Exception as edit_error:
-                        logging.error(f"Ошибка при редактировании сообщения: {edit_error}")
-                        # Пробуем отправить новое сообщение
-                        try:
-                            await bot.send_photo(
-                                chat_id=user_id,
-                                photo=photo,
-                                caption=final_caption,
-                                reply_markup=back_kb,
-                            )
-                        except Exception as send_error:
-                            logging.error(f"Ошибка при отправке изображения: {send_error}")
-                            await bot.send_message(
-                                chat_id=user_id,
-                                text=f"{final_caption}\n\n⚠️ Изображение слишком большое для отправки."
-                            )
-                else:
-                    final_caption = (
-                        "✅ Расписание на неделю готово!\n\n"
-                        f"🗓 <b>Расписание для группы {group}</b>\n"
-                        f"Неделя: <b>{week_name}</b>\n"
-                        f"Период: <b>с {date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]) - timedelta(days=(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]).weekday())):%d.%m} по {(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]) - timedelta(days=(date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO]).weekday())) + timedelta(days=6)):%d.%m}</b>"
-                    )
-                    back_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]
-                    ])
-                    try:
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption=final_caption,
-                            reply_markup=back_kb,
-                        )
-                    except Exception as send_error:
-                        logging.error(f"Ошибка при отправке изображения: {send_error}")
-                        # Пробуем отправить без изображения
-                        await bot.send_message(
-                            chat_id=user_id,
-                            text=f"{final_caption}\n\n⚠️ Изображение слишком большое для отправки."
-                        )
-
-            generation_time = (datetime.now() - start_time).total_seconds()
-            SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
+                        # Отправляем изображение пользователю
+            await send_generated_image_to_user(
+                output_path=output_path,
+                cache_key=cache_key,
+                group=group,
+                week_name=week_name,
+                bot=bot,
+                ctx=ctx
+            )
         else:
-            user_id = ctx.dialog_data.get("user_id")
-            if user_id:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="😕 Не удалось сгенерировать изображение расписания. Попробуйте позже."
-                )
+            logging.error(f"Не удалось сгенерировать изображение для {cache_key}")
     except Exception as e:
-        logging.error(f"Ошибка при фоновой генерации расписания: {e}")
-        try:
-            user_id = ctx.dialog_data.get("user_id")
-            if user_id:
-                await bot.send_message(
-                    chat_id=user_id,
-                    text="❌ Произошла ошибка при генерации расписания. Попробуйте позже."
-                )
-        except Exception as send_error:
-            logging.error(f"Не удалось отправить сообщение об ошибке: {send_error}")
+        logging.error(f"generate_week_schedule_background failed: {e}")
     finally:
-        # Снимаем лок
+        # Освобождаем лок
         try:
             await manager.redis.delete(lock_key)
         except Exception:
             pass
+
+async def send_generated_image_to_user(
+    output_path: str,
+    cache_key: str,
+    group: str,
+    week_name: str,
+    bot,
+    ctx
+):
+    """Отправляет сгенерированное изображение пользователю."""
+    try:
+        # Сжимаем изображение для Telegram если нужно
+        safe_image_path = get_telegram_safe_image_path(output_path)
+        photo = FSInputFile(safe_image_path)
+        user_id = ctx.dialog_data.get("user_id")
+        
+        if not user_id:
+            return
+            
+        # Если есть плейсхолдер, редактируем сообщение, иначе отправляем новое фото
+        placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{cache_key}")
+        
+        # Формируем даты для подписи
+        current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
+        days_since_monday = current_date.weekday()
+        monday_date = current_date - timedelta(days=days_since_monday)
+        sunday_date = monday_date + timedelta(days=6)
+        start_date_str = monday_date.strftime("%d.%m")
+        end_date_str = sunday_date.strftime("%d.%m")
+        
+        final_caption = (
+            "✅ Расписание на неделю готово!\n\n"
+            f"🗓 <b>Расписание для группы {group}</b>\n"
+            f"Неделя: <b>{week_name}</b>\n"
+            f"Период: <b>с {start_date_str} по {end_date_str}</b>"
+        )
+        
+        back_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]
+        ])
+        
+        if placeholder_msg_id:
+            try:
+                media = InputMediaPhoto(media=photo, caption=final_caption)
+                await bot.edit_message_media(
+                    chat_id=user_id, 
+                    message_id=placeholder_msg_id, 
+                    media=media, 
+                    reply_markup=back_kb
+                )
+            except Exception as edit_error:
+                logging.error(f"Ошибка при редактировании сообщения: {edit_error}")
+                # Пробуем отправить новое сообщение
+                try:
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo,
+                        caption=final_caption,
+                        reply_markup=back_kb,
+                    )
+                except Exception as send_error:
+                    logging.error(f"Ошибка при отправке изображения: {send_error}")
+                    ERRORS_TOTAL.labels(source='schedule_view').inc()
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=f"{final_caption}\n\n⚠️ Изображение слишком большое для отправки."
+                    )
+        else:
+            try:
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=final_caption,
+                    reply_markup=back_kb,
+                )
+            except Exception as send_error:
+                logging.error(f"Ошибка при отправке изображения: {send_error}")
+                ERRORS_TOTAL.labels(source='schedule_view').inc()
+                await bot.send_message(
+                    chat_id=user_id,
+                    text=f"{final_caption}\n\n⚠️ Изображение слишком большое для отправки."
+                )
+    except Exception as e:
+        logging.error(f"Ошибка в send_generated_image_to_user: {e}")
 
 async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Callback handler для кнопки 'Оригинал' без параметра button"""

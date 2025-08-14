@@ -25,6 +25,11 @@ services:
       redis: { condition: service_healthy }
     # ИСПРАВЛЕНО: Миграции убраны из автозапуска. Теперь бот просто стартует.
     command: python main.py
+    healthcheck:
+      test: ["CMD", "pgrep", "python"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   worker:
     <<: *base-app-service
@@ -32,7 +37,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: python -m dramatiq bot.tasks 
+    command: python -m dramatiq --processes 3 bot.tasks 
 
   db:
     image: postgres:15-alpine
@@ -71,6 +76,11 @@ services:
     ports: [ "9090:9090" ]
     command: [ '--config.file=/etc/prometheus/prometheus.yml' ]
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "prometheus"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     
   grafana:
     image: grafana/grafana:11.1.0
@@ -83,6 +93,11 @@ services:
     environment:
       - GF_ALERTING_ENABLED=true
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "grafana"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   alertmanager:
     image: prom/alertmanager:v0.26.0

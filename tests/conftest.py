@@ -7,6 +7,11 @@ from unittest.mock import MagicMock, AsyncMock
 # Это гарантирует, что pytest найдет папки 'core' и 'bot'
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
+# Set up test environment variables
+os.environ.setdefault('BOT_TOKEN', '1234567890:ABCdefGHIjklMNOpqrsTUVwxyz')
+os.environ.setdefault('REDIS_URL', 'redis://localhost:6379/0')
+os.environ.setdefault('DATABASE_URL', 'postgresql://test:test@localhost:5432/test_db')
+
 @pytest.fixture
 def mock_dialog_manager():
     """Фикстура для мока DialogManager"""

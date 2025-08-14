@@ -61,11 +61,19 @@ class BusinessMetricsMonitor:
             logging.error(f"Business monitoring crashed: {e}")
 
     async def _check_business_metrics(self):
-        # Without Prometheus API, skip heavy checks to avoid errors
         if not self.prometheus_url:
             return
-        # Here one could implement Prometheus API queries; skipped for now
-        return
+        # Example: Query Prometheus for metrics
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{self.prometheus_url}/api/v1/query?query=up") as resp:
+                    data = await resp.json()
+                    # Check and alert if needed
+                    if data['status'] != 'success':
+                        await self._send_alert("Prometheus Query Failed", "Error querying metrics", AlertSeverity.CRITICAL, "prometheus", {})
+        except Exception as e:
+            logging.error(f"Metrics check failed: {e}")
 
     async def _send_alert(self, title: str, message: str, severity: AlertSeverity, metric_name: str, additional_data: Dict[str, Any]):
         alert_key = f"{metric_name}_{severity.value}"

@@ -4,6 +4,7 @@ import hashlib
 from datetime import datetime, timedelta
 from core.config import API_URL, USER_AGENT
 from core.metrics import ERRORS_TOTAL, RETRIES_TOTAL
+import logging
 
 # Заготовки для условного кэширования
 _LAST_ETAG: str | None = None
@@ -41,6 +42,14 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                     if attempts < 3:
                         RETRIES_TOTAL.labels(component='parser').inc()
                         continue
+                    # New: Handle full failure
+                    ERRORS_TOTAL.labels(source='parser').inc()
+                    logging.critical("Failed to fetch XML after 3 attempts.")
+                    # Optionally send alert
+                    from core.alert_sender import AlertSender
+                    alert_settings = {}  # Load from config if needed
+                    async with AlertSender(alert_settings) as sender:
+                        await sender.send({"severity": "critical", "summary": "XML fetch failed after retries"})
                     raise
         
         xml_data = xml_bytes.decode('utf-16').strip()

@@ -17,7 +17,7 @@ class ImageCacheManager:
     Поддерживает как файловый кэш, так и Redis для метаданных.
     """
     
-    def __init__(self, redis_client: Redis, cache_ttl_hours: int = 24):
+    def __init__(self, redis_client: Redis, cache_ttl_hours: int = 720):
         self.redis = redis_client
         self.cache_ttl_hours = cache_ttl_hours
         self.cache_dir = MEDIA_PATH / "generated"

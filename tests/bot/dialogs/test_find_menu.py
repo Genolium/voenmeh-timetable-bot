@@ -62,6 +62,7 @@ class TestFindMenu:
         mocker.patch('bot.dialogs.find_menu.format_classroom_schedule_text', return_value="Classroom Text")
         
         mock_manager.dialog_data = {"teacher_name": "Иванов И.И.", "find_date_iso": "2023-10-26"}
+        mock_manager.timetable_manager.get_teacher_schedule = AsyncMock(return_value={"lessons": []})
         data = await get_find_data(mock_manager)
         assert data["result_text"] == "Teacher Text"
         mock_manager.timetable_manager.get_teacher_schedule.assert_called_once()

@@ -41,3 +41,6 @@ class Admin(StatesGroup):
     template_input = State()
     preview = State()
     confirm_send = State()
+    semester_settings = State()
+    edit_fall_semester = State()
+    edit_spring_semester = State()

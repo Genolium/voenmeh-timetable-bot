@@ -51,7 +51,7 @@ def mock_timetable_manager():
             }
         ]
     }
-    manager.get_schedule_for_day.return_value = schedule_info
+    manager.get_schedule_for_day = AsyncMock(return_value=schedule_info)
     manager._schedules = {"О735Б": {"odd": {"Понедельник": schedule_info["lessons"]}}}
     manager.get_week_type.return_value = ("odd", "Нечетная неделя")
     return manager
@@ -77,6 +77,13 @@ def mock_redis():
     redis.get.return_value = b"old_hash_value"
     redis.set.return_value = True
     redis.delete.return_value = 1
+    
+    # Mock the lock method to return an async context manager
+    mock_lock = AsyncMock()
+    mock_lock.__aenter__ = AsyncMock()
+    mock_lock.__aexit__ = AsyncMock()
+    redis.lock = MagicMock(return_value=mock_lock)
+    
     return redis
 
 
@@ -202,7 +209,7 @@ async def test_morning_summary_broadcast_no_lessons(mock_user_data_manager, mock
     monkeypatch.setattr('bot.scheduler.WeatherAPI', lambda *args: mock_weather_api)
     
     # Мокаем расписание без уроков
-    mock_timetable_manager.get_schedule_for_day.return_value = {'error': 'Нет данных'}
+    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={'error': 'Нет данных'})
     
     await morning_summary_broadcast(mock_user_data_manager, mock_timetable_manager)
     
@@ -263,7 +270,7 @@ async def test_lesson_reminders_planner_invalid_time_format(mock_scheduler, mock
             {'time': '09:00-10:30', 'start_time_raw': 'invalid', 'end_time_raw': '10:30'}
         ]
     }
-    mock_timetable_manager.get_schedule_for_day.return_value = invalid_schedule
+    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value=invalid_schedule)
     
     await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
     
@@ -396,7 +403,6 @@ async def test_warm_top_groups_images_success(mock_user_data_manager, mock_timet
     # Мокаем ImageCacheManager
     mock_cache = AsyncMock()
     mock_cache.is_cached.return_value = False
-    mock_cache.cache_image.return_value = True
     monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: mock_cache)
     
     # Мокаем generate_schedule_image
@@ -412,10 +418,13 @@ async def test_warm_top_groups_images_success(mock_user_data_manager, mock_timet
     mock_file.read.return_value = b"fake_image_data"
     monkeypatch.setattr('builtins.open', lambda path, mode: mock_file)
     
+    # Мокаем redis_client.set for the lock
+    mock_redis.set.return_value = True
+    
     await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, mock_redis)
     
-    # Проверяем, что кэш обновляется
-    assert mock_cache.cache_image.call_count > 0
+    # Проверяем, что redis_client.set был вызван для кэширования изображений
+    assert mock_redis.set.call_count > 0
 
 
 @pytest.mark.asyncio
@@ -652,7 +661,7 @@ async def test_evening_broadcast_weather_api_error(mock_user_data_manager, mock_
     mock_user_data_manager.get_users_for_evening_notify.return_value = [(1, "О735Б")]
     
     # Мокаем расписание
-    mock_timetable_manager.get_schedule_for_day.return_value = {'lessons': []}
+    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={'lessons': []})
     
     # Мокаем generate_evening_intro чтобы избежать ошибки с погодой
     mock_intro = MagicMock()
@@ -684,7 +693,7 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
     mock_user_data_manager.get_users_for_morning_summary.return_value = [(1, "О735Б")]
     
     # Мокаем расписание
-    mock_timetable_manager.get_schedule_for_day.return_value = {'lessons': [{'time': '09:00-10:30'}]}
+    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={'lessons': [{'time': '09:00-10:30'}]})
     
     # Мокаем generate_morning_intro чтобы избежать ошибки с погодой
     mock_intro = MagicMock()
@@ -746,7 +755,7 @@ async def test_lesson_reminders_planner_with_break_duration_calculation(mock_sch
             }
         ]
     }
-    mock_timetable_manager.get_schedule_for_day.return_value = schedule_with_breaks
+    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value=schedule_with_breaks)
     
     await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
     

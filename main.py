@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import sys
+import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -27,6 +28,7 @@ from bot.handlers.inline_handlers import inline_query_handler
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
+from bot.middlewares.session_middleware import SessionMiddleware
 from bot.scheduler import setup_scheduler
 
 # --- Импорты диалогов ---
@@ -36,6 +38,7 @@ from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
 from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback
+from bot.dialogs.admin_menu import on_cancel_generation
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
@@ -113,24 +116,34 @@ async def run_metrics_server(port: int = 8000):
 # --- Основная функция запуска ---
 # Простой входной рейт-лимит через throttling middleware
 class SimpleRateLimiter:
-    def __init__(self, max_per_sec: float = 10.0):
-        self._bucket: dict[int, list[float]] = {}
+    def __init__(self, max_per_sec: float = 10.0, redis=None):
         self._max_per_sec = max_per_sec
+        self.redis = redis  # Pass redis_client
 
     async def __call__(self, handler, event, data):
         user_id = getattr(getattr(event, 'from_user', None), 'id', None)
         if not user_id:
             return await handler(event, data)
-        from time import monotonic
-        now = monotonic()
-        history = self._bucket.setdefault(user_id, [])
-        # чистим события старше 1 сек
-        history[:] = [t for t in history if now - t < 1.0]
+        key = f"rate_limit:{user_id}"
+        history = await self.redis.lrange(key, 0, -1)
+        now = time.monotonic()
+        history = [t for t in history if now - float(t) < 1.0]
         if len(history) >= self._max_per_sec:
-            # Молча дропаем событие, чтобы не спамить
+            # Вместо молча дропаем событие, отвечаем пользователю
+            if hasattr(event, 'answer'):
+                try:
+                    await event.answer("⚠️ Слишком много запросов. Подождите немного и попробуйте снова.", show_alert=True)
+                except Exception:
+                    pass
             return
-        history.append(now)
+        await self.redis.rpush(key, now)
+        await self.redis.expire(key, 2)
         return await handler(event, data)
+
+async def error_handler(update, exception):
+    """Обработчик глобальных ошибок aiogram."""
+    logging.error(f"Ошибка aiogram: {exception}")
+    return True
 
 async def main():
     setup_logging()  # Вызываем настройку логирования
@@ -169,9 +182,11 @@ async def main():
     # Подключение Middleware
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
+    dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
     dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
-    dp.update.middleware(SimpleRateLimiter(max_per_sec=5))  # анти-флуд на входящие события
+    dp.update.middleware(SimpleRateLimiter(max_per_sec=10, redis=redis_client))  # анти-флуд на входящие события
     dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler}))
+    dp.errors.register(error_handler)  # Define async def error_handler(update, exception): logging.error(...); return True
 
     # Регистрация диалогов и хэндлеров
     all_dialogs = [
@@ -190,6 +205,8 @@ async def main():
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
+    # Обработчик отмены генерации изображений
+    dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
     # Времено отключено: кнопки "полное качество" и проверка подписки
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
