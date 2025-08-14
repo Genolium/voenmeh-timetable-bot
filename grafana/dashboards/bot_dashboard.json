@@ -219,10 +219,85 @@
       ]
     },
 
-    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 }, "id": 450, "title": "Секция 7: Логи и события", "type": "row" },
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 55 }, "id": 400, "title": "Секция 6: Системные ресурсы", "type": "row" },
 
     {
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 56 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 56 },
+      "id": 80,
+      "title": "CPU Utilization",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "avg without(cpu) (irate(node_cpu_seconds_total{job=\"node-exporter\", mode!=\"idle\"}[1m]))", "legendFormat": "{{mode}}" }
+      ],
+      "yAxes": [
+        { "format": "percentunit", "label": null, "logBase": 1, "max": null, "min": null, "show": true },
+        { "format": "short", "label": null, "logBase": 1, "max": null, "min": null, "show": true }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 56 },
+      "id": 81,
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_memory_MemTotal_bytes{job=\"node-exporter\"} - node_memory_MemFree_bytes{job=\"node-exporter\"} - node_memory_Cached_bytes{job=\"node-exporter\"} - node_memory_Buffers_bytes{job=\"node-exporter\"}", "legendFormat": "Used" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_memory_Buffers_bytes{job=\"node-exporter\"}", "legendFormat": "Buffers" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_memory_Cached_bytes{job=\"node-exporter\"}", "legendFormat": "Cached" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_memory_MemFree_bytes{job=\"node-exporter\"}", "legendFormat": "Free" }
+      ],
+      "yAxes": [
+        { "format": "bytes", "label": null, "logBase": 1, "max": null, "min": null, "show": true },
+        { "format": "short", "label": null, "logBase": 1, "max": null, "min": null, "show": true }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 64 },
+      "id": 82,
+      "title": "Disk Usage",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_filesystem_size_bytes{job=\"node-exporter\",device!~\"/dev/loop.*\", device!~\"tmpfs|nsfs\", device!=\"gvfsd-fuse\"} - node_filesystem_avail_bytes{job=\"node-exporter\"}", "legendFormat": "{{device}}" }
+      ],
+      "yAxes": [
+        { "format": "bytes", "label": null, "logBase": 1, "max": null, "min": null, "show": true },
+        { "format": "short", "label": null, "logBase": 1, "max": null, "min": null, "show": true }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 64 },
+      "id": 83,
+      "title": "Network Traffic",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "irate(node_network_receive_bytes_total{job=\"node-exporter\"}[5m])", "legendFormat": "{{device}} receive" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "irate(node_network_transmit_bytes_total{job=\"node-exporter\"}[5m])", "legendFormat": "{{device}} transmit" }
+      ],
+      "yAxes": [
+        { "format": "KBs", "label": null, "logBase": 1, "max": null, "min": null, "show": true },
+        { "format": "short", "label": null, "logBase": 1, "max": null, "min": null, "show": true }
+      ]
+    },
+    {
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 72 },
+      "id": 84,
+      "title": "Load Average",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_load1{job=\"node-exporter\"}", "legendFormat": "1m" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_load5{job=\"node-exporter\"}", "legendFormat": "5m" },
+        { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "node_load15{job=\"node-exporter\"}", "legendFormat": "15m" }
+      ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 78 }, "id": 450, "title": "Секция 7: Логи и события", "type": "row" },
+
+    {
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 79 },
       "id": 60,
       "title": "Live Log Stream",
       "type": "logs",
@@ -230,7 +305,7 @@
       "targets": [ { "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" }, "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"}" } ]
     },
     {
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 56 },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 79 },
       "id": 61,
       "title": "Errors",
       "type": "logs",
@@ -238,10 +313,10 @@
       "targets": [ { "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" }, "expr": "{container=~\"voenmeh_bot|voenmeh_worker\"} |= `ERROR`" } ]
     },
 
-    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 65 }, "id": 500, "title": "Секция 8: Надежность", "type": "row" },
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 88 }, "id": 500, "title": "Секция 8: Надежность", "type": "row" },
 
     {
-      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 66 },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 89 },
       "id": 70,
       "title": "Uptime (s)",
       "type": "stat",
@@ -249,7 +324,7 @@
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_uptime_seconds" } ]
     },
     {
-      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 66 },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 89 },
       "id": 71,
       "title": "Restarts (24h)",
       "type": "stat",
@@ -257,7 +332,8 @@
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "increase(bot_restart_count_total[24h])" } ]
     },
     {
-      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 66 },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 89 },
+      
       "id": 72,
       "title": "Last Schedule Update",
       "type": "stat",
@@ -265,7 +341,7 @@
       "targets": [ { "datasource": { "type": "prometheus", "uid": "prometheus_voenmeh_bot" }, "expr": "bot_last_schedule_update_timestamp" } ]
     },
     {
-      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 66 },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 89 },
       "id": 73,
       "title": "External Services",
       "type": "timeseries",

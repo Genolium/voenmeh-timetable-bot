@@ -77,6 +77,12 @@ if admin_ids_str:
         
 FEEDBACK_CHAT_ID = settings.FEEDBACK_CHAT_ID
 
-# --- Премиум/подписка для полного качества изображения ---
+# --- Подписка для полного качества изображения ---
 # Может быть ID канала (например, -1001234567890) или @username
 SUBSCRIPTION_CHANNEL = settings.SUBSCRIPTION_CHANNEL
+
+# --- Redis клиент ---
+def get_redis_client():
+    """Возвращает Redis клиент для использования в других модулях."""
+    from redis.asyncio import Redis
+    return Redis.from_url(settings.REDIS_URL)

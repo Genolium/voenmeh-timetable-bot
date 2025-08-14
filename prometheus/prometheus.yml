@@ -13,3 +13,7 @@ scrape_configs:
   - job_name: "voenmeh_bot"
     static_configs:
       - targets: ["bot:8000"] # Prometheus будет опрашивать сервис 'bot' на порту 8000
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"] # Системные метрики с node-exporter

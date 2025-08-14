@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import time
 from typing import Dict, Any
 from datetime import datetime
 
@@ -11,6 +12,8 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFil
 from aiogram.client.default import DefaultBotProperties
 from dotenv import load_dotenv
 from dramatiq.brokers.redis import RedisBroker
+from redis.asyncio import Redis
+import redis
 
 from bot.text_formatters import generate_reminder_text
 from core.image_generator import generate_schedule_image
@@ -30,6 +33,8 @@ if not redis_url or not redis_password:
 redis_broker = RedisBroker(url=redis_url, password=redis_password)
 dramatiq.set_broker(redis_broker)
 
+# Redis-клиент будет создаваться внутри каждой задачи
+
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
@@ -39,12 +44,10 @@ if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не найден. Воркер не может работать.")
 
 BOT_INSTANCE = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-LOOP = asyncio.new_event_loop()
-asyncio.set_event_loop(LOOP)
+# Убираем глобальный LOOP - будем создавать event loop локально в каждой задаче
 
-# Глобальный рейт-лимитер на исходящие сообщения: 25 сообщений в секунду
-# Можно скорректировать по факту (Telegram ограничивает около 30 msg/s на бота)
-SEND_RATE_LIMITER = AsyncLimiter(25, time_period=1)
+# Убираем глобальный рейт-лимитер - будем создавать его локально в каждой задаче
+# Telegram ограничивает около 30 msg/s на бота
 
 # Добавляем счетчик для отладки рейт лимитера
 _rate_limit_counter = 0
@@ -55,7 +58,9 @@ async def _send_message(user_id: int, text: str):
     try:
         _rate_limit_counter += 1
         log.info(f"Попытка отправки сообщения #{_rate_limit_counter} пользователю {user_id}")
-        async with SEND_RATE_LIMITER:
+        # Создаем локальный рейт-лимитер для каждого вызова
+        rate_limiter = AsyncLimiter(25, time_period=1)
+        async with rate_limiter:
             await BOT_INSTANCE.send_message(user_id, text, disable_web_page_preview=True)
         log.info(f"Сообщение #{_rate_limit_counter} успешно отправлено пользователю {user_id}")
     except Exception as e:
@@ -67,7 +72,9 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
     try:
         _rate_limit_counter += 1
         log.info(f"Попытка копирования сообщения #{_rate_limit_counter} (ID: {message_id}) пользователю {user_id}")
-        async with SEND_RATE_LIMITER:
+        # Создаем локальный рейт-лимитер для каждого вызова
+        rate_limiter = AsyncLimiter(25, time_period=1)
+        async with rate_limiter:
             await BOT_INSTANCE.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
         log.info(f"Сообщение #{_rate_limit_counter} (ID: {message_id}) успешно скопировано пользователю {user_id}")
     except Exception as e:
@@ -76,24 +83,27 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
 
 # --- Акторы ---
 @dramatiq.actor
-async def send_message_task(user_id: int, text: str):
+def send_message_task(user_id: int, text: str):
+    # Создаем синхронный Redis-клиент для избежания проблем с event loop
+    sync_redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
+    
     # Add unique key, e.g., hash of user_id + text
     unique_key = f"send_msg_{user_id}_{hash(text)}"
-    if await redis_broker.get(unique_key):  # Assume redis available
+    if sync_redis_client.get(unique_key):  # Use sync client directly
         return  # Already sent
 
     # Add retry for set
     for _ in range(3):
         try:
-            await _send_message(user_id, text)
-            await redis_broker.set(unique_key, "done", ex=3600)
+            asyncio.run(_send_message(user_id, text))
+            sync_redis_client.set(unique_key, "done", ex=3600)
             break
         except Exception as e:
             logging.warning(f"Retry redis/set for {unique_key}: {e}")
 
 @dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
-    LOOP.run_until_complete(_copy_message(user_id, from_chat_id, message_id))
+    asyncio.run(_copy_message(user_id, from_chat_id, message_id))
 
 @dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
 def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None, reminder_time_minutes: int | None = None):
@@ -106,72 +116,119 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
 
 
 # --- Генерация недельного изображения в очереди ---
-@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=180000)
+@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
 def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week_name: str, group: str, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None):
     """
     Генерирует изображение расписания в фоновом режиме.
     НЕ блокирует основной поток бота благодаря Dramatiq.
     """
     async def _run():
-        global _rate_limit_counter
         try:
-            log.info(f"🎨 Начинаем генерацию изображения для {cache_key}, пользователь: {user_id}")
+            # Создаем синхронный Redis-клиент для избежания проблем с event loop
+            sync_redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
             
-            # Проверяем кэш перед генерацией
-            cache_manager = ImageCacheManager(redis_broker, cache_ttl_hours=24)
-            if await cache_manager.is_cached(cache_key):
-                log.info(f"✅ Изображение {cache_key} уже в кэше, пропускаем генерацию")
-                # Отправляем кэшированное изображение
-                await _send_cached_image(cache_key, user_id, placeholder_msg_id, final_caption)
-                return
+            # Определяем режим работы: автоматическая генерация или для пользователя
+            is_auto_generation = user_id is None
             
-            # Создаем директорию для изображений
-            output_dir = MEDIA_PATH / "generated"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"{cache_key}.png"
+            if is_auto_generation:
+                log.info(f"🎨 [АВТО] Генерация изображения для {cache_key}")
+            else:
+                log.info(f"🎨 Начинаем генерацию изображения для {cache_key}, пользователь: {user_id}")
             
-            # Генерируем изображение с оптимизированными параметрами
-            highres_vp = {"width": 2048, "height": 1400}
-            ok = await generate_schedule_image(
-                week_schedule, 
-                week_name, 
-                group, 
-                str(output_path), 
-                viewport_size=highres_vp
-            )
+            # Создаем обертку для синхронного Redis
+            class SyncRedisWrapper:
+                def __init__(self, sync_client):
+                    self.sync_client = sync_client
+                
+                async def get(self, key):
+                    return self.sync_client.get(key)
+                
+                async def set(self, key, value, ex=None):
+                    return self.sync_client.set(key, value, ex=ex)
+                
+                async def delete(self, key):
+                    return self.sync_client.delete(key)
+                
+                async def keys(self, pattern):
+                    return self.sync_client.keys(pattern)
+                
+                async def exists(self, key):
+                    return self.sync_client.exists(key)
+                
+                def __getattr__(self, name):
+                    return getattr(self.sync_client, name)
             
-            if not ok or not os.path.exists(output_path):
-                log.error(f"❌ Не удалось сгенерировать изображение для {cache_key}")
-                await _send_error_message(user_id, "Не удалось сгенерировать изображение")
-                return
+            redis_wrapper = SyncRedisWrapper(sync_redis_client)
+            cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=24)
             
-            # Сохраняем в кэш
-            try:
-                with open(output_path, 'rb') as f:
-                    image_bytes = f.read()
-                await cache_manager.cache_image(cache_key, image_bytes, metadata={
-                    "group": group,
-                    "week_key": week_name,
-                    "generated_at": datetime.now().isoformat()
-                })
-                log.info(f"💾 Изображение {cache_key} сохранено в кэш")
-            except Exception as e:
-                log.warning(f"⚠️ Не удалось сохранить изображение в кэш: {e}")
+            # Используем унифицированный сервис изображений
+            from core.image_service import ImageService
+            image_service = ImageService(cache_manager, BOT_INSTANCE)
             
-            # Отправляем пользователю
-            await _send_generated_image(output_path, user_id, placeholder_msg_id, final_caption)
+            # Извлекаем week_key из cache_key
+            week_key = cache_key.split("_")[-1] if "_" in cache_key else "even"
+            
+            if is_auto_generation:
+                # Для автоматической генерации просто генерируем и кэшируем
+                success, file_path = await image_service._generate_and_cache_image(
+                    cache_key, week_schedule, week_name, group
+                )
+                if success:
+                    log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
+                else:
+                    log.error(f"❌ [АВТО] Не удалось сгенерировать изображение {cache_key}")
+            else:
+                # Для пользовательской генерации используем полный сервис
+                success, file_path = await image_service.get_or_generate_week_image(
+                    group=group,
+                    week_key=week_key,
+                    week_name=week_name,
+                    week_schedule=week_schedule,
+                    user_id=user_id,
+                    placeholder_msg_id=placeholder_msg_id,
+                    final_caption=final_caption
+                )
+                
+                if not success:
+                    await _send_error_message(user_id, "Не удалось сгенерировать изображение")
             
         except Exception as e:
             log.error(f"❌ generate_week_image_task failed: {e}")
-            await _send_error_message(user_id, "Произошла ошибка при генерации")
+            if not is_auto_generation and user_id:
+                await _send_error_message(user_id, "Произошла ошибка при генерации")
     
-    # Запускаем в отдельном потоке, чтобы не блокировать Dramatiq
-    LOOP.run_until_complete(_run())
+    # В Dramatiq workers всегда запускаем новый event loop
+    asyncio.run(_run())
 
 async def _send_cached_image(cache_key: str, user_id: int, placeholder_msg_id: int, final_caption: str):
     """Отправляет кэшированное изображение пользователю."""
     try:
-        cache_manager = ImageCacheManager(redis_broker, cache_ttl_hours=24)
+        # Создаем синхронный Redis-клиент для избежания проблем с event loop
+        sync_redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
+        
+        # Создаем асинхронную обертку для синхронного Redis-клиента
+        class SyncRedisWrapper:
+            def __init__(self, sync_client):
+                self.sync_client = sync_client
+            
+            async def get(self, key):
+                return self.sync_client.get(key)
+            
+            async def set(self, key, value, ex=None):
+                return self.sync_client.set(key, value, ex=ex)
+            
+            async def delete(self, key):
+                return self.sync_client.delete(key)
+            
+            async def keys(self, pattern):
+                return self.sync_client.keys(pattern)
+            
+            # Добавляем метод hasattr для совместимости
+            def __getattr__(self, name):
+                return getattr(self.sync_client, name)
+        
+        redis_wrapper = SyncRedisWrapper(sync_redis_client)
+        cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=24)
         image_bytes = await cache_manager.get_cached_image(cache_key)
         
         if not image_bytes:
@@ -210,7 +267,9 @@ async def _send_generated_image(output_path: str, user_id: int, placeholder_msg_
         _rate_limit_counter += 1
         log.info(f"📤 Попытка отправки изображения #{_rate_limit_counter} пользователю {user_id}")
         
-        async with SEND_RATE_LIMITER:
+        # Создаем локальный рейт-лимитер для каждого вызова
+        rate_limiter = AsyncLimiter(25, time_period=1)
+        async with rate_limiter:
             if placeholder_msg_id:
                 try:
                     # Пытаемся отредактировать существующее сообщение
@@ -260,7 +319,9 @@ async def _send_error_message(user_id: int, error_text: str):
         global _rate_limit_counter
         _rate_limit_counter += 1
         
-        async with SEND_RATE_LIMITER:
+        # Создаем локальный рейт-лимитер для каждого вызова
+        rate_limiter = AsyncLimiter(25, time_period=1)
+        async with rate_limiter:
             await BOT_INSTANCE.send_message(
                 chat_id=user_id,
                 text=error_message,

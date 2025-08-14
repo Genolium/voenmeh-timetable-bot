@@ -10,8 +10,8 @@ from bot.dialogs.admin_menu import (
     on_test_alert, on_semester_settings, on_edit_fall_semester,
     on_edit_spring_semester, on_fall_semester_input, on_spring_semester_input,
     on_broadcast_received, on_segment_criteria_input, on_template_input_message,
-    on_confirm_segment_send, on_clear_cache, on_generate_all_images,
-    on_cancel_generation, generate_all_images_background,
+    on_confirm_segment_send, on_clear_cache,
+    on_cancel_generation,
     get_stats_data, get_preview_data, active_generations,
     on_generate_full_schedule, on_check_graduated_groups
 )
@@ -208,29 +208,7 @@ class TestAdminMenuHandlers:
 
         mock_callback.answer.assert_called_once_with("🧹 Очищаю кэш картинок...")
 
-    @pytest.mark.asyncio
-    async def test_on_generate_all_images_success(self, mock_callback, mock_manager):
-        """Тест запуска генерации всех изображений."""
-        # Очищаем активные генерации
-        active_generations.clear()
-        
-        await on_generate_all_images(mock_callback, MagicMock(), mock_manager)
-        
-        mock_callback.answer.assert_called_once_with("🚀 Запускаю генерацию всех изображений в фоне...")
-        mock_manager.middleware_data["bot"].send_message.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_on_generate_all_images_already_running(self, mock_callback, mock_manager):
-        """Тест попытки запуска генерации, когда она уже запущена."""
-        # Устанавливаем активную генерацию
-        active_generations[123456789] = {"cancelled": False}
-        
-        await on_generate_all_images(mock_callback, MagicMock(), mock_manager)
-        
-        mock_callback.answer.assert_called_once_with("⚠️ Генерация уже запущена! Дождитесь завершения.")
-        
-        # Очищаем
-        active_generations.clear()
 
     @pytest.mark.asyncio
     async def test_on_cancel_generation_success(self, mock_callback, mock_manager):
@@ -247,7 +225,7 @@ class TestAdminMenuHandlers:
             "status_msg_id": 1
         }
 
-        await on_cancel_generation(mock_callback, MagicMock(), mock_manager)
+        await on_cancel_generation(mock_callback)
 
         mock_callback.answer.assert_called_once_with("⏹️ Отмена генерации...")
         # Проверяем, что генерация была удалена из active_generations
@@ -258,59 +236,11 @@ class TestAdminMenuHandlers:
         """Тест попытки отмены несуществующей генерации."""
         active_generations.clear()
         
-        await on_cancel_generation(mock_callback, MagicMock(), mock_manager)
+        await on_cancel_generation(mock_callback)
         
         mock_callback.answer.assert_called_once_with("❌ Нет активной генерации для отмены")
 
-    @pytest.mark.asyncio
-    async def test_generate_all_images_background_no_tasks(self, mock_manager):
-        """Тест генерации изображений без задач."""
-        mock_bot = AsyncMock()
-        mock_manager._schedules = {}
-        
-        await generate_all_images_background(
-            bot=mock_bot,
-            admin_id=123456789,
-            status_msg_id=1,
-            timetable_manager=mock_manager
-        )
-        
-        mock_bot.edit_message_text.assert_called_with(
-            "❌ <b>Нет данных для генерации</b>\n\nРасписания не найдены или пусты.",
-            chat_id=123456789,
-            message_id=1,
-            parse_mode="HTML"
-        )
 
-    @pytest.mark.asyncio
-    async def test_generate_all_images_background_with_tasks(self, mock_manager):
-        """Тест генерации изображений с задачами."""
-        mock_bot = AsyncMock()
-        mock_manager._schedules = {
-            "TEST_GROUP": {
-                "odd": {"ПОНЕДЕЛЬНИК": [{"subject": "TEST", "time": "9:00-10:30"}]}
-            }
-        }
-        
-        # Мокаем кэш
-        with patch('bot.dialogs.admin_menu.ImageCacheManager') as mock_cache_manager:
-            mock_cache_instance = AsyncMock()
-            mock_cache_manager.return_value = mock_cache_instance
-            mock_cache_instance.is_cached.return_value = False
-            
-            # Мокаем генерацию изображений
-            with patch('bot.dialogs.admin_menu.generate_schedule_image') as mock_generate:
-                mock_generate.return_value = True
-                
-                await generate_all_images_background(
-                    bot=mock_bot,
-                    admin_id=123456789,
-                    status_msg_id=1,
-                    timetable_manager=mock_manager
-                )
-                
-                # Проверяем, что были вызовы обновления статуса
-                assert mock_bot.edit_message_text.call_count > 1
 
     @pytest.mark.asyncio
     async def test_get_stats_data(self, mock_manager):
@@ -357,13 +287,26 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["user_data_manager"] = AsyncMock()
         mock_manager.middleware_data["manager"] = AsyncMock()
         mock_manager.middleware_data["redis_client"] = AsyncMock()
+        mock_manager.middleware_data["manager"]._schedules = {
+            "TEST_GROUP": {
+                "odd": {"lessons": [{"name": "Test"}]},
+                "even": {"lessons": [{"name": "Test"}]}
+            }
+        }
         
-        with patch('bot.scheduler.generate_full_schedule_images') as mock_generate:
-            await on_generate_full_schedule(mock_callback, MagicMock(), mock_manager)
-            
-            mock_callback.answer.assert_called_once_with("🔄 Запускаю генерацию полного расписания...")
-            mock_manager.middleware_data["bot"].send_message.assert_called()
-            mock_generate.assert_called_once()
+        # Очищаем активные генерации
+        active_generations.clear()
+        
+        await on_generate_full_schedule(mock_callback, MagicMock(), mock_manager)
+        
+        mock_callback.answer.assert_called_once_with("🚀 Запускаю генерацию полного расписания в фоне...")
+        mock_manager.middleware_data["bot"].send_message.assert_called()
+        
+        # Проверяем, что генерация была запущена
+        assert mock_callback.from_user.id in active_generations
+        
+        # Очищаем
+        active_generations.clear()
 
     @pytest.mark.asyncio
     async def test_on_check_graduated_groups(self, mock_callback, mock_manager):

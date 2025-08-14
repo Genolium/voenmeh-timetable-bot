@@ -193,3 +193,8 @@ class UserDataManager:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(User.lesson_reminders == True, User.group.isnot(None))
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
+
+    async def get_admin_users(self) -> List[int]:
+        """Получает список ID администраторов бота."""
+        from core.config import ADMIN_IDS
+        return ADMIN_IDS

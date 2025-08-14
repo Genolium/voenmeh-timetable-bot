@@ -131,6 +131,27 @@ services:
       - loki
     restart: unless-stopped
 
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: voenmeh_node_exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "node_exporter"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   redis_data:
   postgres_data:

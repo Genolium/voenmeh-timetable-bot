@@ -93,7 +93,6 @@ async def test_generate_schedule_image_template_not_found(monkeypatch, mocker, t
     core.image_generator._template_cache = None
     core.image_generator._bg_images_cache = {}
     core.image_generator._browser_instance = None
-    core.image_generator._browser_lock = None
     
     # Мокируем FileSystemLoader так, чтобы он падал с ошибкой TemplateNotFound
     from jinja2.exceptions import TemplateNotFound
@@ -128,7 +127,6 @@ async def test_generate_schedule_image_playwright_fails(mock_template_files, moc
     core.image_generator._template_cache = None
     core.image_generator._bg_images_cache = {}
     core.image_generator._browser_instance = None
-    core.image_generator._browser_lock = None
     
     mock_playwright.screenshot.side_effect = Exception("Browser crashed")
     
@@ -155,7 +153,6 @@ async def test_generate_schedule_image_fallback(monkeypatch, tmp_path):
     ig._template_cache = None
     ig._bg_images_cache = {}
     ig._browser_instance = None
-    ig._browser_lock = None
 
     schedule_data = {
         "ПОНЕДЕЛЬНИК": [

@@ -12,16 +12,13 @@ from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.tasks import copy_message_task, send_message_task
-from bot.scheduler import morning_summary_broadcast, evening_broadcast
+from bot.scheduler import morning_summary_broadcast, evening_broadcast, generate_full_schedule_images
 from bot.text_formatters import generate_reminder_text
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.user_data import UserDataManager
 from core.semester_settings import SemesterSettingsManager
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
-from core.image_cache_manager import ImageCacheManager
-from core.image_generator import generate_schedule_image
-from core.config import MEDIA_PATH
 
 from .states import Admin
 from .constants import WidgetIds
@@ -90,20 +87,57 @@ async def on_generate_full_schedule(callback: CallbackQuery, button: Button, man
     admin_id = callback.from_user.id
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
-    redis_client = manager.middleware_data.get("redis_client")
     
-    await callback.answer("🔄 Запускаю генерацию полного расписания...")
-    await bot.send_message(admin_id, "🔄 Начинаю генерацию полного расписания для всех групп. Это может занять несколько минут...")
+    # Создаем правильный Redis-клиент
+    from redis.asyncio import Redis
+    import os
+    redis_url = os.getenv("REDIS_URL")
+    redis_password = os.getenv("REDIS_PASSWORD")
+    redis_client = Redis.from_url(redis_url, password=redis_password, decode_responses=False)
     
-    try:
-        # Импортируем функцию из scheduler
-        from bot.scheduler import generate_full_schedule_images
-        await generate_full_schedule_images(user_data_manager, timetable_manager, redis_client)
-        await bot.send_message(admin_id, "✅ Генерация полного расписания завершена успешно!")
-    except Exception as e:
-        await bot.send_message(admin_id, f"❌ Ошибка при генерации полного расписания: {e}")
-        import traceback
-        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{traceback.format_exc()}</code>")
+    # Проверяем, не запущена ли уже генерация
+    if admin_id in active_generations:
+        await callback.answer("⚠️ Генерация уже запущена! Дождитесь завершения.")
+        return
+    
+    await callback.answer("🚀 Запускаю генерацию полного расписания в фоне...")
+    
+    # Отправляем начальное сообщение с кнопкой отмены
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить генерацию", callback_data="cancel_generation")]
+    ])
+    
+    status_msg = await bot.send_message(
+        admin_id, 
+        "🎨 <b>Генерация полного расписания</b>\n\n"
+        "⏳ Подготовка к генерации...\n"
+        "📊 Прогресс: 0%\n"
+        "✅ Сгенерировано: 0\n"
+        "❌ Ошибок: 0\n"
+        "⏱️ Время: 0с",
+        parse_mode="HTML",
+        reply_markup=cancel_kb
+    )
+    
+    # Отмечаем генерацию как активную
+    active_generations[admin_id] = {
+        "status_msg_id": status_msg.message_id,
+        "cancelled": False,
+        "start_time": None
+    }
+    
+    # Запускаем генерацию через воркеры
+    asyncio.create_task(
+        generate_full_schedule_images(
+            user_data_manager=user_data_manager,
+            timetable_manager=timetable_manager,
+            redis_client=redis_client,
+            admin_id=admin_id,
+            bot=bot
+        )
+    )
 
 async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Запуск проверки выпустившихся групп."""
@@ -111,7 +145,13 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
     admin_id = callback.from_user.id
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
-    redis_client = manager.middleware_data.get("redis_client")
+    
+    # Создаем правильный Redis-клиент
+    from redis.asyncio import Redis
+    import os
+    redis_url = os.getenv("REDIS_URL")
+    redis_password = os.getenv("REDIS_PASSWORD")
+    redis_client = Redis.from_url(redis_url, password=redis_password, decode_responses=False)
     
     await callback.answer("🔍 Запускаю проверку выпустившихся групп...")
     await bot.send_message(admin_id, "🔍 Начинаю проверку выпустившихся групп...")
@@ -477,26 +517,38 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
     freed_space = cache_info_before["total_size_mb"] - cache_info_after["total_size_mb"]
     freed_files = cache_info_before["total_files"] - cache_info_after["total_files"]
     
-    # Формируем список файлов для отображения
+    # Формируем список файлов для отображения (ограничиваем до 5 файлов)
     files_before = cache_info_before.get('files', [])
     files_after = cache_info_after.get('files', [])
     
-    files_text_before = "\n".join([f"   • {f}" for f in files_before]) if files_before else "   • Нет файлов"
+    # Показываем только первые 5 файлов
+    files_to_show = files_before[:5]
+    files_text_before = "\n".join([f"   • {f}" for f in files_to_show]) if files_to_show else "   • Нет файлов"
+    if len(files_before) > 5:
+        files_text_before += f"\n   ... и еще {len(files_before) - 5} файлов"
+    
     files_text_after = "\n".join([f"   • {f}" for f in files_after]) if files_after else "   • Нет файлов"
+    
+    # Добавляем информацию о Redis кэше
+    redis_before = cache_info_before.get('redis_keys', 0)
+    redis_after = cache_info_after.get('redis_keys', 0)
+    redis_freed = redis_before - redis_after
     
     message = (
         f"✅ <b>Кэш очищен!</b>\n\n"
         f"📊 <b>До очистки:</b>\n"
         f"   • Файлов: {cache_info_before['total_files']}\n"
-        f"   • Размер: {cache_info_before['total_size_mb']} MB\n"
+        f"   • Размер файлов: {cache_info_before['total_size_mb']} MB\n"
+        f"   • Redis ключей: {redis_before}\n"
         f"   • Файлы:\n{files_text_before}\n\n"
         f"🧹 <b>После очистки:</b>\n"
         f"   • Файлов: {cache_info_after['total_files']}\n"
-        f"   • Размер: {cache_info_after['total_size_mb']} MB\n"
-        f"   • Файлы:\n{files_text_after}\n\n"
+        f"   • Размер файлов: {cache_info_after['total_size_mb']} MB\n"
+        f"   • Redis ключей: {redis_after}\n\n"
         f"💾 <b>Освобождено:</b>\n"
         f"   • Файлов: {freed_files}\n"
-        f"   • Места: {freed_space} MB"
+        f"   • Места: {freed_space} MB\n"
+        f"   • Redis ключей: {redis_freed}"
     )
     
     await bot.send_message(admin_id, message, parse_mode="HTML")
@@ -504,56 +556,9 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 # Глобальная переменная для отслеживания активных генераций
 active_generations = {}
 
-async def on_generate_all_images(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Запускает генерацию всех изображений в фоновом режиме."""
-    bot: Bot = manager.middleware_data.get("bot")
-    admin_id = callback.from_user.id
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
-    
-    # Проверяем, не запущена ли уже генерация
-    if admin_id in active_generations:
-        await callback.answer("⚠️ Генерация уже запущена! Дождитесь завершения.")
-        return
-    
-    await callback.answer("🚀 Запускаю генерацию всех изображений в фоне...")
-    
-    # Отправляем начальное сообщение с кнопкой отмены
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отменить генерацию", callback_data="cancel_generation")]
-    ])
-    
-    status_msg = await bot.send_message(
-        admin_id, 
-        "🎨 <b>Генерация всех изображений</b>\n\n"
-        "⏳ Подготовка к генерации...\n"
-        "📊 Прогресс: 0%\n"
-        "✅ Сгенерировано: 0\n"
-        "❌ Ошибок: 0\n"
-        "⏱️ Время: 0с",
-        parse_mode="HTML",
-        reply_markup=cancel_kb
-    )
-    
-    # Отмечаем генерацию как активную
-    active_generations[admin_id] = {
-        "status_msg_id": status_msg.message_id,
-        "cancelled": False,
-        "start_time": None
-    }
-    
-    # Запускаем генерацию в фоне
-    asyncio.create_task(
-        generate_all_images_background(
-            bot=bot,
-            admin_id=admin_id,
-            status_msg_id=status_msg.message_id,
-            timetable_manager=timetable_manager
-        )
-    )
 
-async def on_cancel_generation(callback: CallbackQuery, button: Button, manager: DialogManager):
+
+async def on_cancel_generation(callback: CallbackQuery):
     """Отменяет генерацию изображений."""
     admin_id = callback.from_user.id
     
@@ -562,15 +567,11 @@ async def on_cancel_generation(callback: CallbackQuery, button: Button, manager:
         await callback.answer("⏹️ Отмена генерации...")
         
         # Обновляем сообщение
-        bot: Bot = manager.middleware_data.get("bot")
-        status_msg_id = active_generations[admin_id]["status_msg_id"]
-        
         try:
-            await bot.edit_message_text(
+            status_msg_id = active_generations[admin_id]["status_msg_id"]
+            await callback.message.edit_text(
                 "⏹️ <b>Генерация отменена</b>\n\n"
                 "Процесс остановлен пользователем.",
-                chat_id=admin_id,
-                message_id=status_msg_id,
                 parse_mode="HTML"
             )
         except:
@@ -581,222 +582,9 @@ async def on_cancel_generation(callback: CallbackQuery, button: Button, manager:
     else:
         await callback.answer("❌ Нет активной генерации для отмены")
 
-async def generate_all_images_background(
-    bot: Bot,
-    admin_id: int,
-    status_msg_id: int,
-    timetable_manager: TimetableManager
-):
-    """Генерирует все изображения в фоновом режиме с прогресс-баром."""
-    import time
-    from datetime import datetime
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    start_time = time.time()
-    generated_count = 0
-    error_count = 0
-    total_tasks = 0
-    completed_tasks = 0
-    
-    # Обновляем время начала
-    if admin_id in active_generations:
-        active_generations[admin_id]["start_time"] = start_time
-    
-    try:
-        # Получаем все уникальные группы из расписания
-        all_groups = list(timetable_manager._schedules.keys())
-        all_groups = [g for g in all_groups if not g.startswith('__')]  # Исключаем служебные ключи
-        
-        # Подсчитываем общее количество задач
-        week_types = [
-            ("Нечётная неделя", "odd"),
-            ("Чётная неделя", "even")
-        ]
-        
-        tasks = []
-        for group in all_groups:
-            for week_name, week_key in week_types:
-                # Проверяем, есть ли расписание для этой группы и недели
-                group_schedule = timetable_manager._schedules.get(group.upper(), {})
-                week_schedule = group_schedule.get(week_key, {})
-                
-                if week_schedule:  # Только если есть расписание
-                    tasks.append((group, week_schedule, week_name, week_key))
-        
-        total_tasks = len(tasks)
-        
-        if total_tasks == 0:
-            await bot.edit_message_text(
-                "❌ <b>Нет данных для генерации</b>\n\n"
-                "Расписания не найдены или пусты.",
-                chat_id=admin_id,
-                message_id=status_msg_id,
-                parse_mode="HTML"
-            )
-            if admin_id in active_generations:
-                del active_generations[admin_id]
-            return
-        
-        # Обновляем статус с количеством задач
-        cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Отменить генерацию", callback_data="cancel_generation")]
-        ])
-        
-        await bot.edit_message_text(
-            f"🎨 <b>Генерация всех изображений</b>\n\n"
-            f"📊 Всего задач: {total_tasks}\n"
-            f"📁 Групп: {len(all_groups)}\n"
-            f"⏳ Начинаю генерацию...\n"
-            f"📊 Прогресс: 0%\n"
-            f"✅ Сгенерировано: 0\n"
-            f"❌ Ошибок: 0\n"
-            f"⏱️ Время: 0с",
-            chat_id=admin_id,
-            message_id=status_msg_id,
-            parse_mode="HTML",
-            reply_markup=cancel_kb
-        )
-        
-        # Создаем директорию для результатов
-        output_dir = MEDIA_PATH / "generated"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Генерируем изображения
-        for i, (group, week_schedule, week_name, week_key) in enumerate(tasks):
-            # Проверяем отмену
-            if admin_id in active_generations and active_generations[admin_id]["cancelled"]:
-                await bot.edit_message_text(
-                    "⏹️ <b>Генерация отменена</b>\n\n"
-                    f"✅ Сгенерировано: {generated_count}\n"
-                    f"❌ Ошибок: {error_count}\n"
-                    f"⏱️ Время: {time.time() - start_time:.1f}с",
-                    chat_id=admin_id,
-                    message_id=status_msg_id,
-                    parse_mode="HTML"
-                )
-                del active_generations[admin_id]
-                return
-            
-            try:
-                # Проверяем кэш
-                cache_key = f"{group}_{week_key}"
-                cache_manager = ImageCacheManager(timetable_manager.redis, cache_ttl_hours=720)
-                
-                if await cache_manager.is_cached(cache_key):
-                    completed_tasks += 1
-                    continue
-                
-                # Генерируем изображение
-                output_filename = f"{group}_{week_key}.png"
-                output_path = output_dir / output_filename
-                
-                success = await generate_schedule_image(
-                    schedule_data=week_schedule,
-                    week_type=week_name,
-                    group=group,
-                    output_path=str(output_path)
-                )
-                
-                if success and os.path.exists(output_path):
-                    # Сохраняем в кэш
-                    try:
-                        with open(output_path, 'rb') as f:
-                            image_bytes = f.read()
-                        await cache_manager.cache_image(cache_key, image_bytes, metadata={
-                            "group": group,
-                            "week_key": week_key,
-                            "generated_at": datetime.now().isoformat()
-                        })
-                        generated_count += 1
-                    except Exception as e:
-                        error_count += 1
-                        print(f"Ошибка кэширования {cache_key}: {e}")
-                else:
-                    error_count += 1
-                    
-            except Exception as e:
-                error_count += 1
-                print(f"Ошибка генерации {group}_{week_key}: {e}")
-            
-            completed_tasks += 1
-            
-            # Обновляем статус каждые 5 задач или каждые 10 секунд
-            if completed_tasks % 5 == 0 or completed_tasks == total_tasks:
-                elapsed_time = time.time() - start_time
-                progress_percent = int((completed_tasks / total_tasks) * 100)
-                
-                # Создаем прогресс-бар
-                bar_length = 20
-                filled_length = int(bar_length * completed_tasks // total_tasks)
-                progress_bar = '█' * filled_length + '░' * (bar_length - filled_length)
-                
-                status_text = (
-                    f"🎨 <b>Генерация всех изображений</b>\n\n"
-                    f"📊 Всего задач: {total_tasks}\n"
-                    f"📁 Групп: {len(all_groups)}\n\n"
-                    f"⏳ Прогресс: {progress_bar} {progress_percent}%\n"
-                    f"✅ Сгенерировано: {generated_count}\n"
-                    f"❌ Ошибок: {error_count}\n"
-                    f"⏱️ Время: {elapsed_time:.1f}с\n"
-                    f"🚀 Скорость: {completed_tasks/elapsed_time:.1f} задач/с" if elapsed_time > 0 else "🚀 Скорость: 0 задач/с"
-                )
-                
-                try:
-                    await bot.edit_message_text(
-                        status_text,
-                        chat_id=admin_id,
-                        message_id=status_msg_id,
-                        parse_mode="HTML",
-                        reply_markup=cancel_kb
-                    )
-                except Exception as e:
-                    print(f"Ошибка обновления статуса: {e}")
-        
-        # Финальное сообщение
-        total_time = time.time() - start_time
-        final_text = (
-            f"🎉 <b>Генерация завершена!</b>\n\n"
-            f"📊 <b>Результаты:</b>\n"
-            f"✅ Сгенерировано: {generated_count} изображений\n"
-            f"❌ Ошибок: {error_count}\n"
-            f"⏱️ Общее время: {total_time:.1f}с\n"
-            f"🚀 Средняя скорость: {total_tasks/total_time:.1f} задач/с\n\n"
-            f"📁 Изображения сохранены в: <code>bot/media/generated/</code>"
-        )
-        
-        await bot.edit_message_text(
-            final_text,
-            chat_id=admin_id,
-            message_id=status_msg_id,
-            parse_mode="HTML"
-        )
-        
-        # Удаляем из активных генераций
-        if admin_id in active_generations:
-            del active_generations[admin_id]
-        
-    except Exception as e:
-        error_text = (
-            f"❌ <b>Критическая ошибка генерации</b>\n\n"
-            f"Ошибка: {str(e)}\n"
-            f"✅ Сгенерировано: {generated_count}\n"
-            f"❌ Ошибок: {error_count}\n"
-            f"⏱️ Время: {time.time() - start_time:.1f}с"
-        )
-        
-        try:
-            await bot.edit_message_text(
-                error_text,
-                chat_id=admin_id,
-                message_id=status_msg_id,
-                parse_mode="HTML"
-            )
-        except:
-            await bot.send_message(admin_id, error_text, parse_mode="HTML")
-        
-        # Удаляем из активных генераций
-        if admin_id in active_generations:
-            del active_generations[admin_id]
+
+
+
 
 admin_dialog = Dialog(
     Window(
@@ -810,7 +598,6 @@ admin_dialog = Dialog(
         Button(Const("🧪 Тест напоминаний о парах"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
         Button(Const("🧪 Тест алёрта"), id="test_alert", on_click=on_test_alert),
         Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache", on_click=on_clear_cache),
-        Button(Const("📸 Сгенерировать все изображения"), id="generate_all_images", on_click=on_generate_all_images),
         Button(Const("📸 Сгенерировать полное расписание"), id=WidgetIds.GENERATE_FULL_SCHEDULE, on_click=on_generate_full_schedule),
         Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated_groups", on_click=on_check_graduated_groups),
         SwitchTo(Const("📅 Настройки семестров"), id="semester_settings", state=Admin.semester_settings),
