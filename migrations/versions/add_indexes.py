@@ -1,16 +1,16 @@
 """Add indexes to users table
 
-Revision ID: new_id
-Revises: previous_id
-Create Date: 2023-...
+Revision ID: add_indexes_fix
+Revises: a1b2c3d4e5f6
+Create Date: 2025-08-14 16:00:00.000000
 
 """
 
 from alembic import op
 import sqlalchemy as sa
 
-revision = 'new_id'
-down_revision = 'previous_id'
+revision = 'add_indexes_fix'
+down_revision = 'a1b2c3d4e5f6'
 branch_labels = None
 depends_on = None
 
