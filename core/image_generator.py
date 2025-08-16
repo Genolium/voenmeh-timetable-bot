@@ -33,6 +33,7 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
 # Глобальные кэши для ускорения
 _bg_images_cache = {}
 _template_cache = None
+_template_mtime: float | None = None
 _browser_instance = None
 
 
@@ -101,12 +102,20 @@ async def generate_schedule_image(
         # --- ШАГ 1: Рендеринг HTML по шаблону ---
         print_progress_bar(1, 5, f"Генерация {group}", "Подготовка шаблона")
         
-        global _template_cache, _bg_images_cache
+        global _template_cache, _bg_images_cache, _template_mtime
         project_root = Path(__file__).resolve().parent.parent
-        if _template_cache is None:
-            templates_dir = project_root / "templates"
+        templates_dir = project_root / "templates"
+        template_path = templates_dir / "schedule_template.html"
+        try:
+            current_mtime = template_path.stat().st_mtime
+        except Exception:
+            current_mtime = None
+
+        # Перезагружаем шаблон, если он не загружен или изменился на диске
+        if _template_cache is None or (_template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime):
             env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
             _template_cache = env.get_template("schedule_template.html")
+            _template_mtime = current_mtime
         week_slug = 'odd' if 'Неч' in week_type else 'even'
         if not _bg_images_cache:
             from base64 import b64encode
@@ -160,12 +169,10 @@ async def generate_schedule_image(
             page.set_default_navigation_timeout(120000)
             
             try:
-                # --- УСТАНАВЛИВАЕМ ШИРОКИЙ VIEWPORT ---
-                # Задаем фиксированную ширину, чтобы сетка не сжималась. 
-                # 2800px выбрано с запасом под ваш max-width: 270rem.
-                # Высоту делаем разумной, чтобы не было лишнего пространства.
-                initial_width = 2800 
-                initial_height =  int(initial_width * 2/3) #соотношение сторон 2:3
+                # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
+                # Широкий viewport с соотношением ~3:2 для красивой сетки
+                initial_width = 3000
+                initial_height = 2250
                 
                 await page.set_viewport_size({"width": initial_width, "height": initial_height})
                 
@@ -191,19 +198,33 @@ async def generate_schedule_image(
                 if not bounding_box:
                     raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
 
-                # Вычисляем правильную высоту с одинаковыми отступами сверху и снизу
+                # Вычисляем размеры контента
                 content_height = bounding_box['height']
                 top_margin = bounding_box['y']  # Отступ сверху
-                
-                # Добавляем такой же отступ снизу для симметрии, но не более 100px
-                bottom_margin = min(top_margin, 100)
-                final_height = int(content_height + top_margin + bottom_margin)
+                bottom_margin = min(top_margin, 100)  # Симметричный нижний отступ
+
+                # Целевой размер кадра: фиксированный 3:2 (как в оптимизированной версии)
+                target_width = initial_width
+                target_height = initial_height
+
+                # Текущая требуемая высота под контент
+                required_height = int(content_height + top_margin + bottom_margin)
+
+                # Если контент выше — не масштабирую, фиксированная область как было изначально
+
+                # Используем фиксированную высоту 3:2
+                final_height = target_height
 
                 # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
                 print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
                 
-                # Подгоняем высоту viewport точно под контент
-                await page.set_viewport_size({"width": initial_width, "height": final_height})
+                # Устанавливаем финальный viewport фиксированного размера
+                await page.set_viewport_size({"width": target_width, "height": final_height})
+                # Форсируем полный рефлоу и два кадра, чтобы все стили применились перед скриншотом
+                try:
+                    await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                except Exception:
+                    pass
                 
                 # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
                 await page.screenshot(path=output_path, type="png")

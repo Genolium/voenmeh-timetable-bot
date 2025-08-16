@@ -1,5 +1,5 @@
 from datetime import datetime 
-from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date
+from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
@@ -21,6 +21,14 @@ class User(Base):
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
 
     reminder_time_minutes: Mapped[int] = mapped_column(Integer, server_default='20', nullable=False)
+
+    # Индексы для оптимизации частых запросов
+    __table_args__ = (
+        Index('idx_user_group', 'group'),  # Для поиска по группам
+        Index('idx_user_last_active', 'last_active_date'),  # Для статистики активности
+        Index('idx_user_registration', 'registration_date'),  # Для статистики регистраций
+        Index('idx_user_notifications', 'evening_notify', 'morning_summary', 'lesson_reminders'),  # Для рассылок
+    )
 
 class SemesterSettings(Base):
     __tablename__ = 'semester_settings'

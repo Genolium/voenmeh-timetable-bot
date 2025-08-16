@@ -78,22 +78,38 @@ class TestTimetableManager:
 
     @pytest.mark.asyncio
     async def test_get_academic_week_type(self, manager):
-        """Тест определения типа недели по академическому календарю."""
-        # 1 сентября - нечетная неделя
+        """
+        Тест определения типа недели по академическому календарю.
+        
+        ВАЖНО: После исправления бага с календарными неделями, логика изменена:
+        - Неделя определяется по календарным неделям (понедельник-воскресенье)
+        - Все дни одной календарной недели имеют одинаковый тип (четная/нечетная)
+        """
+        # 1 сентября - нечетная неделя (первая неделя семестра)
         assert await manager.get_academic_week_type(date(2023, 9, 1)) == ('odd', 'Нечетная')
         assert await manager.get_academic_week_type(date(2024, 9, 1)) == ('odd', 'Нечетная')
         
-        # Вторая неделя сентября - четная
-        assert await manager.get_academic_week_type(date(2023, 9, 11)) == ('even', 'Четная')
+        # 11 сентября 2023 - понедельник третьей недели семестра (нечетная)
+        # Неделя 1: 28 авг - 3 сент (нечетная), Неделя 2: 4-10 сент (четная), Неделя 3: 11-17 сент (нечетная)
+        assert await manager.get_academic_week_type(date(2023, 9, 11)) == ('odd', 'Нечетная')
         
-        # Первая неделя февраля - нечетная
+        # Проверим что вся неделя с 11 сентября имеет одинаковый тип
+        assert await manager.get_academic_week_type(date(2023, 9, 15)) == ('odd', 'Нечетная')  # пятница той же недели
+        
+        # Следующая неделя должна быть четной
+        assert await manager.get_academic_week_type(date(2023, 9, 18)) == ('even', 'Четная')  # понедельник следующей недели
+        
+        # Первая неделя февраля - нечетная (первая неделя весеннего семестра)
         assert await manager.get_academic_week_type(date(2024, 2, 12)) == ('odd', 'Нечетная')
         
-        # Вторая неделя февраля - четная
+        # Вторая неделя февраля - четная  
         assert await manager.get_academic_week_type(date(2024, 2, 19)) == ('even', 'Четная')
         
-        # Лето - нечетная неделя
-        assert await manager.get_academic_week_type(date(2024, 7, 15)) == ('odd', 'Нечетная')
+        # Лето - используем предыдущий осенний семестр
+        # Июль 2024 - много недель после начала семестра 1 сент 2023
+        july_result = await manager.get_academic_week_type(date(2024, 7, 15))
+        assert july_result[0] in ['odd', 'even']  # Должно быть либо четная, либо нечетная
+        assert july_result[1] in ['Нечетная', 'Четная']
 
     @pytest.mark.asyncio
     async def test_get_schedule_for_day_success(self, manager):

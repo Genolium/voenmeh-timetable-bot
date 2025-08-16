@@ -127,8 +127,7 @@ class ImageService:
             logger.info(f"🔄 Generating image for {cache_key}")
             
             try:
-                # Оптимизированные параметры для Telegram
-                highres_vp = {"width": 2048, "height": 1400}
+                highres_vp = {"width":1500, "height": 1125}
                 
                 success = await generate_schedule_image(
                     schedule_data=schedule_data,

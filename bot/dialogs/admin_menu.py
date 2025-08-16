@@ -23,6 +23,9 @@ from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 from .states import Admin
 from .constants import WidgetIds
 
+# Глобальная переменная для отслеживания активных генераций
+active_generations = {}
+
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
@@ -129,15 +132,21 @@ async def on_generate_full_schedule(callback: CallbackQuery, button: Button, man
     }
     
     # Запускаем генерацию через воркеры
-    asyncio.create_task(
-        generate_full_schedule_images(
-            user_data_manager=user_data_manager,
-            timetable_manager=timetable_manager,
-            redis_client=redis_client,
-            admin_id=admin_id,
-            bot=bot
+    try:
+        asyncio.create_task(
+            generate_full_schedule_images(
+                user_data_manager=user_data_manager,
+                timetable_manager=timetable_manager,
+                redis_client=redis_client,
+                admin_id=admin_id,
+                bot=bot
+            )
         )
-    )
+    except Exception as e:
+        # Убираем из активных генераций при ошибке
+        active_generations.pop(admin_id, None)
+        await bot.send_message(admin_id, f"❌ Ошибка запуска генерации: {e}")
+        raise
 
 async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Запуск проверки выпустившихся групп."""
@@ -552,11 +561,6 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
     )
     
     await bot.send_message(admin_id, message, parse_mode="HTML")
-
-# Глобальная переменная для отслеживания активных генераций
-active_generations = {}
-
-
 
 async def on_cancel_generation(callback: CallbackQuery):
     """Отменяет генерацию изображений."""

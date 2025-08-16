@@ -56,7 +56,8 @@
       background-size: cover;
       background-repeat: no-repeat;
       display: flex;
-      justify-content: center;
+      justify-content: center; /* горизонтально по центру */
+      align-items: center;      /* вертикально по центру */
       min-height: 100vh;
       margin: 0;
       padding: 0;
@@ -69,11 +70,10 @@
       padding: 10rem; /* Разумные отступы по 100px со всех сторон */
       width: 100%;
       max-width: 270rem;
-      margin: 0 auto; /* Центрируем контент */
+      margin: 0 auto; /* Вспомогательное центрирование по горизонтали */
       display: flex;
       flex-direction: column;
       gap: 9rem;
-      flex: 1; /* Занимает всю доступную высоту */
     }
 
     /* Стили для главного заголовка "Расписание" и подзаголовка с типом недели. */
@@ -299,5 +299,56 @@
     </section>
   </div>
   <style>.hidden { display: none; }</style>
+  <script>
+    (function () {
+      function setRem(el, value) { el.style.fontSize = value.toFixed(2) + 'rem'; }
+      function fitRow(row) {
+        var room = row.querySelector('.lesson-room');
+        var time = row.querySelector('.lesson-time');
+        if (!room || !time) return;
+
+        // Базовые размеры в rem (у нас 1rem ≈ 10px)
+        var minRoom = 2.2;   // минимум для кабинета
+        var minTime = 3.0;   // минимум для времени
+        var roomRem = parseFloat(getComputedStyle(room).fontSize) / 10;
+        var timeRem = parseFloat(getComputedStyle(time).fontSize) / 10;
+
+        var safety = 40;
+        while (safety-- > 0) {
+          var rr = room.getBoundingClientRect();
+          var tr = time.getBoundingClientRect();
+
+          var roomFits = room.scrollWidth <= room.clientWidth;
+          var timeFits = time.scrollWidth <= time.clientWidth;
+          var noOverlap = rr.right + 8 <= tr.left; // 8px буфер между столбцами
+
+          if (roomFits && timeFits && noOverlap) break;
+
+          if (!roomFits || (!noOverlap && roomRem > minRoom)) {
+            if (roomRem > minRoom) { roomRem -= 0.1; setRem(room, roomRem); continue; }
+          }
+          if (!timeFits || (!noOverlap && timeRem > minTime)) {
+            if (timeRem > minTime) { timeRem -= 0.1; setRem(time, timeRem); continue; }
+          }
+          // Больше уменьшать нельзя — выходим
+          break;
+        }
+      }
+
+      function runFit() {
+        var rows = document.querySelectorAll('.lesson-row');
+        rows.forEach(fitRow);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { requestAnimationFrame(runFit); });
+      } else {
+        requestAnimationFrame(runFit);
+      }
+
+      // Экспорт для повторного вызова (Playwright может дернуть при необходимости)
+      window.__fitScheduleTexts = runFit;
+    })();
+  </script>
 </body>
 </html>

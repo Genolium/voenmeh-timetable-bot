@@ -117,12 +117,37 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
 
 # --- Генерация недельного изображения в очереди ---
 @dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
-def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week_name: str, group: str, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None):
+def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any] = None, week_name: str = None, group: str = None, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None, **kwargs):
     """
     Генерирует изображение расписания в фоновом режиме.
     НЕ блокирует основной поток бота благодаря Dramatiq.
+    
+    СОВМЕСТИМОСТЬ: Поддерживает как новый формат вызова с cache_key,
+    так и старый формат с week_key (для совместимости со старыми задачами в очереди).
     """
     async def _run():
+        nonlocal cache_key, week_schedule, week_name, group, user_id, placeholder_msg_id, final_caption
+        
+        # ОБРАБОТКА УСТАРЕВШЕГО ФОРМАТА ВЫЗОВА
+        # Если функция была вызвана со старыми параметрами (week_key вместо cache_key)
+        if 'week_key' in kwargs and cache_key is None:
+            week_key = kwargs.get('week_key')
+            group = kwargs.get('group', group)
+            week_schedule = kwargs.get('week_schedule', week_schedule)
+            week_name = kwargs.get('week_name', week_name)
+            user_id = kwargs.get('user_id', user_id)
+            placeholder_msg_id = kwargs.get('placeholder_msg_id', placeholder_msg_id)
+            final_caption = kwargs.get('final_caption', final_caption)
+            
+            # Создаем cache_key из group и week_key
+            cache_key = f"{group}_{week_key}"
+            log.warning(f"⚠️ УСТАРЕВШИЙ ВЫЗОВ generate_week_image_task с week_key='{week_key}', конвертируем в cache_key='{cache_key}'")
+        
+        # Валидация параметров
+        if not cache_key or not group or week_schedule is None:
+            log.error(f"❌ Некорректные параметры для generate_week_image_task: cache_key={cache_key}, group={group}, week_schedule={'None' if week_schedule is None else 'provided'}")
+            return
+        
         try:
             # Создаем синхронный Redis-клиент для избежания проблем с event loop
             sync_redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)

@@ -378,61 +378,52 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
         # Проверяем кэш перед отправкой задач
         cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)  # 30 дней для полного расписания
         
-        for week_key, week_name in week_types:
-            logger.info(f"📅 Отправка задач для {week_name}")
-            
-            for i, group in enumerate(all_groups, 1):
-                # Проверяем отмену, если это ручная генерация
-                if admin_id is not None:
-                    from bot.dialogs.admin_menu import active_generations
-                    if admin_id in active_generations and active_generations[admin_id].get("cancelled", False):
-                        logger.info(f"⏹️ Генерация отменена пользователем {admin_id}")
-                        return
+        # Параллелим отправку задач по неделям и группам в окне ограниченного пула
+        from asyncio import Semaphore, gather, create_task
+        semaphore = Semaphore(20)  # ограничиваем одновременную активность для плавности нагрузки
+
+        async def enqueue_one(group: str, week_key: str, week_name: str):
+            async with semaphore:
                 try:
-                    # Получаем расписание для группы
                     full_schedule = timetable_manager._schedules.get(group, {})
                     week_schedule = full_schedule.get(week_key, {})
-                    
                     if not week_schedule:
-                        logger.warning(f"⚠️ Нет расписания для группы {group} на неделю {week_key}")
-                        tasks_skipped += 1
-                        continue
-                    
-                    # Формируем ключ кэша
+                        return False
                     cache_key = f"{group}_{week_key}"
-                    
-                    # Проверяем, есть ли уже изображение в кэше
                     if await cache_manager.is_cached(cache_key):
-                        logger.info(f"✅ {group} ({week_name}): уже в кэше, пропускаем")
-                        tasks_skipped += 1
-                        continue
-                    
-                    # Отправляем задачу в очередь Dramatiq
-                    # Для автоматической генерации не нужны user_id, placeholder_msg_id и final_caption
+                        return None
                     generate_week_image_task.send(
                         cache_key=cache_key,
                         week_schedule=week_schedule,
                         week_name=week_name,
                         group=group,
-                        user_id=None,  # Автоматическая генерация
+                        user_id=None,
                         placeholder_msg_id=None,
                         final_caption=None
                     )
-                    
-                    tasks_sent += 1
-                    logger.info(f"📤 {group} ({week_name}): задача отправлена в очередь #{tasks_sent}")
-                    
-                    # Обновляем прогресс каждые 5 задач или каждую задачу для небольших объемов
-                    if tasks_sent % 5 == 0 or tasks_sent <= 10:
-                        await update_progress(tasks_sent, total_tasks, f"Отправка задач... ({group})")
-                    
-                    # Небольшая задержка между отправками, чтобы не перегружать очередь
-                    if tasks_sent % 10 == 0:
-                        await asyncio.sleep(0.1)
-                        
-                except Exception as e:
-                    tasks_skipped += 1
-                    logger.error(f"❌ {group} ({week_name}): ошибка отправки задачи: {e}")
+                    return True
+                except Exception:
+                    return False
+
+        tasks = []
+        for week_key, week_name in week_types:
+            logger.info(f"📅 Отправка задач для {week_name}")
+            for group in all_groups:
+                # Проверяем отмену
+                if admin_id is not None:
+                    from bot.dialogs.admin_menu import active_generations
+                    if admin_id in active_generations and active_generations[admin_id].get("cancelled", False):
+                        logger.info(f"⏹️ Генерация отменена пользователем {admin_id}")
+                        return
+                tasks.append(create_task(enqueue_one(group, week_key, week_name)))
+
+        results = await gather(*tasks, return_exceptions=True)
+        for res in results:
+            if res is True:
+                tasks_sent += 1
+            elif res is False:
+                tasks_skipped += 1
+        await update_progress(tasks_sent, total_tasks, "Отправка задач завершена")
         
         # Финальное обновление прогресса
         await update_progress(tasks_sent, total_tasks, "Задачи отправлены в очередь!")
@@ -470,6 +461,17 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                     parse_mode="HTML"
                 )
                 
+                # После завершения отправки задач – принудительно обновим метрики размера кэша
+                try:
+                    from core.image_cache_manager import ImageCacheManager
+                    cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)
+                    stats = await cache_manager.get_cache_stats()
+                    from core.metrics import IMAGE_CACHE_SIZE
+                    IMAGE_CACHE_SIZE.labels(cache_type="files").set(stats.get("file_count", 0))
+                    IMAGE_CACHE_SIZE.labels(cache_type="size_mb").set(stats.get("file_size_mb", 0))
+                except Exception as e:
+                    logger.warning(f"Failed to refresh cache metrics after generation: {e}")
+
                 # Удаляем из активных генераций
                 if admin_id in active_generations:
                     del active_generations[admin_id]

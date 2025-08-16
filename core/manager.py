@@ -1,4 +1,6 @@
 import json
+import gzip
+import pickle
 from datetime import date, datetime, timedelta
 from redis.asyncio.client import Redis
 from core.config import DAY_MAP, REDIS_SCHEDULE_CACHE_KEY, CACHE_LIFETIME 
@@ -20,6 +22,7 @@ class TimetableManager:
         self._classrooms_index = all_schedules_data.get('__classrooms_index__', {})
         self._current_xml_hash = all_schedules_data.get('__current_xml_hash__', '')
         self.semester_start_date = None
+        self._use_compression = True  # Включаем сжатие для оптимизации
         
         if 'period' in self.metadata:
             try:
@@ -41,7 +44,10 @@ class TimetableManager:
             
             if cached_data:
                 print("Найден кэш расписания в Redis.")
-                data = json.loads(cached_data)
+                # Создаем временный экземпляр для разжатия данных
+                temp_instance = cls.__new__(cls)
+                temp_instance._use_compression = True
+                data = temp_instance._decompress_data(cached_data)
                 return cls(data, redis_client)
             else:
                 print("Кэш в Redis не найден. Загрузка с сервера...")
@@ -65,20 +71,33 @@ class TimetableManager:
             '__current_xml_hash__': self._current_xml_hash,
             **self._schedules
         }
+        # Используем сжатие для экономии места в Redis
+        compressed_data = self._compress_data(data_to_save)
         await self.redis.set(
             REDIS_SCHEDULE_CACHE_KEY, 
-            json.dumps(data_to_save, ensure_ascii=False), 
+            compressed_data, 
             ex=CACHE_LIFETIME
         )
     
     def get_week_type(self, target_date: date) -> tuple[str, str] | None:
-        """Определяет тип недели ('odd'/'even') для указанной даты."""
+        """
+        Определяет тип недели ('odd'/'even') для указанной даты.
+        """
         if not self.semester_start_date:
             return None
         if target_date < self.semester_start_date:
             return ('odd', 'Нечетная (до начала семестра)')
 
-        week_number = ((target_date - self.semester_start_date).days // 7) + 1
+        target_weekday = target_date.weekday()
+        target_week_monday = target_date - timedelta(days=target_weekday)
+        
+        days_to_target_week = (target_week_monday - self.semester_start_date).days
+        
+        if days_to_target_week < 0:
+            week_number = 1
+        else:
+            week_number = (days_to_target_week // 7) + 1
+        
         return ('odd', 'Нечетная') if week_number % 2 == 1 else ('even', 'Четная')
 
     async def get_academic_week_type(self, target_date: date) -> tuple[str, str]:
@@ -89,6 +108,7 @@ class TimetableManager:
         - 1 сентября всегда нечетная неделя
         - Первая неделя зимнего семестра (обычно январь) - нечетная
         - Недели чередуются: нечетная -> четная -> нечетная -> четная
+        - Все дни одной календарной недели (понедельник-воскресенье) имеют одинаковый тип
         """
         year = target_date.year
         
@@ -133,10 +153,24 @@ class TimetableManager:
             semester_start = date(year - 1, 9, 1)
             semester_name = "осеннего"
         
-        # Вычисляем номер недели от начала семестра
-        # Используем целочисленное деление на 7 дней
-        days_since_start = (target_date - semester_start).days
-        week_number = (days_since_start // 7) + 1
+        # Для целей расписания важно, чтобы дни одной календарной недели были одинаковыми,
+        # но академические недели считаются от даты начала семестра
+        
+        # Находим понедельник недели, в которую попадает целевая дата
+        target_weekday = target_date.weekday()
+        target_week_monday = target_date - timedelta(days=target_weekday)
+        
+        # Вычисляем количество дней от начала семестра до понедельника недели с целевой датой
+        days_to_target_week = (target_week_monday - semester_start).days
+        
+        # Если целевая неделя начинается до начала семестра, 
+        # это означает, что семестр начинается в середине недели
+        if days_to_target_week < 0:
+            # Семестр начинается в этой же неделе, считаем это первой неделей
+            week_number = 1
+        else:
+            # Обычный случай: считаем недели от начала семестра
+            week_number = (days_to_target_week // 7) + 1
         
         # Определяем тип недели (нечетная = 1, 3, 5...)
         is_odd = week_number % 2 == 1
@@ -296,3 +330,26 @@ class TimetableManager:
     async def get_semester_settings_manager(self):
         """Получает менеджер настроек семестров."""
         return self._semester_settings_manager
+    
+    def _compress_data(self, data: dict) -> bytes:
+        """Сжимает данные для сохранения в Redis."""
+        if not self._use_compression:
+            return json.dumps(data, ensure_ascii=False).encode('utf-8')
+        
+        # Используем pickle для более эффективной сериализации + gzip для сжатия
+        serialized = pickle.dumps(data)
+        compressed = gzip.compress(serialized, compresslevel=6)
+        return compressed
+    
+    def _decompress_data(self, compressed_data: bytes) -> dict:
+        """Разжимает данные из Redis."""
+        if not self._use_compression:
+            return json.loads(compressed_data.decode('utf-8'))
+        
+        try:
+            # Пытаемся разжать как сжатые данные
+            decompressed = gzip.decompress(compressed_data)
+            return pickle.loads(decompressed)
+        except (gzip.BadGzipFile, pickle.UnpicklingError):
+            # Если не получилось, пробуем как обычный JSON (обратная совместимость)
+            return json.loads(compressed_data.decode('utf-8'))
