@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -15,10 +16,10 @@ class AlertSender:
             "http": settings.get("ALERT_WEBHOOK_URL"),
         }
         self.severity_filters = {
-            "slack": ["warning", "critical"],
-            "discord": ["warning", "critical"],
-            "telegram": ["critical"],
-            "http": ["info", "warning", "critical"],
+            "slack": ["warning", "error", "critical"],
+            "discord": ["warning", "error", "critical"],
+            "telegram": ["error", "critical"],
+            "http": ["info", "warning", "error", "critical"],
         }
 
     async def __aenter__(self):
@@ -48,6 +49,16 @@ class AlertSender:
             logging.error(f"Alert send error: {e}")
             return False
 
+    async def _normalize_ctx(self, cm_or_coro):
+        """Возвращает асинхронный контекстный менеджер независимо от того,
+        вернул ли вызов post уже контекст или корутину (как в моках тестов)."""
+        try:
+            if asyncio.iscoroutine(cm_or_coro):
+                return await cm_or_coro
+            return cm_or_coro
+        except Exception:
+            return cm_or_coro
+
     async def _send_slack(self, alert_data: Dict[str, Any]) -> bool:
         try:
             emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
@@ -60,7 +71,8 @@ class AlertSender:
                 blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"}})
             blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"{datetime.now().isoformat()}"}]})
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
-            async with self.session.post(self.webhooks["slack"], json=payload) as r:
+            cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
+            async with cm as r:
                 return r.status == 200
         except Exception:
             return False
@@ -76,7 +88,8 @@ class AlertSender:
             }
             if alert_data.get("tags"):
                 embed["fields"] = [{"name": k, "value": str(v), "inline": True} for k, v in alert_data["tags"].items()]
-            async with self.session.post(self.webhooks["discord"], json={"embeds": [embed]}) as r:
+            cm = await self._normalize_ctx(self.session.post(self.webhooks["discord"], json={"embeds": [embed]}))
+            async with cm as r:
                 return r.status in (200, 204)
         except Exception:
             return False
@@ -92,7 +105,8 @@ class AlertSender:
                 text += "\n\n" + "\n".join([f"• {k}: {v}" for k, v in alert_data["tags"].items()])
             url = f"https://api.telegram.org/bot{self.webhooks['telegram']}/sendMessage"
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-            async with self.session.post(url, json=payload) as r:
+            cm = await self._normalize_ctx(self.session.post(url, json=payload))
+            async with cm as r:
                 if r.status == 200:
                     data = await r.json()
                     return bool(data.get("ok"))
@@ -106,7 +120,8 @@ class AlertSender:
             api_key = self.settings.get("ALERT_WEBHOOK_API_KEY")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            async with self.session.post(self.settings.get("ALERT_WEBHOOK_URL"), json=alert_data, headers=headers) as r:
+            cm = await self._normalize_ctx(self.session.post(self.settings.get("ALERT_WEBHOOK_URL"), json=alert_data, headers=headers))
+            async with cm as r:
                 return r.status in (200, 201, 202)
         except Exception:
             return False

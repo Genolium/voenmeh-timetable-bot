@@ -24,6 +24,11 @@ class ImageCacheManager:
         self.cache_ttl_hours = cache_ttl_hours
         self.cache_dir = MEDIA_PATH / "generated"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        # Порог ограничения размера файлового кэша (МБ)
+        try:
+            self.max_cache_mb = int(os.getenv('IMAGE_CACHE_MAX_MB', '500'))
+        except Exception:
+            self.max_cache_mb = 500
         
         # Проверяем, что Redis-клиент правильный
         if not hasattr(self.redis, 'get') or not hasattr(self.redis, 'set'):
@@ -33,6 +38,7 @@ class ImageCacheManager:
         self.cache_metadata_key = "image_cache:metadata"
         self.cache_data_prefix = "image_cache:data:"
         self.cache_metadata_prefix = "image_cache:meta:"
+        self.redis_counter_key = "image_cache:file_count"
         
         logger.info(f"ImageCacheManager initialized with TTL: {cache_ttl_hours}h, cache_dir: {self.cache_dir}")
     
@@ -137,28 +143,20 @@ class ImageCacheManager:
         try:
             success_count = 0
             
-            # Сохраняем в Redis
+            # В Redis сохраняем только метаданные (экономим RAM)
             try:
-                redis_key = f"{self.cache_data_prefix}{cache_key}"
-                await self.redis.set(redis_key, image_bytes, ex=self.cache_ttl_hours * 3600)
-                
-                # Сохраняем метаданные
-                if metadata:
-                    meta_key = f"{self.cache_metadata_prefix}{cache_key}"
-                    meta_data = {
-                        **metadata,
-                        "cached_at": datetime.now().isoformat(),
-                        "size_bytes": len(image_bytes),
-                        "ttl_hours": self.cache_ttl_hours
-                    }
-                    await self.redis.set(meta_key, json.dumps(meta_data), ex=self.cache_ttl_hours * 3600)
-                
+                meta_key = f"{self.cache_metadata_prefix}{cache_key}"
+                meta_data = {
+                    **(metadata or {}),
+                    "cached_at": datetime.now().isoformat(),
+                    "size_bytes": len(image_bytes),
+                    "ttl_hours": self.cache_ttl_hours
+                }
+                await self.redis.set(meta_key, json.dumps(meta_data), ex=self.cache_ttl_hours * 3600)
                 success_count += 1
-                logger.info(f"Saved {cache_key} to Redis cache ({len(image_bytes)} bytes)")
                 IMAGE_CACHE_OPERATIONS.labels(operation="redis_store").inc()
-                
             except Exception as e:
-                logger.warning(f"Failed to save {cache_key} to Redis: {e}")
+                logger.warning(f"Failed to save metadata for {cache_key} to Redis: {e}")
             
             # Сохраняем в файловую систему
             try:
@@ -173,8 +171,13 @@ class ImageCacheManager:
             except Exception as e:
                 logger.warning(f"Failed to save {cache_key} to file: {e}")
             
-            # Обновляем метрики размера кэша
+            # Обновляем счетчик и метрики, применяем лимиты
+            try:
+                await self._increment_counter()
+            except Exception:
+                pass
             await self._update_cache_size_metrics()
+            await self._enforce_limits()
             
             return success_count > 0
             
@@ -268,6 +271,10 @@ class ImageCacheManager:
             
             # Обновляем метрики
             await self._update_cache_size_metrics()
+            try:
+                await self._decrement_counter()
+            except Exception:
+                pass
             
             return success_count > 0
             
@@ -321,9 +328,20 @@ class ImageCacheManager:
             # Подсчитываем размер файлов
             total_size = sum(f.stat().st_size for f in self.cache_dir.glob("*.png") if f.is_file())
             
-            # Получаем количество ключей в Redis
-            redis_keys = await self.redis.keys(f"{self.cache_data_prefix}*")
-            redis_count = len(redis_keys)
+            # Получаем количество ключей в Redis из счетчика с fallback на scan
+            redis_count = 0
+            try:
+                cnt = await self.redis.get(self.redis_counter_key)
+                if cnt is not None:
+                    try:
+                        redis_count = int(cnt if isinstance(cnt, str) else cnt.decode())
+                    except Exception:
+                        redis_count = 0
+                else:
+                    async for _ in self.redis.scan_iter(f"{self.cache_data_prefix}*"):
+                        redis_count += 1
+            except Exception as e:
+                logger.warning(f"Error getting Redis cache count: {e}")
             
             return {
                 "file_count": file_count,
@@ -345,6 +363,42 @@ class ImageCacheManager:
             IMAGE_CACHE_SIZE.labels(cache_type="size_mb").set(stats.get("file_size_mb", 0))
         except Exception as e:
             logger.warning(f"Failed to update cache size metrics: {e}")
+
+    async def _enforce_limits(self):
+        """Удаляет самые старые файлы при превышении лимита размера кэша."""
+        try:
+            max_bytes = self.max_cache_mb * 1024 * 1024
+            files = [f for f in self.cache_dir.glob("*.png") if f.is_file()]
+            total_size = sum(f.stat().st_size for f in files)
+            if total_size <= max_bytes:
+                return
+            # Сортируем по времени модификации (старые сначала)
+            files_sorted = sorted(files, key=lambda p: p.stat().st_mtime)
+            for fpath in files_sorted:
+                try:
+                    size = fpath.stat().st_size
+                    fpath.unlink()
+                    total_size -= size
+                    IMAGE_CACHE_OPERATIONS.labels(operation="cleanup").inc()
+                    if total_size <= max_bytes:
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to remove file during limit enforcement: {e}")
+            await self._update_cache_size_metrics()
+        except Exception as e:
+            logger.warning(f"Error enforcing cache size limits: {e}")
+
+    async def _increment_counter(self):
+        try:
+            await self.redis.incr(self.redis_counter_key)
+        except Exception:
+            pass
+
+    async def _decrement_counter(self):
+        try:
+            await self.redis.decr(self.redis_counter_key)
+        except Exception:
+            pass
     
     def get_file_path(self, cache_key: str) -> Path:
         """

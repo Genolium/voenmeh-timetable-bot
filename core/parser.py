@@ -52,9 +52,17 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                         await sender.send({"severity": "critical", "summary": "XML fetch failed after retries"})
                     raise
         
-        xml_data = xml_bytes.decode('utf-16').strip()
-        current_hash = hashlib.md5(xml_bytes).hexdigest()
-        root = ET.fromstring(xml_data)
+        # Ограничиваем общее время обработки
+        try:
+            import asyncio
+            async with asyncio.timeout(30):
+                xml_data = xml_bytes.decode('utf-16').strip()
+                current_hash = hashlib.md5(xml_bytes).hexdigest()
+                root = ET.fromstring(xml_data)
+        except Exception as e:
+            ERRORS_TOTAL.labels(source='parser').inc()
+            logging.error(f"XML parsing timed out or failed: {e}")
+            return None
         
         all_schedules = {}
         teachers_index = {}

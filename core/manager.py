@@ -82,32 +82,42 @@ class TimetableManager:
     def get_week_type(self, target_date: date) -> tuple[str, str] | None:
         """
         Определяет тип недели ('odd'/'even') для указанной даты.
+        Использует ту же логику, что и get_academic_week_type.
         """
         if not self.semester_start_date:
             return None
         if target_date < self.semester_start_date:
             return ('odd', 'Нечетная (до начала семестра)')
 
+        # Используем ту же логику, что и в get_academic_week_type
         target_weekday = target_date.weekday()
         target_week_monday = target_date - timedelta(days=target_weekday)
         
-        days_to_target_week = (target_week_monday - self.semester_start_date).days
+        # Находим понедельник недели начала семестра
+        semester_start_weekday = self.semester_start_date.weekday()
+        start_monday = self.semester_start_date - timedelta(days=semester_start_weekday)
         
-        if days_to_target_week < 0:
-            week_number = 1
-        else:
-            week_number = (days_to_target_week // 7) + 1
+        # Вычисляем количество дней от понедельника начала семестра до понедельника целевой недели
+        days_to_target_week = (target_week_monday - start_monday).days
+
+        week_number = days_to_target_week // 7
+
+        # Определяем тип недели (четная для четных week_numbers)
+        is_even = (week_number % 2) == 0
+
+        week_type = 'even' if is_even else 'odd'
+        week_name = 'Четная' if is_even else 'Нечетная'
         
-        return ('odd', 'Нечетная') if week_number % 2 == 1 else ('even', 'Четная')
+        return (week_type, week_name)
 
     async def get_academic_week_type(self, target_date: date) -> tuple[str, str]:
         """
         Определяет тип недели на основе академического календаря.
         
         Правила:
-        - 1 сентября всегда нечетная неделя
-        - Первая неделя зимнего семестра (обычно январь) - нечетная
-        - Недели чередуются: нечетная -> четная -> нечетная -> четная
+        - 1 сентября всегда четная неделя (первая неделя семестра)
+        - Первая неделя зимнего семестра (обычно январь) - четная
+        - Недели чередуются: четная -> нечетная -> четная -> нечетная
         - Все дни одной календарной недели (понедельник-воскресенье) имеют одинаковый тип
         """
         year = target_date.year
@@ -131,13 +141,13 @@ class TimetableManager:
         if fall_semester_start is None:
             fall_semester_start = date(year, 9, 1)  # 1 сентября
         if spring_semester_start is None:
-            spring_semester_start = date(year + 1, 2, 9)  # 9 февраля следующего года
+            spring_semester_start = date(year + 1, 2, 1)  # 1 февраля следующего года
         
         # Если дата до начала осеннего семестра, используем предыдущий год
         if target_date < fall_semester_start:
             year -= 1
             fall_semester_start = date(year, 9, 1)
-            spring_semester_start = date(year + 1, 2, 9)
+            spring_semester_start = date(year + 1, 2, 1)
         
         # Определяем, в каком семестре мы находимся
         if fall_semester_start <= target_date < spring_semester_start:
@@ -156,27 +166,25 @@ class TimetableManager:
         # Для целей расписания важно, чтобы дни одной календарной недели были одинаковыми,
         # но академические недели считаются от даты начала семестра
         
+        # Находим понедельник недели начала семестра
+        semester_start_weekday = semester_start.weekday()
+        start_monday = semester_start - timedelta(days=semester_start_weekday)
+        
         # Находим понедельник недели, в которую попадает целевая дата
         target_weekday = target_date.weekday()
         target_week_monday = target_date - timedelta(days=target_weekday)
         
-        # Вычисляем количество дней от начала семестра до понедельника недели с целевой датой
-        days_to_target_week = (target_week_monday - semester_start).days
-        
-        # Если целевая неделя начинается до начала семестра, 
-        # это означает, что семестр начинается в середине недели
-        if days_to_target_week < 0:
-            # Семестр начинается в этой же неделе, считаем это первой неделей
-            week_number = 1
-        else:
-            # Обычный случай: считаем недели от начала семестра
-            week_number = (days_to_target_week // 7) + 1
-        
-        # Определяем тип недели (нечетная = 1, 3, 5...)
-        is_odd = week_number % 2 == 1
-        
-        week_type = 'odd' if is_odd else 'even'
-        week_name = 'Нечетная' if is_odd else 'Четная'
+        # Вычисляем количество дней от понедельника начала семестра до понедельника целевой недели
+        days_to_target_week = (target_week_monday - start_monday).days
+
+        week_number = days_to_target_week // 7
+
+        # Определяем тип недели (четная для четных week_numbers)
+        # week_number = 0 означает первую неделю семестра (четная)
+        is_even = (week_number % 2) == 0
+
+        week_type = 'even' if is_even else 'odd'
+        week_name = 'Четная' if is_even else 'Нечетная'
         
         return (week_type, week_name)
 

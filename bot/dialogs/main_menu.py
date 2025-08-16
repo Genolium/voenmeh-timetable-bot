@@ -2,6 +2,7 @@ import random
 from thefuzz import process
 
 from aiogram.types import Message, CallbackQuery
+import re
 from aiogram_dialog import Dialog, Window, DialogManager, StartMode
 from aiogram_dialog.widgets.text import Const, Format
 from aiogram_dialog.widgets.input import MessageInput
@@ -29,7 +30,12 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs):
 
 
 async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager):
-    group_name = message.text.upper()
+    # Нормализуем ввод: оставляем только цифры/буквы, ограничиваем длину
+    raw = (message.text or "").upper()
+    group_name = re.sub(r"[^А-ЯA-Z0-9]", "", raw)[:20]
+    if not group_name:
+        await message.answer("❌ Некорректный ввод. Введите номер группы, например: <b>О735Б</b>.")
+        return
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
     all_groups = [g for g in timetable_manager._schedules.keys() if not g.startswith('__')]
 

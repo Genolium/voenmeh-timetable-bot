@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from redis.asyncio.client import Redis
 
-from bot.tasks import send_lesson_reminder_task, send_message_task, generate_week_image_task
+from bot.tasks import send_lesson_reminder_task, send_message_task, generate_week_image_task, warmup_renderer
 from bot.text_formatters import (
     format_schedule_text, generate_evening_intro, generate_morning_intro, get_footer_with_promo
 )
@@ -237,7 +237,7 @@ async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_m
         if not top_groups:
             return
         today = datetime.now(MOSCOW_TZ).date()
-        week_key_name = timetable_manager.get_week_type(today)
+        week_key_name = await timetable_manager.get_academic_week_type(today)
         if not week_key_name:
             return
         week_key, week_name = week_key_name
@@ -380,7 +380,9 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
         
         # Параллелим отправку задач по неделям и группам в окне ограниченного пула
         from asyncio import Semaphore, gather, create_task
-        semaphore = Semaphore(20)  # ограничиваем одновременную активность для плавности нагрузки
+        import os
+        pool_size = int(os.getenv('GEN_ENQUEUE_POOL', '20'))
+        semaphore = Semaphore(pool_size)  # ограничиваем одновременную активность для плавности нагрузки
 
         async def enqueue_one(group: str, week_key: str, week_name: str):
             async with semaphore:
@@ -414,6 +416,13 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                     from bot.dialogs.admin_menu import active_generations
                     if admin_id in active_generations and active_generations[admin_id].get("cancelled", False):
                         logger.info(f"⏹️ Генерация отменена пользователем {admin_id}")
+                        # Чистим флаг активной генерации
+                        try:
+                            from bot.dialogs.admin_menu import active_generations
+                            if admin_id in active_generations:
+                                del active_generations[admin_id]
+                        except Exception:
+                            pass
                         return
                 tasks.append(create_task(enqueue_one(group, week_key, week_name)))
 
@@ -463,7 +472,6 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                 
                 # После завершения отправки задач – принудительно обновим метрики размера кэша
                 try:
-                    from core.image_cache_manager import ImageCacheManager
                     cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)
                     stats = await cache_manager.get_cache_stats()
                     from core.metrics import IMAGE_CACHE_SIZE
@@ -757,6 +765,11 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     scheduler.add_job(backup_current_schedule, 'cron', hour='*/6', args=[redis_client])
     scheduler.add_job(auto_backup, 'cron', hour=2, args=[redis_client])
     scheduler.add_job(handle_graduated_groups, 'interval', minutes=10, args=[user_data_manager, manager, redis_client]) # Добавляем задачу для обработки выпустившихся групп
+    # Тёплый старт рендера при запуске бота
+    try:
+        warmup_renderer.send()
+    except Exception:
+        pass
     
     # Генерация полного расписания раз в неделю в 4 утра в воскресенье
     scheduler.add_job(generate_full_schedule_images, 'cron', day_of_week='sun', hour=4, minute=0, args=[user_data_manager, manager, redis_client])

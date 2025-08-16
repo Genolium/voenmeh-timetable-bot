@@ -23,7 +23,24 @@ class ImageService:
     def __init__(self, cache_manager: ImageCacheManager, bot: Bot):
         self.cache_manager = cache_manager
         self.bot = bot
-        self.generation_locks = {}  # Локальные блокировки для генерации
+        # Локальные блокировки для генерации, сегментированные по event loop
+        # { loop_id: { cache_key: asyncio.Lock } }
+        self._locks_by_loop: Dict[int, Dict[str, asyncio.Lock]] = {}
+
+    def _loop_key(self) -> int:
+        return id(asyncio.get_running_loop())
+
+    def _get_lock(self, cache_key: str) -> asyncio.Lock:
+        loop_id = self._loop_key()
+        locks_for_loop = self._locks_by_loop.get(loop_id)
+        if locks_for_loop is None:
+            locks_for_loop = {}
+            self._locks_by_loop[loop_id] = locks_for_loop
+        lock = locks_for_loop.get(cache_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            locks_for_loop[cache_key] = lock
+        return lock
     
     async def get_or_generate_week_image(
         self,
@@ -109,11 +126,8 @@ class ImageService:
         """
         start_time = datetime.now()
         
-        # Создаем лок для предотвращения дублирования генерации
-        if cache_key not in self.generation_locks:
-            self.generation_locks[cache_key] = asyncio.Lock()
-        
-        async with self.generation_locks[cache_key]:
+        # Берем лок, привязанный к текущему event loop и cache_key, чтобы избежать конфликтов
+        async with self._get_lock(cache_key):
             # Проверяем кэш еще раз после получения лока
             if await self.cache_manager.is_cached(cache_key):
                 logger.info(f"✅ Another process generated {cache_key} while waiting")
@@ -240,17 +254,28 @@ class ImageService:
                     return True
                     
                 except Exception as e:
+                    # Фолбэк при сетевых таймаутах и несущественных ошибках: отправим как новое
                     if "message is not modified" not in str(e).lower():
                         logger.warning(f"Failed to edit message for user {user_id}: {e}")
                         # Продолжаем с отправкой нового сообщения
             
             # Отправляем новое сообщение
-            await self.bot.send_photo(
-                chat_id=user_id,
-                photo=photo,
-                caption=final_caption or "",
-                reply_markup=kb
-            )
+            try:
+                await self.bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=final_caption or "",
+                    reply_markup=kb
+                )
+            except Exception as e:
+                # Если не удалось отправить фото — отправим текст и ссылку на оригинал (если есть)
+                logger.warning(f"Photo send failed for user {user_id}: {e}")
+                fallback_text = (final_caption or "") + "\n\n⚠️ Не удалось отправить изображение. Попробуйте позже."
+                try:
+                    await self.bot.send_message(chat_id=user_id, text=fallback_text, parse_mode="HTML")
+                except Exception:
+                    pass
+                return False
             
             logger.info(f"✅ Image sent to user {user_id}")
             return True

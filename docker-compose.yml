@@ -37,7 +37,14 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    command: python -m dramatiq --processes 3 bot.tasks 
+    command: python -m dramatiq --processes 1 --threads 4 bot.tasks
+    environment:
+      - RENDER_CONCURRENCY=4
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import asyncio; from core.image_generator import renderer_healthcheck; print(asyncio.run(renderer_healthcheck()))' | grep True"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   db:
     image: postgres:15-alpine

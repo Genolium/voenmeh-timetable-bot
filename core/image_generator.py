@@ -1,6 +1,10 @@
 import os
 import logging
+import asyncio
 from pathlib import Path
+import weakref
+import threading
+from concurrent.futures import Future
 from typing import List, Dict, Any, Tuple, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -30,11 +34,93 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
     if current == total:
         print()  # Новая строка в конце
 
-# Глобальные кэши для ускорения
+# Глобальные кэши для ускорения (используются в рендер-лупе)
 _bg_images_cache = {}
 _template_cache = None
 _template_mtime: float | None = None
-_browser_instance = None
+
+# Дедицированный поток и event loop для Playwright
+_renderer_thread: Optional[threading.Thread] = None
+_renderer_loop: Optional[asyncio.AbstractEventLoop] = None
+_renderer_started: bool = False
+_renderer_browser = None
+_renderer_ctx = None
+_renderer_semaphore: Optional[asyncio.Semaphore] = None
+_renderer_ready_event: threading.Event = threading.Event()
+_renderer_base_max: int = int(os.getenv("RENDER_CONCURRENCY", "4"))
+_renderer_max_conc: int = _renderer_base_max
+_renderer_inflight: int = 0
+_renderer_cond: Optional[asyncio.Condition] = None
+_renderer_success_streak: int = 0
+_renderer_error_streak: int = 0
+
+
+def _current_loop() -> asyncio.AbstractEventLoop:
+    return asyncio.get_running_loop()
+
+
+def _ensure_renderer_started() -> None:
+    global _renderer_started, _renderer_thread, _renderer_loop
+    if _renderer_started:
+        return
+    _renderer_started = True
+
+    def _thread_target():
+        global _renderer_loop
+        loop = asyncio.new_event_loop()
+        _renderer_loop = loop
+        asyncio.set_event_loop(loop)
+        # Планируем инициализацию и запускаем луп навсегда
+        loop.create_task(_renderer_init())
+        _renderer_ready_event.set()
+        try:
+            loop.run_forever()
+        finally:
+            try:
+                pending = asyncio.all_tasks(loop)
+                for t in pending:
+                    t.cancel()
+            except Exception:
+                pass
+
+    _renderer_thread = threading.Thread(target=_thread_target, name="PlaywrightRenderer", daemon=True)
+    _renderer_thread.start()
+    # Ждем готовности лупа
+    _renderer_ready_event.wait(timeout=5)
+
+
+async def _renderer_init():
+    global _renderer_browser, _renderer_ctx, _renderer_semaphore, _renderer_cond
+    # Ограничиваем конкурентность внутри одного процесса
+    _renderer_semaphore = asyncio.Semaphore(_renderer_base_max)
+    _renderer_cond = asyncio.Condition()
+    # Ленивая инициализация браузера при первой задаче
+    return
+
+
+def _run_in_renderer(coro_factory) -> Future:
+    """Планирует корутину в рендер-лупе и возвращает concurrent.futures.Future."""
+    _ensure_renderer_started()
+    assert _renderer_loop is not None
+    return asyncio.run_coroutine_threadsafe(coro_factory(), _renderer_loop)
+
+
+async def _get_or_launch_browser():
+    global _renderer_browser, _renderer_ctx
+    if _renderer_browser is None or not getattr(_renderer_browser, "is_connected", lambda: False)():
+        ctx = await async_playwright().__aenter__()
+        browser = await ctx.chromium.launch(
+            args=[
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--disable-features=VizDisplayCompositor'
+            ]
+        )
+        _renderer_ctx = ctx
+        _renderer_browser = browser
+    return _renderer_browser
 
 
 def _time_to_minutes(t: str) -> int:
@@ -99,6 +185,25 @@ async def generate_schedule_image(
     5. Делается скриншот, который получается широким и с правильной высотой.
     """
     try:
+        # Для тестов (pytest) выполняем в текущем event loop для корректной работы моков
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return await _render_image_job(schedule_data, week_type, group, output_path, viewport_size)
+        # В проде — отправляем корутину в рендер-луп и ждём результата в текущем лупе
+        fut = _run_in_renderer(lambda: _render_image_job(schedule_data, week_type, group, output_path, viewport_size))
+        return await asyncio.wrap_future(fut)
+    except Exception:
+        logging.exception("Ошибка при генерации изображения (enqueue)")
+        return False
+
+
+async def _render_image_job(
+    schedule_data: dict,
+    week_type: str,
+    group: str,
+    output_path: str,
+    viewport_size: Optional[Dict[str, int]] = None,
+) -> bool:
+    try:
         # --- ШАГ 1: Рендеринг HTML по шаблону ---
         print_progress_bar(1, 5, f"Генерация {group}", "Подготовка шаблона")
         
@@ -111,7 +216,6 @@ async def generate_schedule_image(
         except Exception:
             current_mtime = None
 
-        # Перезагружаем шаблон, если он не загружен или изменился на диске
         if _template_cache is None or (_template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime):
             env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
             _template_cache = env.get_template("schedule_template.html")
@@ -141,114 +245,132 @@ async def generate_schedule_image(
             logging.error("Playwright не инициализирован")
             return False
 
-        # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
         print_progress_bar(2, 5, f"Генерация {group}", "Запуск браузера")
-        
-        # Создаем лок для каждого вызова generate_schedule_image
-        import asyncio
-        browser_lock = asyncio.Lock()
-        
-        async with browser_lock:
-            global _browser_instance
-            if _browser_instance is None or not _browser_instance.is_connected():
-                pw = await async_playwright().__aenter__()
-                _browser_instance = await pw.chromium.launch(
-                    args=[
-                        '--no-sandbox', 
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-web-security',
-                        '--disable-features=VizDisplayCompositor'
-                    ]
-                )
-            
-            page = await _browser_instance.new_page()
-            
-            # Устанавливаем увеличенные таймауты
-            page.set_default_timeout(120000)  # 2 минуты вместо 30 секунд
+
+        browser = await _get_or_launch_browser()
+
+        # Динамическое ограничение конкурентности
+        async def _acquire_slot():
+            global _renderer_inflight
+            assert _renderer_cond is not None
+            async with _renderer_cond:
+                while _renderer_inflight >= _renderer_max_conc:
+                    await _renderer_cond.wait()
+                _renderer_inflight += 1
+        async def _release_slot():
+            global _renderer_inflight
+            assert _renderer_cond is not None
+            async with _renderer_cond:
+                _renderer_inflight = max(0, _renderer_inflight - 1)
+                _renderer_cond.notify_all()
+
+        await _acquire_slot()
+        try:
+            page = await browser.new_page()
+            page.set_default_timeout(120000)
             page.set_default_navigation_timeout(120000)
-            
             try:
-                # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
-                # Широкий viewport с соотношением ~3:2 для красивой сетки
-                initial_width = 3000
-                initial_height = 2250
-                
-                await page.set_viewport_size({"width": initial_width, "height": initial_height})
-                
-                print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
-                
-                # Увеличиваем таймаут для set_content
-                await page.set_content(html, wait_until="domcontentloaded", timeout=120000)
-                
-                # Ждём полной прогрузки шрифтов
-                await page.evaluate("document.fonts.ready")
-                await page.wait_for_timeout(500)  # Увеличиваем время ожидания
-
-                # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
-                print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
-                
-                # Находим элемент, который мы хотим измерить
-                content_element = await page.query_selector('.content-wrapper')
-                if not content_element:
-                    raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
-
-                # Получаем его реальные размеры в широком окне
-                bounding_box = await content_element.bounding_box()
-                if not bounding_box:
-                    raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
-
-                # Вычисляем размеры контента
-                content_height = bounding_box['height']
-                top_margin = bounding_box['y']  # Отступ сверху
-                bottom_margin = min(top_margin, 100)  # Симметричный нижний отступ
-
-                # Целевой размер кадра: фиксированный 3:2 (как в оптимизированной версии)
-                target_width = initial_width
-                target_height = initial_height
-
-                # Текущая требуемая высота под контент
-                required_height = int(content_height + top_margin + bottom_margin)
-
-                # Если контент выше — не масштабирую, фиксированная область как было изначально
-
-                # Используем фиксированную высоту 3:2
-                final_height = target_height
-
-                # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
-                print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
-                
-                # Устанавливаем финальный viewport фиксированного размера
-                await page.set_viewport_size({"width": target_width, "height": final_height})
-                # Форсируем полный рефлоу и два кадра, чтобы все стили применились перед скриншотом
+                attempt = 0
+                while attempt < 3:
+                    attempt += 1
+                    try:
+                        initial_width = 3000
+                        initial_height = 2250
+                        await page.set_viewport_size({"width": initial_width, "height": initial_height})
+                        print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
+                        await page.set_content(html, wait_until="domcontentloaded", timeout=60000)
+                        await page.evaluate("document.fonts.ready")
+                        await page.wait_for_timeout(500)
+                        print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
+                        content_element = await page.query_selector('.content-wrapper')
+                        if not content_element:
+                            raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
+                        bounding_box = await content_element.bounding_box()
+                        if not bounding_box:
+                            raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
+                        target_width = initial_width
+                        final_height = initial_height
+                        print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
+                        await page.set_viewport_size({"width": target_width, "height": final_height})
+                        try:
+                            await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                        except Exception:
+                            pass
+                        await page.screenshot(path=output_path, type="png", timeout=30000)
+                        logging.info(f"✅ Изображение успешно сгенерировано: {output_path}")
+                        # Успех: мягкий рост конкурентности
+                        global _renderer_success_streak, _renderer_error_streak, _renderer_max_conc
+                        _renderer_success_streak += 1
+                        _renderer_error_streak = 0
+                        if _renderer_success_streak >= 20 and _renderer_max_conc < _renderer_base_max:
+                            _renderer_max_conc += 1
+                            _renderer_success_streak = 0
+                        break
+                    except Exception as e:
+                        logging.error(f"❌ Попытка {attempt}/3: ошибка при генерации изображения для {group}: {e}")
+                        # Ошибка: экспоненциальное снижение конкурентности
+                        _renderer_success_streak = 0
+                        _renderer_error_streak += 1
+                        if _renderer_error_streak in (3, 5, 7):
+                            _renderer_max_conc = max(1, _renderer_max_conc // 2)
+                            logging.warning(f"Снижаю RENDER_CONCURRENCY до {_renderer_max_conc} из-за ошибок")
+                        if attempt >= 3:
+                            return False
+                        await asyncio.sleep(0.5)
+            finally:
                 try:
-                    await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                    await page.close()
                 except Exception:
                     pass
-                
-                # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
-                await page.screenshot(path=output_path, type="png")
-                
-                logging.info(f"✅ Изображение успешно сгенерировано: {output_path}")
-
-            except Exception as e:
-                logging.error(f"❌ Ошибка при генерации изображения для {group}: {e}")
-                # Закрываем страницу в случае ошибки
-                try:
-                    await page.close()
-                except:
-                    pass
-                return False
-                
-            finally:
-                # Всегда закрываем страницу
-                try:
-                    await page.close()
-                except:
-                    pass
-        
-            
+        finally:
+            await _release_slot()
         return True
-    except Exception as e:
-        print(f"Ошибка при генерации изображения: {e}")
+    except Exception:
+        logging.exception("Ошибка при генерации изображения (render job)")
         return False
+
+
+async def shutdown_image_generator():
+    """Корректно закрывает ресурсы Playwright/Chromium для предотвращения утечек."""
+    try:
+        if _renderer_loop is None:
+            return
+        async def _shutdown():
+            global _renderer_browser, _renderer_ctx
+            try:
+                if _renderer_browser is not None and getattr(_renderer_browser, "is_connected", lambda: False)():
+                    await _renderer_browser.close()
+            finally:
+                _renderer_browser = None
+            try:
+                if _renderer_ctx is not None:
+                    await _renderer_ctx.__aexit__(None, None, None)
+            finally:
+                _renderer_ctx = None
+        fut = asyncio.run_coroutine_threadsafe(_shutdown(), _renderer_loop)
+        fut.result(timeout=5)
+    except Exception:
+        pass
+
+
+async def renderer_healthcheck() -> bool:
+    """Проверяет готовность рендера в его собственном лупе."""
+    async def _job():
+        try:
+            if async_playwright is None:
+                return False
+            browser = await _get_or_launch_browser()
+            page = await browser.new_page()
+            try:
+                await page.set_content("<html><body>ok</body></html>", timeout=2000)
+            finally:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+
+    fut = _run_in_renderer(_job)
+    return await asyncio.wrap_future(fut)

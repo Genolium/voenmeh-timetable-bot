@@ -5,6 +5,8 @@ import sys
 import time
 
 from aiogram import Bot, Dispatcher, F
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiohttp import ClientTimeout
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.storage.redis import RedisStorage
@@ -22,6 +24,7 @@ from core.alert_webhook import run_alert_webhook_server
 from core.business_alerts import start_business_monitoring
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
+from core.image_generator import shutdown_image_generator
 
 # --- Импорты бота ---
 from bot.handlers.inline_handlers import inline_query_handler
@@ -66,8 +69,12 @@ async def set_bot_commands(bot: Bot):
         BotCommand(command="about", description="📒 О боте"),
         BotCommand(command="feedback", description="🤝 Обратная связь"),
     ]
-    await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-    logging.info("Установлены стандартные команды для всех пользователей.")
+    try:
+        await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+        logging.info("Установлены стандартные команды для всех пользователей.")
+    except Exception as e:
+        logging.error(f"Не удалось установить стандартные команды: {e}")
+        return
 
     if ADMIN_IDS:
         admin_commands = user_commands + [
@@ -98,7 +105,17 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
         await dialog_manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
 
 async def about_command_handler(message: Message, dialog_manager: DialogManager):
-    await dialog_manager.start(About.page_1, mode=StartMode.RESET_STACK)
+    try:
+        await dialog_manager.start(About.page_1, mode=StartMode.RESET_STACK)
+    except Exception as e:
+        logging.error(f"Не удалось открыть раздел 'О боте': {e}")
+        try:
+            await message.answer(
+                "ℹ️ Раздел 'О боте' временно недоступен из-за сетевой ошибки отправки медиа.\n"
+                "Повторите попытку позже или посетите канал: https://t.me/voenmeh404"
+            )
+        except Exception:
+            pass
 
 async def feedback_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
@@ -127,7 +144,16 @@ class SimpleRateLimiter:
         key = f"rate_limit:{user_id}"
         history = await self.redis.lrange(key, 0, -1)
         now = time.monotonic()
-        history = [t for t in history if now - float(t) < 1.0]
+        # Безопасно парсим значения из Redis (могут быть bytes/str)
+        parsed = []
+        for t in (history or []):
+            try:
+                val = float(t if isinstance(t, (int, float, str)) else t.decode())
+                if now - val < 1.0:
+                    parsed.append(val)
+            except Exception:
+                continue
+        history = parsed
         if len(history) >= self._max_per_sec:
             # Вместо молча дропаем событие, отвечаем пользователю
             if hasattr(event, 'answer'):
@@ -140,10 +166,13 @@ class SimpleRateLimiter:
         await self.redis.expire(key, 2)
         return await handler(event, data)
 
-async def error_handler(update, exception):
-    """Обработчик глобальных ошибок aiogram."""
-    logging.error(f"Ошибка aiogram: {exception}")
-    return True
+async def error_handler(event_or_exception=None, exception: Exception | None = None):
+    """Гибкий обработчик глобальных ошибок aiogram (совместим с разными сигнатурами)."""
+    exc = exception if exception is not None else event_or_exception
+    try:
+        logging.error(f"Ошибка aiogram: {exc}", exc_info=True)
+    finally:
+        return True
 
 async def main():
     setup_logging()  # Вызываем настройку логирования
@@ -169,7 +198,10 @@ async def main():
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))
     default_properties = DefaultBotProperties(parse_mode="HTML")
-    bot = Bot(token=bot_token or "", default=default_properties)
+    # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
+    # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
+    http_session = AiohttpSession(timeout=180)
+    bot = Bot(token=bot_token or "", default=default_properties, session=http_session)
     dp = Dispatcher(storage=storage)
 
     scheduler = setup_scheduler(
@@ -186,7 +218,7 @@ async def main():
     dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
     dp.update.middleware(SimpleRateLimiter(max_per_sec=10, redis=redis_client))  # анти-флуд на входящие события
     dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler}))
-    dp.errors.register(error_handler)  # Define async def error_handler(update, exception): logging.error(...); return True
+    dp.errors.register(error_handler)
 
     # Регистрация диалогов и хэндлеров
     all_dialogs = [
@@ -211,6 +243,13 @@ async def main():
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
     try:
+        # На всякий случай удаляем webhook, чтобы polling получал апдейты
+        try:
+            await bot.delete_webhook(drop_pending_updates=True)
+            logging.info("Webhook удален (drop_pending_updates=True)")
+        except Exception as e:
+            logging.error(f"Не удалось удалить webhook: {e}")
+
         await set_bot_commands(bot)
         scheduler.start()
 
@@ -222,18 +261,40 @@ async def main():
                     except Exception:
                         pass
 
-        await asyncio.gather(
-            dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
-            run_metrics_server(),
-            run_alert_webhook_server(bot, ADMIN_IDS),
-            start_business_monitoring(),
-            _notify_admins_start(),
-        )
+        # Сначала запускаем фоновые сервисы, затем начинаем polling
+        logging.info("Starting background services...")
+        asyncio.create_task(run_metrics_server())
+        asyncio.create_task(run_alert_webhook_server(bot, ADMIN_IDS))
+        asyncio.create_task(start_business_monitoring())
+        asyncio.create_task(_notify_admins_start())
+
+        # Запускаем бота отдельно для лучшего контроля
+        logging.info("Starting bot polling...")
+        try:
+            await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        except Exception as e:
+            logging.error(f"Bot polling failed: {e}")
+            raise
     finally:
-        scheduler.shutdown()
-        await dp.storage.close()
-        await bot.session.close()
-        logging.info("Планировщик и бот остановлены.")
+        # Корректно останавливаем планировщик и ресурсы
+        try:
+            scheduler.shutdown()
+        except Exception:
+            pass
+        try:
+            await dp.storage.close()
+        except Exception:
+            pass
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
+        # Закрываем Playwright/Chromium, чтобы избежать утечек
+        try:
+            await shutdown_image_generator()
+        except Exception:
+            pass
+        logging.info("Планировщик, бот и ресурсы рендеринга изображений остановлены.")
 
 if __name__ == '__main__':
     try:

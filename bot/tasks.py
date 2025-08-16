@@ -16,7 +16,7 @@ from redis.asyncio import Redis
 import redis
 
 from bot.text_formatters import generate_reminder_text
-from core.image_generator import generate_schedule_image
+from core.image_generator import generate_schedule_image, shutdown_image_generator, renderer_healthcheck
 from core.config import MEDIA_PATH
 from bot.utils.image_compression import get_telegram_safe_image_path
 import os
@@ -37,6 +37,21 @@ dramatiq.set_broker(redis_broker)
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
+
+# --- Warm-up actor: поднимает рендерер и прогревает шаблоны/фоновые картинки ---
+@dramatiq.actor(queue_name="high")
+def warmup_renderer():
+    async def _run():
+        try:
+            # Простой healthcheck поднимет браузер лениво
+            ok = await renderer_healthcheck()
+            if not ok:
+                # Попробуем перезапуск
+                await shutdown_image_generator()
+                await renderer_healthcheck()
+        except Exception as e:
+            log.warning(f"Warmup renderer failed: {e}")
+    asyncio.run(_run())
 
 # --- Инициализация бота для воркера ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -82,7 +97,7 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
         raise
 
 # --- Акторы ---
-@dramatiq.actor
+@dramatiq.actor(queue_name="high")
 def send_message_task(user_id: int, text: str):
     # Создаем синхронный Redis-клиент для избежания проблем с event loop
     sync_redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
@@ -101,11 +116,11 @@ def send_message_task(user_id: int, text: str):
         except Exception as e:
             logging.warning(f"Retry redis/set for {unique_key}: {e}")
 
-@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
+@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000, queue_name="high")
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
     asyncio.run(_copy_message(user_id, from_chat_id, message_id))
 
-@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
+@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000, queue_name="high")
 def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None, reminder_time_minutes: int | None = None):
     try:
         text_to_send = generate_reminder_text(lesson, reminder_type, break_duration, reminder_time_minutes)
@@ -116,7 +131,7 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
 
 
 # --- Генерация недельного изображения в очереди ---
-@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
+@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000, queue_name="low")
 def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any] = None, week_name: str = None, group: str = None, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None, **kwargs):
     """
     Генерирует изображение расписания в фоновом режиме.
@@ -184,7 +199,8 @@ def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any
                     return getattr(self.sync_client, name)
             
             redis_wrapper = SyncRedisWrapper(sync_redis_client)
-            cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=24)
+            # Увеличиваем TTL до 8 суток (192 часа)
+            cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=192)
             
             # Используем унифицированный сервис изображений
             from core.image_service import ImageService
@@ -219,11 +235,29 @@ def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any
             
         except Exception as e:
             log.error(f"❌ generate_week_image_task failed: {e}")
+            # Healthcheck и авто-реинициализация рендера
+            try:
+                ok = asyncio.run(renderer_healthcheck())
+                if not ok:
+                    log.warning("Renderer healthcheck failed, restarting renderer...")
+                    asyncio.run(shutdown_image_generator())
+                    # После shutdown, следующая задача автоматически поднимет браузер
+            except Exception as he:
+                log.warning(f"Renderer healthcheck/shutdown error: {he}")
             if not is_auto_generation and user_id:
                 await _send_error_message(user_id, "Произошла ошибка при генерации")
     
     # В Dramatiq workers всегда запускаем новый event loop
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        # Закрываем sync redis соединение
+        try:
+            # sync_redis_client виден в замыкании — закроем, если создан
+            if 'sync_redis_client' in locals():
+                sync_redis_client.close()
+        except Exception:
+            pass
 
 async def _send_cached_image(cache_key: str, user_id: int, placeholder_msg_id: int, final_caption: str):
     """Отправляет кэшированное изображение пользователю."""

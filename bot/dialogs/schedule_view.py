@@ -208,7 +208,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     except Exception:
         pass
     
-    week_info = manager.get_week_type(current_date)
+    week_info = await manager.get_academic_week_type(current_date)
     if not week_info:
         return {
             "week_name": "Неизвестно",
@@ -301,7 +301,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
         current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
     except Exception:
         current_date = datetime.now(MOSCOW_TZ).date()
-    week_info = manager_obj.get_week_type(current_date)
+    week_info = await manager_obj.get_academic_week_type(current_date)
     if not week_info:
         try:
             await callback.answer("Неделя не определена", show_alert=True)
