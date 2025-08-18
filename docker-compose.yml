@@ -23,6 +23,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     command: python main.py
     healthcheck:
       test: ["CMD", "pgrep", "python"]
@@ -36,6 +37,7 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
     command: python -m dramatiq --processes 3 bot.tasks 
 
   db:
@@ -64,6 +66,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: voenmeh_rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"  # AMQP port
+      - "15672:15672"  # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -161,15 +182,17 @@ services:
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
       PGADMIN_SERVER_JSON_FILE: '/var/lib/pgadmin/servers.json'
-      PGADMIN_CONFIG_AUTO_CREATE_USER: 'True'
-      PGADMIN_CONFIG_AUTO_CREATE_SERVER: 'True'
     ports:
       - "5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-      - ./pgadmin/pgadmin-startup.sh:/pgadmin-startup.sh
       - ./pgadmin/servers.json.template:/pgadmin4/servers.json.template:ro
-    entrypoint: /bin/sh -c "chmod +x /pgadmin-startup.sh && /pgadmin-startup.sh"
+    entrypoint: >
+      /bin/sh -c "
+        sed 's/$${POSTGRES_DB}/'\"$$POSTGRES_DB\"'/g; s/$${POSTGRES_USER}/'\"$$POSTGRES_USER\"'/g' /pgadmin4/servers.json.template > /var/lib/pgadmin/servers.json &&
+        chmod 644 /var/lib/pgadmin/servers.json &&
+        /entrypoint.sh
+      "
     depends_on:
       db: { condition: service_healthy }
     restart: unless-stopped
@@ -187,3 +210,4 @@ volumes:
   loki_data:       
   promtail_data:
   pgadmin_data:
+  rabbitmq_data:

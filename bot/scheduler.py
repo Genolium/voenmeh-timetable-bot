@@ -472,7 +472,6 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                 
                 # После завершения отправки задач – принудительно обновим метрики размера кэша
                 try:
-                    from core.image_cache_manager import ImageCacheManager
                     cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)
                     stats = await cache_manager.get_cache_stats()
                     from core.metrics import IMAGE_CACHE_SIZE
