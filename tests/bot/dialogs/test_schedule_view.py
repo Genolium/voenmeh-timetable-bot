@@ -49,8 +49,8 @@ class TestScheduleViewHandlers:
         }
         
         manager_obj = mock_manager.middleware_data["manager"]
-        # Мокаем get_week_type как синхронную функцию
-        manager_obj.get_week_type = MagicMock(return_value=("odd", "Нечётная неделя"))
+        # Мокаем get_academic_week_type как асинхронную функцию
+        manager_obj.get_academic_week_type = AsyncMock(return_value=("odd", "Нечётная неделя"))
         
         await on_send_original_file_callback(mock_callback, mock_manager)
         
@@ -69,8 +69,8 @@ class TestScheduleViewHandlers:
         }
         
         manager_obj = mock_manager.middleware_data["manager"]
-        # Мокаем get_week_type как синхронную функцию
-        manager_obj.get_week_type = MagicMock(return_value=("odd", "Нечётная неделя"))
+        # Мокаем get_academic_week_type как асинхронную функцию
+        manager_obj.get_academic_week_type = AsyncMock(return_value=("odd", "Нечётная неделя"))
         
         await on_send_original_file(mock_callback, button, mock_manager)
         
