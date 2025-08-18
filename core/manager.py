@@ -131,7 +131,7 @@ class TimetableManager:
         if fall_semester_start is None:
             fall_semester_start = date(year, 9, 1)  # 1 сентября
         if spring_semester_start is None:
-            spring_semester_start = date(year + 1, 2, 9)  # 9 февраля следующего года
+            spring_semester_start = date(year, 2, 9)  # 9 февраля
         
         # Если дата до начала осеннего семестра, используем предыдущий год
         if target_date < fall_semester_start:
@@ -156,25 +156,22 @@ class TimetableManager:
         # Для целей расписания важно, чтобы дни одной календарной недели были одинаковыми,
         # но академические недели считаются от даты начала семестра
         
+        # Находим понедельник недели начала семестра
+        semester_start_weekday = semester_start.weekday()
+        start_monday = semester_start - timedelta(days=semester_start_weekday)
+        
         # Находим понедельник недели, в которую попадает целевая дата
         target_weekday = target_date.weekday()
         target_week_monday = target_date - timedelta(days=target_weekday)
         
-        # Вычисляем количество дней от начала семестра до понедельника недели с целевой датой
-        days_to_target_week = (target_week_monday - semester_start).days
-        
-        # Если целевая неделя начинается до начала семестра, 
-        # это означает, что семестр начинается в середине недели
-        if days_to_target_week < 0:
-            # Семестр начинается в этой же неделе, считаем это первой неделей
-            week_number = 1
-        else:
-            # Обычный случай: считаем недели от начала семестра
-            week_number = (days_to_target_week // 7) + 1
-        
-        # Определяем тип недели (нечетная = 1, 3, 5...)
-        is_odd = week_number % 2 == 1
-        
+        # Вычисляем количество дней от понедельника начала семестра до понедельника целевой недели
+        days_to_target_week = (target_week_monday - start_monday).days
+
+        week_number = days_to_target_week // 7
+
+        # Определяем тип недели (нечетная для even week_numbers)
+        is_odd = (week_number % 2) == 0
+
         week_type = 'odd' if is_odd else 'even'
         week_name = 'Нечетная' if is_odd else 'Четная'
         

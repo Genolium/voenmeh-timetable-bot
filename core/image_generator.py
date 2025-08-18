@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
 
@@ -35,6 +36,9 @@ _bg_images_cache = {}
 _template_cache = None
 _template_mtime: float | None = None
 _browser_instance = None
+_playwright_ctx = None  # Храним ссылку на контекст Playwright для корректного закрытия
+# Глобальный лок для управления количеством браузерных операций
+_browser_lock = asyncio.Lock()
 
 
 def _time_to_minutes(t: str) -> int:
@@ -144,15 +148,14 @@ async def generate_schedule_image(
         # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
         print_progress_bar(2, 5, f"Генерация {group}", "Запуск браузера")
         
-        # Создаем лок для каждого вызова generate_schedule_image
-        import asyncio
-        browser_lock = asyncio.Lock()
-        
-        async with browser_lock:
+        # Единый глобальный лок, чтобы не плодить браузеры
+        async with _browser_lock:
             global _browser_instance
+            global _playwright_ctx
             if _browser_instance is None or not _browser_instance.is_connected():
-                pw = await async_playwright().__aenter__()
-                _browser_instance = await pw.chromium.launch(
+                # Инициализируем и сохраняем контекст, чтобы корректно закрыть при завершении
+                _playwright_ctx = await async_playwright().__aenter__()
+                _browser_instance = await _playwright_ctx.chromium.launch(
                     args=[
                         '--no-sandbox', 
                         '--disable-dev-shm-usage',
@@ -167,78 +170,86 @@ async def generate_schedule_image(
             # Устанавливаем увеличенные таймауты
             page.set_default_timeout(120000)  # 2 минуты вместо 30 секунд
             page.set_default_navigation_timeout(120000)
-            
+
             try:
-                # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
-                # Широкий viewport с соотношением ~3:2 для красивой сетки
-                initial_width = 3000
-                initial_height = 2250
-                
-                await page.set_viewport_size({"width": initial_width, "height": initial_height})
-                
-                print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
-                
-                # Увеличиваем таймаут для set_content
-                await page.set_content(html, wait_until="domcontentloaded", timeout=120000)
-                
-                # Ждём полной прогрузки шрифтов
-                await page.evaluate("document.fonts.ready")
-                await page.wait_for_timeout(500)  # Увеличиваем время ожидания
+                attempt = 0
+                last_error = None
+                while attempt < 3:
+                    attempt += 1
+                    try:
+                        # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
+                        # Всегда фиксированный широкий viewport 3000x2250
+                        initial_width = 3000
+                        initial_height = 2250
+                        
+                        await page.set_viewport_size({"width": initial_width, "height": initial_height})
+                        
+                        print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
+                        
+                        # Отдельный таймаут для set_content
+                        await page.set_content(html, wait_until="domcontentloaded", timeout=60000)
+                        
+                        # Ждём полной прогрузки шрифтов
+                        await page.evaluate("document.fonts.ready")
+                        await page.wait_for_timeout(500)  # Увеличиваем время ожидания
 
-                # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
-                print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
-                
-                # Находим элемент, который мы хотим измерить
-                content_element = await page.query_selector('.content-wrapper')
-                if not content_element:
-                    raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
+                        # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
+                        print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
+                        
+                        # Находим элемент, который мы хотим измерить
+                        content_element = await page.query_selector('.content-wrapper')
+                        if not content_element:
+                            raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
 
-                # Получаем его реальные размеры в широком окне
-                bounding_box = await content_element.bounding_box()
-                if not bounding_box:
-                    raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
+                        # Получаем его реальные размеры в широком окне
+                        bounding_box = await content_element.bounding_box()
+                        if not bounding_box:
+                            raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
 
-                # Вычисляем размеры контента
-                content_height = bounding_box['height']
-                top_margin = bounding_box['y']  # Отступ сверху
-                bottom_margin = min(top_margin, 100)  # Симметричный нижний отступ
+                        # Вычисляем размеры контента
+                        content_height = bounding_box['height']
+                        top_margin = bounding_box['y']  # Отступ сверху
+                        bottom_margin = min(top_margin, 100)  # Симметричный нижний отступ
 
-                # Целевой размер кадра: фиксированный 3:2 (как в оптимизированной версии)
-                target_width = initial_width
-                target_height = initial_height
+                        # Целевой размер кадра: фиксированный 3:2 (как в оптимизированной версии)
+                        target_width = initial_width
+                        target_height = initial_height
 
-                # Текущая требуемая высота под контент
-                required_height = int(content_height + top_margin + bottom_margin)
+                        # Текущая требуемая высота под контент
+                        required_height = int(content_height + top_margin + bottom_margin)
 
-                # Если контент выше — не масштабирую, фиксированная область как было изначально
+                        # Если контент выше — не масштабирую, фиксированная область как было изначально
 
-                # Используем фиксированную высоту 3:2
-                final_height = target_height
+                        # Используем фиксированную высоту 3:2
+                        final_height = target_height
 
-                # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
-                print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
-                
-                # Устанавливаем финальный viewport фиксированного размера
-                await page.set_viewport_size({"width": target_width, "height": final_height})
-                # Форсируем полный рефлоу и два кадра, чтобы все стили применились перед скриншотом
-                try:
-                    await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-                except Exception:
-                    pass
-                
-                # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
-                await page.screenshot(path=output_path, type="png")
-                
-                logging.info(f"✅ Изображение успешно сгенерировано: {output_path}")
-
-            except Exception as e:
-                logging.error(f"❌ Ошибка при генерации изображения для {group}: {e}")
-                # Закрываем страницу в случае ошибки
-                try:
-                    await page.close()
-                except:
-                    pass
-                return False
+                        # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
+                        print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
+                        
+                        # Устанавливаем финальный viewport фиксированного размера
+                        await page.set_viewport_size({"width": target_width, "height": final_height})
+                        # Форсируем полный рефлоу и два кадра, чтобы все стили применились перед скриншотом
+                        try:
+                            await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+                        except Exception:
+                            pass
+                        
+                        # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
+                        await page.screenshot(path=output_path, type="png", timeout=30000)
+                        
+                        logging.info(f"✅ Изображение успешно сгенерировано: {output_path}")
+                        break
+                    
+                    except Exception as e:
+                        last_error = e
+                        logging.error(f"❌ Попытка {attempt}/3: ошибка при генерации изображения для {group}: {e}")
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
+                        if attempt >= 3:
+                            return False
+                        await asyncio.sleep(0.5)
                 
             finally:
                 # Всегда закрываем страницу
@@ -252,3 +263,24 @@ async def generate_schedule_image(
     except Exception as e:
         print(f"Ошибка при генерации изображения: {e}")
         return False
+
+
+async def shutdown_image_generator():
+    """Корректно закрывает ресурсы Playwright/Chromium для предотвращения утечек."""
+    global _browser_instance, _playwright_ctx
+    try:
+        async with _browser_lock:
+            if _browser_instance is not None:
+                try:
+                    if _browser_instance.is_connected():
+                        await _browser_instance.close()
+                finally:
+                    _browser_instance = None
+            if _playwright_ctx is not None:
+                try:
+                    await _playwright_ctx.__aexit__(None, None, None)
+                finally:
+                    _playwright_ctx = None
+    except Exception:
+        # Не бросаем исключение при остановке
+        pass

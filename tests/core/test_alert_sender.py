@@ -50,7 +50,8 @@ class TestAlertSender:
                 result = await alert_sender.send(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_send_alert_failure(self, mock_settings, sample_alert_data):
@@ -72,7 +73,8 @@ class TestAlertSender:
                 result = await alert_sender.send(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is False
 
     @pytest.mark.asyncio
     async def test_send_alert_exception(self, mock_settings, sample_alert_data):
@@ -86,7 +88,8 @@ class TestAlertSender:
                 result = await alert_sender.send(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is False
 
     @pytest.mark.asyncio
     async def test_send_slack_alert(self, mock_settings, sample_alert_data):
@@ -107,7 +110,8 @@ class TestAlertSender:
                 result = await alert_sender._send_slack(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_send_discord_alert(self, mock_settings, sample_alert_data):
@@ -128,7 +132,8 @@ class TestAlertSender:
                 result = await alert_sender._send_discord(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_send_telegram_alert(self, mock_settings, sample_alert_data):
@@ -150,7 +155,8 @@ class TestAlertSender:
                 result = await alert_sender._send_telegram(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_send_http_alert(self, mock_settings, sample_alert_data):
@@ -171,7 +177,8 @@ class TestAlertSender:
                 result = await alert_sender._send_http(sample_alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_alert_without_tags(self, mock_settings):
@@ -198,7 +205,8 @@ class TestAlertSender:
                 result = await alert_sender.send(alert_data)
                 
                 # Проверяем, что функция была вызвана
-                assert mock_session.post.called
+                mock_session.post.assert_called()
+                assert result is True
 
     @pytest.mark.asyncio
     async def test_different_severity_levels(self, mock_settings):
@@ -227,7 +235,8 @@ class TestAlertSender:
                     result = await alert_sender.send(alert_data)
                     
                     # Проверяем, что функция была вызвана
-                    assert mock_session.post.called
+                    mock_session.post.assert_called()
+                    assert result is True
 
     @pytest.mark.asyncio
     async def test_session_creation_on_send(self, mock_settings, sample_alert_data):
@@ -251,6 +260,7 @@ class TestAlertSender:
             
             # Проверяем, что сессия была создана
             assert alert_sender.session is not None
+            assert result is True
 
     def test_emoji_mapping(self, mock_settings):
         """Тест маппинга эмодзи для уровней серьезности."""

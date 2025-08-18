@@ -380,7 +380,9 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
         
         # Параллелим отправку задач по неделям и группам в окне ограниченного пула
         from asyncio import Semaphore, gather, create_task
-        semaphore = Semaphore(20)  # ограничиваем одновременную активность для плавности нагрузки
+        import os
+        pool_size = int(os.getenv('GEN_ENQUEUE_POOL', '20'))
+        semaphore = Semaphore(pool_size)  # ограничиваем одновременную активность для плавности нагрузки
 
         async def enqueue_one(group: str, week_key: str, week_name: str):
             async with semaphore:
@@ -414,6 +416,13 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                     from bot.dialogs.admin_menu import active_generations
                     if admin_id in active_generations and active_generations[admin_id].get("cancelled", False):
                         logger.info(f"⏹️ Генерация отменена пользователем {admin_id}")
+                        # Чистим флаг активной генерации
+                        try:
+                            from bot.dialogs.admin_menu import active_generations
+                            if admin_id in active_generations:
+                                del active_generations[admin_id]
+                        except Exception:
+                            pass
                         return
                 tasks.append(create_task(enqueue_one(group, week_key, week_name)))
 

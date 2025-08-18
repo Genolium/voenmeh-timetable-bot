@@ -23,7 +23,6 @@ services:
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
-    # ИСПРАВЛЕНО: Миграции убраны из автозапуска. Теперь бот просто стартует.
     command: python main.py
     healthcheck:
       test: ["CMD", "pgrep", "python"]
@@ -152,6 +151,34 @@ services:
       timeout: 10s
       retries: 3
 
+  pgadmin:
+    image: dpage/pgadmin4:9.6
+    container_name: voenmeh_pgadmin
+    env_file: [ .env ]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@voenmeh.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+      PGADMIN_SERVER_JSON_FILE: '/var/lib/pgadmin/servers.json'
+      PGADMIN_CONFIG_AUTO_CREATE_USER: 'True'
+      PGADMIN_CONFIG_AUTO_CREATE_SERVER: 'True'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/pgadmin-startup.sh:/pgadmin-startup.sh:ro
+      - ./pgadmin/servers.json.template:/pgadmin4/servers.json.template:ro
+    entrypoint: /bin/sh -c "/pgadmin-startup.sh"
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/misc/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 volumes:
   redis_data:
   postgres_data:
@@ -159,3 +186,4 @@ volumes:
   grafana_data:
   loki_data:       
   promtail_data:
+  pgadmin_data:

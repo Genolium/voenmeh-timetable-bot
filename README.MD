@@ -5,7 +5,7 @@
 
 Этот Telegram-бот — личный ассистент по учебе в БГТУ «ВОЕНМЕХ» им. Д.Ф. Устинова. Забудьте о неудобных сайтах и поиске нужной группы — получайте актуальную информацию мгновенно, прямо в мессенджере.
 
-Проект создан как демонстрация современного подхода к разработке: он полностью покрыт **юнит-тестами**, упакован в **Docker**, использует **очереди задач** для долгих операций и оснащен полноценным стеком **мониторинга (Prometheus, Grafana)**.
+Проект создан как демонстрация современного подхода к разработке: он полностью покрыт **ыюнит-тестами**, упакован в **Docker**, использует **очереди задач** для долгих операций и оснащен полноценным стеком **мониторинга (Prometheus, Grafana)**.
 
 ## ![](https://github.com/Genolium/voenmeh-timetable-bot/blob/main/bot/media/work.gif)
 
@@ -74,7 +74,7 @@ cd voenmeh-timetable-bot
     ```bash
     cp .env.example .env
     ```
-2.  Откройте файл `.env` и **обязательно** заполните все переменные, включая `BOT_TOKEN`, `ADMIN_ID` и данные для PostgreSQL.
+2.  Откройте файл `.env` и **обязательно** заполните все переменные. Особенно важны `BOT_TOKEN`, `ADMIN_ID`, данные для `PostgreSQL` и учетные данные для `pgAdmin`.
 
 ### 3. Запуск
 
@@ -100,7 +100,13 @@ cd voenmeh-timetable-bot
 ### 4. Управление и доступ к сервисам
 
 - **Grafana (метрики):** `http://localhost:3000` (login/pass: `admin`/`admin`)
-- **Prometheus:** `http://localhost:9090` (алёрты → Alertmanager → Webhook → бот уведомляет `ADMIN_IDS`)
+- **Prometheus:** `http://localhost:9090`
+- **pgAdmin (веб-интерфейс для PostgreSQL):**
+  - **URL:** `http://localhost:5050`
+  - **Email:** `${PGADMIN_DEFAULT_EMAIL}` (из `.env`, по умолч.: `admin@voenmeh.local`)
+  - **Пароль:** `${PGADMIN_DEFAULT_PASSWORD}` (из `.env`, по умолч.: `admin123`)
+  - **Описание:** Удобный инструмент для просмотра и редактирования базы данных. При первом запуске pgAdmin автоматически подключится к базе данных проекта (`Voenmeh Database`).
+  - **Примеры запросов:** Готовые SQL-запросы для анализа данных лежат в файле [`pgadmin/example_queries.sql`](./pgadmin/example_queries.sql).
 
 - **Посмотреть логи всех сервисов в реальном времени:**
   ```bash
@@ -155,6 +161,7 @@ cd voenmeh-timetable-bot
 - **Миграции:** `Alembic`
 - **Кэш и брокер:** `Redis`
 - **Метрики:** `Prometheus`, `Grafana`
+- **База данных:** `PostgreSQL` с веб-интерфейсом `pgAdmin`
 - **Тестирование:** `pytest`, `pytest-asyncio`, `pytest-mock`
 
 ---

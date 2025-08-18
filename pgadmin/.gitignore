@@ -1,0 +1,12 @@
+# Временные файлы pgAdmin
+*.log
+*.tmp
+*.cache
+
+# Конфигурационные файлы с паролями 
+config_local.json
+servers_local.json
+
+# Данные пользователей pgAdmin
+pgadmin4.db
+pgadmin4.log

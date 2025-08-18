@@ -240,17 +240,28 @@ class ImageService:
                     return True
                     
                 except Exception as e:
+                    # Фолбэк при сетевых таймаутах и несущественных ошибках: отправим как новое
                     if "message is not modified" not in str(e).lower():
                         logger.warning(f"Failed to edit message for user {user_id}: {e}")
                         # Продолжаем с отправкой нового сообщения
             
             # Отправляем новое сообщение
-            await self.bot.send_photo(
-                chat_id=user_id,
-                photo=photo,
-                caption=final_caption or "",
-                reply_markup=kb
-            )
+            try:
+                await self.bot.send_photo(
+                    chat_id=user_id,
+                    photo=photo,
+                    caption=final_caption or "",
+                    reply_markup=kb
+                )
+            except Exception as e:
+                # Если не удалось отправить фото — отправим текст и ссылку на оригинал (если есть)
+                logger.warning(f"Photo send failed for user {user_id}: {e}")
+                fallback_text = (final_caption or "") + "\n\n⚠️ Не удалось отправить изображение. Попробуйте позже."
+                try:
+                    await self.bot.send_message(chat_id=user_id, text=fallback_text, parse_mode="HTML")
+                except Exception:
+                    pass
+                return False
             
             logger.info(f"✅ Image sent to user {user_id}")
             return True

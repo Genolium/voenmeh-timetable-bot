@@ -184,7 +184,8 @@ def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any
                     return getattr(self.sync_client, name)
             
             redis_wrapper = SyncRedisWrapper(sync_redis_client)
-            cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=24)
+            # Увеличиваем TTL до 8 суток (192 часа)
+            cache_manager = ImageCacheManager(redis_wrapper, cache_ttl_hours=192)
             
             # Используем унифицированный сервис изображений
             from core.image_service import ImageService
@@ -223,7 +224,16 @@ def generate_week_image_task(cache_key: str = None, week_schedule: Dict[str, Any
                 await _send_error_message(user_id, "Произошла ошибка при генерации")
     
     # В Dramatiq workers всегда запускаем новый event loop
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    finally:
+        # Закрываем sync redis соединение
+        try:
+            # sync_redis_client виден в замыкании — закроем, если создан
+            if 'sync_redis_client' in locals():
+                sync_redis_client.close()
+        except Exception:
+            pass
 
 async def _send_cached_image(cache_key: str, user_id: int, placeholder_msg_id: int, final_caption: str):
     """Отправляет кэшированное изображение пользователю."""
