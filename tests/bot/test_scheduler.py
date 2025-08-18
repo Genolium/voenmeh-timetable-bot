@@ -53,6 +53,7 @@ def mock_timetable_manager():
     }
     manager.get_schedule_for_day = AsyncMock(return_value=schedule_info)
     manager._schedules = {"О735Б": {"odd": {"Понедельник": schedule_info["lessons"]}}}
+    manager.get_week_type = MagicMock(return_value=("odd", "Нечетная неделя"))
     manager.get_academic_week_type = AsyncMock(return_value=("odd", "Нечетная неделя"))
     return manager
 
