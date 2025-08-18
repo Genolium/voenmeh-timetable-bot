@@ -167,9 +167,9 @@ services:
       - "5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-      - ./pgadmin/pgadmin-startup.sh:/pgadmin-startup.sh:ro
+      - ./pgadmin/pgadmin-startup.sh:/pgadmin-startup.sh
       - ./pgadmin/servers.json.template:/pgadmin4/servers.json.template:ro
-    entrypoint: /bin/sh -c "/pgadmin-startup.sh"
+    entrypoint: /bin/sh -c "chmod +x /pgadmin-startup.sh && /pgadmin-startup.sh"
     depends_on:
       db: { condition: service_healthy }
     restart: unless-stopped
