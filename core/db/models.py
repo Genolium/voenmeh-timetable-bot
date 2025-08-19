@@ -20,7 +20,7 @@ class User(Base):
     morning_summary: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default='t', default=True)
 
-    reminder_time_minutes: Mapped[int] = mapped_column(Integer, server_default='20', nullable=False)
+    reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default='60', nullable=False)
 
     # Индексы для оптимизации частых запросов
     __table_args__ = (

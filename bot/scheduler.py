@@ -187,7 +187,7 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
             try:
                 start_time_obj = datetime.strptime(lessons[0]['start_time_raw'], '%H:%M').time()
                 start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
-                reminder_dt = start_dt - timedelta(minutes=(user.reminder_time_minutes or 20))
+                reminder_dt = start_dt - timedelta(minutes=(user.reminder_time_minutes or 60))
                 run_at = reminder_dt if reminder_dt >= now_in_moscow else now_in_moscow + timedelta(seconds=1)
                 scheduler.add_job(
                     send_lesson_reminder_task.send,

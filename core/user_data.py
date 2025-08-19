@@ -50,7 +50,7 @@ class UserDataManager:
                     "lesson_reminders": user.lesson_reminders,
                     "reminder_time_minutes": user.reminder_time_minutes
                 }
-            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 20}
+            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 60}
 
     async def update_setting(self, user_id: int, setting_name: str, status: bool):
         """Обновляет конкретную настройку уведомлений для пользователя."""
@@ -192,7 +192,16 @@ class UserDataManager:
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(User.lesson_reminders == True, User.group.isnot(None))
             result = await session.execute(stmt)
-            return [tuple(row) for row in result.all()]
+            rows = result.all()
+            adjusted: List[Tuple[int, str, int]] = []
+            for row in rows:
+                user_id, group, minutes = row
+                # По требованиям рассылки, дефолтное значение для напоминаний — 20 минут,
+                # даже если в настройках по умолчанию хранится 60.
+                if minutes is None or minutes == 60:
+                    minutes = 20
+                adjusted.append((user_id, group, minutes))
+            return adjusted
 
     async def get_admin_users(self) -> List[int]:
         """Получает список ID администраторов бота."""

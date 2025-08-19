@@ -67,14 +67,14 @@ SELECT
     AVG(reminder_time_minutes) as avg_reminder_time
 FROM users;
 
--- 8. Пользователи с кастомным временем напоминаний (не 20 минут)
+-- 8. Пользователи с кастомным временем напоминаний (не 60 минут)
 SELECT 
     user_id,
     username,
     group_name,
     reminder_time_minutes
 FROM users 
-WHERE reminder_time_minutes != 20
+WHERE reminder_time_minutes != 60
 ORDER BY reminder_time_minutes;
 
 -- 9. Создание индекса для оптимизации поиска по группе (если не существует)
@@ -84,7 +84,7 @@ ORDER BY reminder_time_minutes;
 -- DELETE FROM users WHERE last_active_date < CURRENT_DATE - INTERVAL '365 days';
 
 -- 11. Обновление времени напоминаний для всех пользователей
--- UPDATE users SET reminder_time_minutes = 20 WHERE reminder_time_minutes IS NULL;
+-- UPDATE users SET reminder_time_minutes = 60 WHERE reminder_time_minutes IS NULL;
 
 -- 12. Экспорт пользователей в CSV (выполнить в Query Tool)
 -- COPY (

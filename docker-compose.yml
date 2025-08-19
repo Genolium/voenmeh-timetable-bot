@@ -38,7 +38,17 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-    command: python -m dramatiq --processes 3 bot.tasks 
+    command: python -m dramatiq --processes 3 bot.tasks
+
+  rabbitmq_monitor:
+    <<: *base-app-service
+    container_name: voenmeh_rabbitmq_monitor
+    command: python scripts/rabbitmq_monitor.py
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro 
 
   db:
     image: postgres:15-alpine
@@ -76,15 +86,30 @@ services:
       - "15672:15672"  # Management UI
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+      # Настройки для стабильности соединений
+      RABBITMQ_TCP_LISTENERS: 5672
+      RABBITMQ_LOOPBACK_USERS: none
+      RABBITMQ_HIPE_COMPILE: false
+      # Heartbeat и таймауты
+      RABBITMQ_HEARTBEAT: 30
+      RABBITMQ_FRAME_MAX: 131072
+      RABBITMQ_CHANNEL_MAX: 0
+      # Логирование
+      RABBITMQ_LOG_LEVEL: info
+      # Использование конфигурационного файла
+      RABBITMQ_CONFIG_FILE: /etc/rabbitmq/rabbitmq
+      RABBITMQ_MANAGEMENT_URL: http://rabbitmq:15672
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   prometheus:
     image: prom/prometheus:v2.53.0

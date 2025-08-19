@@ -397,7 +397,18 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs):
         "periods": [("День", 1), ("Неделя", 7), ("Месяц", 30)]
     }
 
-async def on_broadcast_received(message: Message, manager: DialogManager):
+async def on_broadcast_received(*args, **kwargs):
+    # Support both aiogram-dialog callback signature (message, message_input, manager)
+    # and test signature (message, manager)
+    if len(args) == 2:
+        message, manager = args
+    elif len(args) == 3:
+        message, _message_input, manager = args
+    else:
+        # Fallback for unexpected signature
+        message = kwargs.get("message")
+        manager = kwargs.get("manager")
+
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = message.from_user.id
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")

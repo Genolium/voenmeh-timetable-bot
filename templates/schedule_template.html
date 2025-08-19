@@ -79,6 +79,9 @@
     /* Стили для главного заголовка "Расписание" и подзаголовка с типом недели. */
     .schedule-header {
       color: var(--text-white);
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
     }
     .schedule-header h1 {
       font-family: 'Saira', sans-serif;
@@ -93,8 +96,23 @@
       letter-spacing: 0.096rem;
     }
 
+    .bot-credit p {
+      font-size: 6.4rem;
+      font-weight: 400;
+      letter-spacing: 0.096rem;
+    }
+
     .group-name{
       font-weight: 700;
+    }
+
+    .bot-credit {
+      font-size: 3.2rem;
+      font-weight: 400;
+      letter-spacing: 0.048rem;
+      text-align: right;
+      color: var(--text-white);
+      opacity: 0.8;
     }
 
     /* Основная сетка для карточек с днями. По умолчанию в одну колонку. */
@@ -246,6 +264,8 @@
       body { padding: 3rem; }
       .content-wrapper { gap: 5rem; }
       .day-card { padding: 3rem 4rem; min-height: 0; } /* Убираем min-height, чтобы карточки не были слишком высокими. */
+      .schedule-header { flex-direction: column; align-items: flex-start; gap: 2rem; }
+      .bot-credit { align-self: flex-end; }
     }
 
     /* Для мобильных телефонов (ширина до 480px): */
@@ -260,14 +280,21 @@
       .lesson-room { display: none; }
       .lesson-title { grid-column: 1 / 11; }
       .lesson-time { grid-column: 11 / 13; }
+      .schedule-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
+      .bot-credit { align-self: flex-end; font-size: 2.8rem; }
     }
   </style>
 </head>
 <body>
   <div class="content-wrapper">
     <header class="schedule-header">
-      <h1>Расписание</h1>
-      <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: <span class="group-name">{{ group }}</span></p>
+      <div>
+        <h1>Расписание</h1>
+        <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: <span class="group-name">{{ group }}</span></p>
+      </div>
+      <div class="bot-credit">
+        <p>Сделано в <span class="group-name">@bstu_timetable_bot</span></p>
+      </div>
     </header>
     <section class="days-grid">
       {% for day in schedule_days %}

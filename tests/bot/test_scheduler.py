@@ -18,7 +18,7 @@ def mock_user_data_manager():
     manager.get_users_for_evening_notify.return_value = [(1, "О735Б"), (2, "О735А")]
     manager.get_users_for_morning_summary.return_value = [(1, "О735Б"), (2, "О735А")]
     manager.get_users_for_lesson_reminders.return_value = [(1, "О735Б", 20), (2, "О735А", 15)]
-    manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=20)
+    manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=60)
     manager.get_top_groups.return_value = [("О735Б", 5), ("О735А", 3)]
     manager.get_all_user_ids.return_value = [1, 2, 3]
     manager.get_total_users_count.return_value = 100
@@ -379,7 +379,7 @@ async def test_plan_reminders_for_user_no_group(mock_scheduler, mock_timetable_m
 @pytest.mark.asyncio
 async def test_plan_reminders_for_user_no_lessons(mock_scheduler, mock_user_data_manager, mock_timetable_manager):
     mock_user_data_manager = AsyncMock()
-    mock_user_data_manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=20)
+    mock_user_data_manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=60)
     
     # Мокаем расписание без уроков
     mock_timetable_manager.get_schedule_for_day.return_value = {'error': 'Нет данных'}

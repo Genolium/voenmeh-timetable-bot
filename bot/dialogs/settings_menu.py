@@ -18,9 +18,9 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
     settings = await user_data_manager.get_user_settings(user_id)
-    
+
     reminders_status = settings.get(WidgetIds.LESSON_REMINDERS.value, False)
-    reminder_time = settings.get("reminder_time_minutes", 20)
+    reminder_time = settings.get("reminder_time_minutes", 60)
 
     return {
         "evening_status_text": get_status_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False)),

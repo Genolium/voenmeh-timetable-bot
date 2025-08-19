@@ -68,7 +68,7 @@ async def test_get_user_settings_for_unknown_user_returns_defaults(manager_db: U
         "evening_notify": False,
         "morning_summary": False,
         "lesson_reminders": False,
-        "reminder_time_minutes": 20,
+        "reminder_time_minutes": 60,
     }
 
 @pytest.mark.asyncio
@@ -152,7 +152,7 @@ class TestUserDataManagerWithSQLAlchemy:
             "evening_notify": True,
             "morning_summary": True,
             "lesson_reminders": True,
-            "reminder_time_minutes": 20
+            "reminder_time_minutes": 60
         }
         await manager_with_db.update_setting(456, "morning_summary", False)
         new_settings = await manager_with_db.get_user_settings(456)
