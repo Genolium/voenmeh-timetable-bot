@@ -13,6 +13,8 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
+from aiogram_dialog.api.exceptions import UnknownIntent
+from aiogram.dispatcher.event.bases import ErrorEvent
 from dotenv import load_dotenv
 from prometheus_client import start_http_server 
 from pythonjsonlogger.json import JsonFormatter
@@ -166,13 +168,35 @@ class SimpleRateLimiter:
         await self.redis.expire(key, 2)
         return await handler(event, data)
 
-async def error_handler(event_or_exception=None, exception: Exception | None = None):
-    """Гибкий обработчик глобальных ошибок aiogram (совместим с разными сигнатурами)."""
-    exc = exception if exception is not None else event_or_exception
+async def error_handler(event: ErrorEvent):
+    """Глобальный обработчик ошибок. Тихо обрабатывает устаревшие колбэки диалогов."""
+    exc = event.exception
     try:
-        logging.error(f"Ошибка aiogram: {exc}", exc_info=True)
-    finally:
-        return True
+        # Специальная обработка: устаревший intent у aiogram-dialog
+        if isinstance(exc, UnknownIntent):
+            cb = getattr(getattr(event.update, "callback_query", None), "message", None)
+            cq = getattr(event.update, "callback_query", None)
+            # Пытаемся вежливо ответить на колбэк и предложить открыть меню
+            try:
+                if cq is not None and hasattr(cq, "answer"):
+                    await cq.answer("Эта кнопка больше неактуальна. Откройте меню заново.", show_alert=False)
+            except Exception:
+                pass
+            try:
+                bot: Bot = event.bot
+                if cb is not None and bot is not None:
+                    await bot.send_message(cb.chat.id, "Меню обновлено. Нажмите /start")
+            except Exception:
+                pass
+            # Подавляем дальнейшее логирование этой ошибки
+            return True
+
+        # Остальные ошибки — логируем в JSON
+        logging.error("Ошибка aiogram: %s", exc, exc_info=True)
+    except Exception:
+        # Никогда не падаем из обработчика ошибок
+        pass
+    return True
 
 async def main():
     setup_logging()  # Вызываем настройку логирования
