@@ -14,7 +14,6 @@ from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 from aiogram_dialog import setup_dialogs, StartMode, DialogManager
 from aiogram_dialog.api.exceptions import UnknownIntent
-from aiogram.dispatcher.event.bases import ErrorEvent
 from dotenv import load_dotenv
 from prometheus_client import start_http_server 
 from pythonjsonlogger.json import JsonFormatter
@@ -168,7 +167,7 @@ class SimpleRateLimiter:
         await self.redis.expire(key, 2)
         return await handler(event, data)
 
-async def error_handler(event: ErrorEvent):
+async def error_handler(event):
     """Глобальный обработчик ошибок. Тихо обрабатывает устаревшие колбэки диалогов."""
     exc = event.exception
     try:
