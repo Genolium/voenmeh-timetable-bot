@@ -44,19 +44,24 @@ redis_password = os.getenv("REDIS_PASSWORD")
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 
-# --- Инициализация бота для воркера ---
+# --- Инициализация параметров бота ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не найден. Воркер не может работать.")
 
-BOT_INSTANCE = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+# Для обратной совместимости с тестами, которые патчат BOT_INSTANCE
+BOT_INSTANCE = None  # Не используется напрямую; бот создаётся внутри задач
 rate_limiter = AsyncLimiter(25, 1)
 
 async def _send_message(user_id: int, text: str):
     try:
         log.info(f"Попытка отправки сообщения пользователю {user_id}")
-        async with rate_limiter:
-            await BOT_INSTANCE.send_message(user_id, text, disable_web_page_preview=True)
+        # Создаём экземпляр бота в рамках текущего event loop,
+        # чтобы избежать ошибок повторного использования закрытого лупа/сессии
+        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+        async with bot:
+            async with rate_limiter:
+                await bot.send_message(user_id, text, disable_web_page_preview=True)
         log.info(f"Сообщение успешно отправлено пользователю {user_id}")
     except Exception as e:
         log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
@@ -65,8 +70,10 @@ async def _send_message(user_id: int, text: str):
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
     try:
         log.info(f"Попытка копирования сообщения (ID: {message_id}) пользователю {user_id}")
-        async with rate_limiter:
-            await BOT_INSTANCE.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
+        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+        async with bot:
+            async with rate_limiter:
+                await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
         log.info(f"Сообщение (ID: {message_id}) успешно скопировано пользователю {user_id}")
     except Exception as e:
         log.error(f"Dramatiq task FAILED to copy message (ID: {message_id}) to {user_id}: {e}")
@@ -100,7 +107,11 @@ def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week
         try:
             redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
             cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
-            image_service = ImageService(cache_manager, BOT_INSTANCE)
+            # Создаём бота в текущем лупе только если он действительно понадобится
+            bot_for_images: Bot | None = None
+            if not is_auto_generation:
+                bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+            image_service = ImageService(cache_manager, bot_for_images)
             
             week_key = cache_key.split("_")[-1]
             
@@ -113,15 +124,18 @@ def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week
                 else:
                     log.error(f"❌ [АВТО] Не удалось сгенерировать изображение {cache_key}")
             else:
-                success, _ = await image_service.get_or_generate_week_image(
-                    group=group,
-                    week_key=week_key,
-                    week_name=week_name,
-                    week_schedule=week_schedule,
-                    user_id=user_id,
-                    placeholder_msg_id=placeholder_msg_id,
-                    final_caption=final_caption
-                )
+                # Используем контекстный менеджер для корректного закрытия сессии бота
+                assert bot_for_images is not None
+                async with bot_for_images:
+                    success, _ = await image_service.get_or_generate_week_image(
+                        group=group,
+                        week_key=week_key,
+                        week_name=week_name,
+                        week_schedule=week_schedule,
+                        user_id=user_id,
+                        placeholder_msg_id=placeholder_msg_id,
+                        final_caption=final_caption
+                    )
                 if not success and user_id:
                     await _send_error_message(user_id, "Не удалось сгенерировать изображение")
         except Exception as e:
