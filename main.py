@@ -167,14 +167,18 @@ class SimpleRateLimiter:
         await self.redis.expire(key, 2)
         return await handler(event, data)
 
-async def error_handler(event):
-    """Глобальный обработчик ошибок. Тихо обрабатывает устаревшие колбэки диалогов."""
-    exc = event.exception
+async def error_handler(event=None, exception: Exception | None = None, *args, **kwargs):
+    """Глобальный обработчик ошибок. Совместим с разными сигнатурами aiogram.
+    Тихо обрабатывает устаревшие колбэки диалогов (UnknownIntent)."""
+    exc = exception
+    if exc is None and hasattr(event, "exception"):
+        exc = getattr(event, "exception", None)
     try:
         # Специальная обработка: устаревший intent у aiogram-dialog
         if isinstance(exc, UnknownIntent):
-            cb = getattr(getattr(event.update, "callback_query", None), "message", None)
-            cq = getattr(event.update, "callback_query", None)
+            update = getattr(event, "update", None)
+            cq = getattr(update, "callback_query", None)
+            cb = getattr(cq, "message", None)
             # Пытаемся вежливо ответить на колбэк и предложить открыть меню
             try:
                 if cq is not None and hasattr(cq, "answer"):
@@ -182,7 +186,7 @@ async def error_handler(event):
             except Exception:
                 pass
             try:
-                bot: Bot = event.bot
+                bot: Bot = getattr(event, "bot", None)
                 if cb is not None and bot is not None:
                     await bot.send_message(cb.chat.id, "Меню обновлено. Нажмите /start")
             except Exception:
