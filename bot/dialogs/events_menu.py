@@ -10,6 +10,24 @@ from core.events_manager import EventsManager
 from datetime import datetime, timedelta
 
 
+def _is_empty_field(value: str) -> bool:
+    """Проверяет, является ли поле пустым или содержит служебные слова"""
+    if not value or not value.strip():
+        return True
+    
+    # Приводим к нижнему регистру для проверки
+    lower_value = value.strip().lower()
+    skip_words = [
+        'пропустить', 'пропуск', 'skip',
+        'отмена', 'отменить', 'cancel',
+        'нет', 'no', 'none',
+        '-', '—', '–', '.',
+        'пусто', 'empty', 'null'
+    ]
+    
+    return lower_value in skip_words
+
+
 async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
     session_factory = dialog_manager.middleware_data.get("session_factory")
     manager = EventsManager(session_factory)
@@ -78,12 +96,12 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
             # Показываем дату и время
             text_parts.append(f"🗓 {event.start_at.strftime('%d.%m.%Y %H:%M')}")
     
-    # Локация (если указана)
-    if event.location and event.location.strip():
+    # Локация (если указана и не является служебным словом)
+    if event.location and not _is_empty_field(event.location):
         text_parts.append(f"📍 {event.location}")
 
-    # Описание (если указано)
-    if event.description and event.description.strip():
+    # Описание (если указано и не является служебным словом)
+    if event.description and not _is_empty_field(event.description):
         text_parts.append(f"\n{event.description}")
     
     link = (event.link or "").strip()

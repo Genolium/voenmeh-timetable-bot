@@ -28,6 +28,23 @@ from .constants import WidgetIds
 active_generations = {}
 EVENTS_PAGE_SIZE = 10
 
+def _is_empty_field(value: str) -> bool:
+    """Проверяет, является ли поле пустым или содержит служебные слова"""
+    if not value or not value.strip():
+        return True
+    
+    # Приводим к нижнему регистру для проверки
+    lower_value = value.strip().lower()
+    skip_words = [
+        'пропустить', 'пропуск', 'skip',
+        'отмена', 'отменить', 'cancel',
+        'нет', 'no', 'none',
+        '-', '—', '–', '.',
+        'пусто', 'empty', 'null'
+    ]
+    
+    return lower_value in skip_words
+
 def _is_cancel(text: str) -> bool:
     raw = (text or "").strip().lower()
     return raw in {"отмена", "cancel", "отменить"}
@@ -315,20 +332,20 @@ async def get_event_admin_details(dialog_manager: DialogManager, **kwargs):
         else:
             text_parts.append(f"🗓 {item.start_at.strftime('%d.%m.%Y %H:%M')}")
     
-    # Локация (если указана)
-    if item.location and item.location.strip():
+    # Локация (если указана и не является служебным словом)
+    if item.location and not _is_empty_field(item.location):
         text_parts.append(f"📍 {item.location}")
     
-    # Ссылка (если указана)
-    if item.link and item.link.strip():
+    # Ссылка (если указана и не является служебным словом)
+    if item.link and not _is_empty_field(item.link):
         text_parts.append(f"🔗 {item.link}")
     
     # Изображение (если есть)
     if getattr(item, 'image_file_id', None):
         text_parts.append("🖼 Изображение: добавлено")
     
-    # Описание (если указано)
-    if item.description and item.description.strip():
+    # Описание (если указано и не является служебным словом)
+    if item.description and not _is_empty_field(item.description):
         text_parts.append(f"\n{item.description}")
     
     text = "\n".join(text_parts)
@@ -876,16 +893,16 @@ async def get_create_preview(dialog_manager: DialogManager, **kwargs):
         except Exception:
             text_parts.append("Дата/время: <b>(ошибка формата)</b>")
     
-    # Локация (если указана)
-    if location:
+    # Локация (если указана и не является служебным словом)
+    if location and not _is_empty_field(location):
         text_parts.append(f"Локация: <b>{location}</b>")
     
-    # Ссылка (если указана)
-    if link:
+    # Ссылка (если указана и не является служебным словом)
+    if link and not _is_empty_field(link):
         text_parts.append(f"Ссылка: <b>{link}</b>")
     
-    # Описание (если указано)
-    if description:
+    # Описание (если указано и не является служебным словом)
+    if description and not _is_empty_field(description):
         text_parts.append(f"\nОписание:\n{description}")
     
     return {"create_preview": "\n".join(text_parts)}
