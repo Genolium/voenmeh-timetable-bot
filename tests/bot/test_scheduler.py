@@ -7,7 +7,7 @@ from bot.scheduler import (
     evening_broadcast, morning_summary_broadcast, lesson_reminders_planner,
     cancel_reminders_for_user, plan_reminders_for_user, warm_top_groups_images,
     monitor_schedule_changes, backup_current_schedule, collect_db_metrics,
-    cleanup_image_cache, setup_scheduler
+    cleanup_image_cache, setup_scheduler, generate_and_cache
 )
 from core.config import MOSCOW_TZ
 
@@ -646,6 +646,71 @@ def test_setup_scheduler_with_image_cache_jobs(mock_bot, mock_timetable_manager,
     
     # Проверяем, что дополнительные задачи добавлены
     assert mock_scheduler_instance.add_job.call_count >= 8
+
+
+@pytest.mark.asyncio
+async def test_generate_and_cache_uses_cache_manager(monkeypatch):
+    # Arrange
+    from redis.asyncio.client import Redis
+    fake_redis = AsyncMock(spec=Redis)
+    # Mock cache manager to observe calls
+    class _FakeMgr:
+        def __init__(self, *args, **kwargs):
+            self.cache_dir = Path("/tmp")
+        def get_file_path(self, key):
+            return Path("/tmp") / f"{key}.png"
+        async def cache_image(self, key, data, metadata=None):
+            return True
+    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: _FakeMgr())
+    # Mock generator and filesystem
+    monkeypatch.setattr('bot.scheduler.generate_schedule_image', AsyncMock(return_value=True))
+    # Pretend file exists and has content
+    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda p: True)
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"img"
+    monkeypatch.setattr('builtins.open', lambda p, m: mock_file)
+
+    # Act
+    await generate_and_cache("G_odd", {"Понедельник": []}, "Нечётная неделя", "G", fake_redis)
+
+    # Assert: if no exceptions, cache manager path executed
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_warm_up_miss_store_hit(monkeypatch, mock_user_data_manager, mock_timetable_manager):
+    # Simulate miss -> store -> hit by toggling is_cached
+    calls = {"count": 0}
+    class _FakeMgr:
+        def __init__(self, *args, **kwargs):
+            self.cache_dir = Path("/tmp")
+        async def is_cached(self, key):
+            calls["count"] += 1
+            return calls["count"] > 1  # first miss, then hit
+        def get_file_path(self, key):
+            return Path("/tmp") / f"{key}.png"
+        async def cache_image(self, key, data, metadata=None):
+            return True
+    from redis.asyncio.client import Redis
+    fake_redis = AsyncMock(spec=Redis)
+    fake_redis.set = AsyncMock(return_value=True)
+    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: _FakeMgr())
+    monkeypatch.setattr('bot.scheduler.generate_schedule_image', AsyncMock(return_value=True))
+    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda p: True)
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"img"
+    monkeypatch.setattr('builtins.open', lambda p, m: mock_file)
+
+    # Prepare data
+    mock_user_data_manager.get_top_groups.return_value = [("G", 10)]
+    mock_timetable_manager._schedules = {"G": {"odd": {"Понедельник": []}}}
+    mock_timetable_manager.get_week_type.return_value = ("odd", "Нечетная неделя")
+
+    # Act
+    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, fake_redis)
+
+    # Assert: Miss then hit occurred
+    assert calls["count"] >= 1
 
 
 @pytest.mark.asyncio

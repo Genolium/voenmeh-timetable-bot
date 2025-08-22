@@ -224,7 +224,7 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
 
 async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_manager: TimetableManager, redis_client: Redis):
     try:
-        cache = ImageCacheManager(redis_client, cache_ttl_hours=24)
+        cache = ImageCacheManager(redis_client, cache_ttl_hours=192)
         # Топ-10 групп по пользователям
         try:
             top = await user_data_manager.get_top_groups(limit=10)
@@ -376,7 +376,7 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
         logger.info(f"📊 Отправляю задачи для {len(all_groups)} групп, обеих недель в очередь Dramatiq")
         
         # Проверяем кэш перед отправкой задач
-        cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)  # 30 дней для полного расписания
+        cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
         
         # Параллелим отправку задач по неделям и группам в окне ограниченного пула
         from asyncio import Semaphore, gather, create_task
@@ -472,7 +472,7 @@ async def generate_full_schedule_images(user_data_manager: UserDataManager, time
                 
                 # После завершения отправки задач – принудительно обновим метрики размера кэша
                 try:
-                    cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=720)
+                    cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
                     stats = await cache_manager.get_cache_stats()
                     from core.metrics import IMAGE_CACHE_SIZE
                     IMAGE_CACHE_SIZE.labels(cache_type="files").set(stats.get("file_count", 0))
@@ -612,26 +612,49 @@ async def collect_db_metrics(user_data_manager: UserDataManager):
 
 async def cleanup_image_cache(redis_client: Redis):
     try:
-        cache = ImageCacheManager(redis_client, cache_ttl_hours=24)
+        cache = ImageCacheManager(redis_client, cache_ttl_hours=192)
         await cache.cleanup_expired_cache()
     except Exception as e:
         logger.error(f"Ошибка при плановой очистке кэша изображений: {e}")
 
 async def generate_and_cache(cache_key: str, week_schedule: dict, week_name: str, group: str, redis_client: Redis):
     try:
-        # Путь для временного файла
-        from core.config import MEDIA_PATH
-        output_dir = MEDIA_PATH / "generated"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{cache_key}.png"
+        from core.metrics import SCHEDULE_GENERATION_TIME
+        from core.image_cache_manager import ImageCacheManager
 
-        # Генерируем изображение
-        ok = await generate_schedule_image(week_schedule, week_name.split(" ")[0], group, str(output_path))
+        cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=24)
+        output_path = cache_manager.get_file_path(cache_key)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        import time as _time
+        start_ts = _time.time()
+
+        ok = await generate_schedule_image(
+            week_schedule,
+            week_name,
+            group,
+            str(output_path)
+        )
         if ok and os.path.exists(output_path):
             with open(output_path, 'rb') as f:
                 image_bytes = f.read()
-            await redis_client.set(cache_key, image_bytes, ex=3600) # Cache for 1 hour
-            logger.info(f"Image for {cache_key} generated and cached.")
+            # Приводим week_key для метаданных
+            meta_week_key = 'odd' if 'Неч' in (week_name or '') else 'even'
+            await cache_manager.cache_image(
+                cache_key,
+                image_bytes,
+                metadata={
+                    "group": group,
+                    "week_key": meta_week_key,
+                    "generated_by": "warm_up"
+                }
+            )
+            duration = max(_time.time() - start_ts, 0)
+            try:
+                SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(duration)
+            except Exception:
+                pass
+            logger.info(f"Image for {cache_key} generated and cached via ImageCacheManager.")
         else:
             logger.warning(f"Image for {cache_key} generation failed or file not found.")
     except Exception as e:

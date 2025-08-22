@@ -41,12 +41,13 @@ from bot.dialogs.admin_menu import admin_dialog
 from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
-from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback
+from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback, on_check_subscription_callback
 from bot.dialogs.admin_menu import on_cancel_generation
 from bot.dialogs.settings_menu import settings_dialog
+from bot.dialogs.events_menu import events_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, Events
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 def setup_logging():
@@ -69,6 +70,7 @@ async def set_bot_commands(bot: Bot):
         BotCommand(command="start", description="🤖 Главное меню"),
         BotCommand(command="about", description="📒 О боте"),
         BotCommand(command="feedback", description="🤝 Обратная связь"),
+        BotCommand(command="events", description="🎉 Мероприятия"),
     ]
     try:
         await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -123,6 +125,9 @@ async def feedback_command_handler(message: Message, dialog_manager: DialogManag
 
 async def admin_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Admin.menu, mode=StartMode.RESET_STACK)
+
+async def events_command_handler(message: Message, dialog_manager: DialogManager):
+    await dialog_manager.start(Events.list, mode=StartMode.RESET_STACK)
 
 # --- Функции для запуска сервисов ---
 async def run_metrics_server(port: int = 8000):
@@ -250,7 +255,7 @@ async def main():
     # Регистрация диалогов и хэндлеров
     all_dialogs = [
         main_menu_dialog, schedule_dialog, settings_dialog, find_dialog,
-        about_dialog, feedback_dialog, admin_dialog
+        about_dialog, feedback_dialog, admin_dialog, events_dialog
     ]
     for dialog in all_dialogs:
         dp.include_router(dialog)
@@ -259,11 +264,15 @@ async def main():
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))
     dp.message.register(feedback_command_handler, Command("feedback"))
+    dp.message.register(events_command_handler, Command("events"))
     if ADMIN_IDS:
         dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
+    # Обработчики кнопок оригинала и проверки подписки
+    dp.callback_query.register(on_send_original_file_callback, F.data == "send_original_file")
+    dp.callback_query.register(on_check_subscription_callback, F.data == "check_sub")
     # Обработчик отмены генерации изображений
     dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
     # Времено отключено: кнопки "полное качество" и проверка подписки

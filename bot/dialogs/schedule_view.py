@@ -18,7 +18,7 @@ from bot.text_formatters import (
 from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, MEDIA_PATH, SUBSCRIPTION_CHANNEL
 from core.metrics import SCHEDULE_GENERATION_TIME, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, GROUP_POPULARITY, USER_ACTIVITY_DAILY
 from core.image_cache_manager import ImageCacheManager
-from bot.tasks import generate_week_image_task
+from bot.tasks import generate_week_image_task, send_week_original_if_subscribed_task
 import logging
 import asyncio
 
@@ -268,10 +268,12 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         "end_date": end_date_str
     }
 
-# Старые функции удалены - теперь используется унифицированный ImageService
-
 async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Callback handler для кнопки 'Оригинал' без параметра button"""
+    await on_send_original_file(callback, None, dialog_manager)
+
+async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager: DialogManager):
+    """Повторная проверка подписки и попытка отправки оригинала."""
     await on_send_original_file(callback, None, dialog_manager)
 
 async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -336,19 +338,44 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                 return
     except Exception:
         pass
-    # Если отсутствует — инициируем фоновую генерацию
+    # Если файла нет – инициируем генерацию и попробуем дождаться готовности короткое время
     if not output_path.exists():
         await get_week_image_data(manager)
+        # Подождём до 5 секунд небольшими интервалами
+        for _ in range(10):
+            try:
+                if output_path.exists():
+                    break
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        if not output_path.exists():
+            try:
+                await callback.answer("⏳ Готовлю оригинал, вернитесь через пару секунд…")
+            except Exception:
+                pass
+            # Запросим отправку через очередь (после проверки подписки)
+            try:
+                send_week_original_if_subscribed_task.send(callback.from_user.id, group, week_key)
+            except Exception:
+                pass
+            return
+    # Файл готов — отправим сразу
+    try:
+        bot: Bot = manager.middleware_data.get("bot")
+        await bot.send_document(callback.from_user.id, FSInputFile(output_path))
         try:
-            await callback.answer("Готовлю оригинал, вернитесь через пару секунд…")
+            await callback.answer()
         except Exception:
             pass
         return
-    try:
-        await callback.message.answer("📤 Отправляю изображение в полном качестве…")
-        await callback.message.answer_document(FSInputFile(output_path))
     except Exception:
-        pass
+        # Фолбэк: через очередь
+        try:
+            send_week_original_if_subscribed_task.send(callback.from_user.id, group, week_key)
+            await callback.answer("📤 Отправлю изображение в фоне…")
+        except Exception:
+            pass
     try:
         await callback.answer()
     except Exception:
@@ -431,7 +458,10 @@ schedul_dialog_windows = [
     ),
     Window(
         Const("🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."),
-        Button(Const("◀️ Назад"), id="noop_back_to_day", on_click=lambda c, b, m: m.switch_to(Schedule.view)),
+        Row(
+            Button(Const("📄 Оригинал (файл)"), id="send_original_file_week", on_click=on_send_original_file),
+            Button(Const("◀️ Назад"), id="noop_back_to_day", on_click=lambda c, b, m: m.switch_to(Schedule.view)),
+        ),
         state=Schedule.week_image_view
     ),
     # Окно гейта подписки временно отключено

@@ -48,3 +48,8 @@ class WidgetIds(str, Enum):
     TEST_EVENING = "test_evening"
     TEST_REMINDERS = "test_reminders"
     GENERATE_FULL_SCHEDULE = "generate_full_schedule"
+    # Admin categories/events
+    ADMIN_CATEGORIES = "admin_categories"
+    ADMIN_EVENTS = "admin_events"
+    # Events user menu
+    EVENTS_OPEN = "events_open"

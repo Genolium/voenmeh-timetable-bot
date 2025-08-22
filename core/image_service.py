@@ -93,7 +93,10 @@ class ImageService:
         cache_key: str,
         schedule_data: Dict[str, Any],
         week_type: str,
-        group: str
+        group: str,
+        *,
+        generated_by: str = "single",
+        schedule_hash: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -156,7 +159,9 @@ class ImageService:
                         "group": group,
                         "week_key": week_type,
                         "generated_at": datetime.now().isoformat(),
-                        "file_size": len(image_bytes)
+                        "file_size": len(image_bytes),
+                        "generated_by": generated_by,
+                        **({"schedule_hash": schedule_hash} if schedule_hash else {}),
                     })
                     
                     logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
@@ -220,9 +225,12 @@ class ImageService:
             
             photo = FSInputFile(safe_image_path)
             
-            # Клавиатура
+            # Клавиатура: оригинал файла + назад (в одном сообщении)
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]
+                [
+                    InlineKeyboardButton(text="📄 Оригинал (файл)", callback_data="send_original_file"),
+                    InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img"),
+                ]
             ])
             
             if placeholder_msg_id:

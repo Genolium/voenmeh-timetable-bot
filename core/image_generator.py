@@ -3,6 +3,7 @@ import logging
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
+import weakref
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -37,8 +38,20 @@ _template_cache = None
 _template_mtime: float | None = None
 _browser_instance = None
 _playwright_ctx = None  # Храним ссылку на контекст Playwright для корректного закрытия
-# Глобальный лок для управления количеством браузерных операций
-_browser_lock = asyncio.Lock()
+# Пер-луповые состояния для управления браузером и локами (не делиться между event loop)
+_loop_state = weakref.WeakKeyDictionary()
+
+def _get_loop_state():
+    """Возвращает (и при необходимости создаёт) состояние для текущего event loop.
+
+    Структура: {"lock": asyncio.Lock, "browser": Browser|None, "ctx": Playwright|None}
+    """
+    loop = asyncio.get_running_loop()
+    state = _loop_state.get(loop)
+    if state is None:
+        state = {"lock": asyncio.Lock(), "browser": None, "ctx": None}
+        _loop_state[loop] = state
+    return state
 
 
 def _time_to_minutes(t: str) -> int:
@@ -148,14 +161,13 @@ async def generate_schedule_image(
         # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
         print_progress_bar(2, 5, f"Генерация {group}", "Запуск браузера")
         
-        # Единый глобальный лок, чтобы не плодить браузеры
-        async with _browser_lock:
-            global _browser_instance
-            global _playwright_ctx
-            if _browser_instance is None or not _browser_instance.is_connected():
+        # Лок и браузер привязаны к текущему event loop
+        state = _get_loop_state()
+        async with state["lock"]:
+            if state["browser"] is None or not state["browser"].is_connected():
                 # Инициализируем и сохраняем контекст, чтобы корректно закрыть при завершении
-                _playwright_ctx = await async_playwright().__aenter__()
-                _browser_instance = await _playwright_ctx.chromium.launch(
+                state["ctx"] = await async_playwright().__aenter__()
+                state["browser"] = await state["ctx"].chromium.launch(
                     args=[
                         '--no-sandbox', 
                         '--disable-dev-shm-usage',
@@ -164,8 +176,8 @@ async def generate_schedule_image(
                         '--disable-features=VizDisplayCompositor'
                     ]
                 )
-            
-            page = await _browser_instance.new_page()
+
+            page = await state["browser"].new_page()
             
             # Устанавливаем увеличенные таймауты
             page.set_default_timeout(120000)  # 2 минуты вместо 30 секунд
@@ -267,20 +279,22 @@ async def generate_schedule_image(
 
 async def shutdown_image_generator():
     """Корректно закрывает ресурсы Playwright/Chromium для предотвращения утечек."""
-    global _browser_instance, _playwright_ctx
     try:
-        async with _browser_lock:
-            if _browser_instance is not None:
+        state = _get_loop_state()
+        async with state["lock"]:
+            browser = state.get("browser")
+            ctx = state.get("ctx")
+            if browser is not None:
                 try:
-                    if _browser_instance.is_connected():
-                        await _browser_instance.close()
+                    if browser.is_connected():
+                        await browser.close()
                 finally:
-                    _browser_instance = None
-            if _playwright_ctx is not None:
+                    state["browser"] = None
+            if ctx is not None:
                 try:
-                    await _playwright_ctx.__aexit__(None, None, None)
+                    await ctx.__aexit__(None, None, None)
                 finally:
-                    _playwright_ctx = None
+                    state["ctx"] = None
     except Exception:
         # Не бросаем исключение при остановке
         pass

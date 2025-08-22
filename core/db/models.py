@@ -1,6 +1,7 @@
+from __future__ import annotations
 from datetime import datetime 
-from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date, Index
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date, Index, Text, ForeignKey
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
 class Base(DeclarativeBase):
@@ -38,3 +39,25 @@ class SemesterSettings(Base):
     spring_semester_start: Mapped[datetime] = mapped_column(Date, nullable=False)  # Дата начала весеннего семестра
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     updated_by: Mapped[int] = mapped_column(BigInteger, nullable=False)  # Telegram ID администратора
+
+
+
+class Event(Base):
+    __tablename__ = 'events'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    link: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    image_file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)  # Telegram file_id
+    is_published: Mapped[bool] = mapped_column(Boolean, default=True, server_default='t', nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_events_start', 'start_at'),
+        Index('idx_events_published', 'is_published'),
+    )

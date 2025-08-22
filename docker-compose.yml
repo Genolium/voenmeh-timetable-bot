@@ -100,16 +100,13 @@ services:
       RABBITMQ_CHANNEL_MAX: 0
       # Логирование
       RABBITMQ_LOG_LEVEL: info
-      # Использование конфигурационного файла
-      RABBITMQ_CONFIG_FILE: /etc/rabbitmq/rabbitmq
-      RABBITMQ_MANAGEMENT_URL: http://rabbitmq:15672
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 30s
+      interval: 20s
       timeout: 10s
-      retries: 3
-      start_period: 30s
+      retries: 10
+      start_period: 90s
 
   prometheus:
     image: prom/prometheus:v2.53.0

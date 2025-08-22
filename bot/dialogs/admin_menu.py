@@ -8,7 +8,7 @@ from aiogram import Bot
 from aiogram.types import CallbackQuery, Message, ContentType
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
-from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo
+from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo, Column
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.tasks import copy_message_task, send_message_task
@@ -18,6 +18,7 @@ from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.user_data import UserDataManager
 from core.semester_settings import SemesterSettingsManager
+from core.events_manager import EventsManager
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 
 from .states import Admin
@@ -25,6 +26,15 @@ from .constants import WidgetIds
 
 # Глобальная переменная для отслеживания активных генераций
 active_generations = {}
+EVENTS_PAGE_SIZE = 10
+
+def _is_cancel(text: str) -> bool:
+    raw = (text or "").strip().lower()
+    return raw in {"отмена", "cancel", "отменить"}
+
+def _is_skip(text: str) -> bool:
+    raw = (text or "").strip().lower()
+    return raw in {"пропустить", "skip", "-", "пусто", "empty", ""}
 
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
@@ -178,6 +188,674 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
 async def on_semester_settings(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Переход к настройкам семестров."""
     await manager.switch_to(Admin.semester_settings)
+
+async def on_admin_categories(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.switch_to(Admin.categories_menu)
+
+async def on_admin_events(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.switch_to(Admin.events_menu)
+
+async def get_categories_list(dialog_manager: DialogManager, **kwargs):
+    session_factory = dialog_manager.middleware_data.get("session_factory")
+    events = EventsManager(session_factory)
+    categories = await events.list_categories(only_active=False)
+    lines = []
+    for c in categories:
+        prefix = "— " if c.parent_id else ""
+        status = "✅" if c.is_active else "🚫"
+        lines.append(f"{status} {prefix}<b>{c.name}</b> (id={c.id})")
+    text = "\n".join(lines) or "Категории не созданы"
+    return {"categories_text": text}
+
+async def get_events_list(dialog_manager: DialogManager, **kwargs):
+    session_factory = dialog_manager.middleware_data.get("session_factory")
+    events = EventsManager(session_factory)
+    page = dialog_manager.dialog_data.get('events_page', 0)
+    offset = page * EVENTS_PAGE_SIZE
+    
+    # Получаем фильтр публикации
+    pub_filter = dialog_manager.dialog_data.get('events_pub_filter', 'all')
+    
+    if pub_filter == 'published':
+        only_published = True
+    elif pub_filter == 'hidden':
+        only_published = False
+    else:  # 'all'
+        only_published = None
+    
+    items, total = await events.list_events(
+        only_published=only_published, 
+        limit=EVENTS_PAGE_SIZE, 
+        offset=offset
+    )
+    # Применяем поисковый фильтр если есть
+    search_query = dialog_manager.dialog_data.get('events_search', '').strip().lower()
+    if search_query:
+        filtered_items = []
+        for item in items:
+            if (search_query in item.title.lower() or 
+                (item.description and search_query in item.description.lower()) or
+                (item.location and search_query in item.location.lower())):
+                filtered_items.append(item)
+        items = filtered_items
+        total = len(items)
+        # Применяем пагинацию после фильтрации
+        items = items[offset:offset + EVENTS_PAGE_SIZE]
+    
+    lines = [f"{('✅' if e.is_published else '🚫')} <b>{e.title}</b> (id={e.id})" for e in items]
+    return {
+        "events_text": ("\n".join(lines) or "Мероприятий нет"),
+        "total_events": total,
+        "page": page,
+        "has_prev": page > 0,
+        "has_next": (offset + EVENTS_PAGE_SIZE) < total,
+        "events_items": [(f"{('✅' if e.is_published else '🚫')} {e.title}", str(e.id)) for e in items]
+    }
+
+async def on_events_prev(callback: CallbackQuery, button: Button, manager: DialogManager):
+    page = manager.dialog_data.get('events_page', 0)
+    if page > 0:
+        manager.dialog_data['events_page'] = page - 1
+    await manager.switch_to(Admin.events_menu)
+
+async def on_events_next(callback: CallbackQuery, button: Button, manager: DialogManager):
+    page = manager.dialog_data.get('events_page', 0)
+    manager.dialog_data['events_page'] = page + 1
+    await manager.switch_to(Admin.events_menu)
+
+async def on_event_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    manager.dialog_data['selected_event_id'] = int(item_id)
+    await manager.switch_to(Admin.event_details)
+
+
+
+async def on_events_set_filter(callback: CallbackQuery, button: Button, manager: DialogManager):
+    btn_id = button.widget_id
+    if btn_id == 'evt_filter_all':
+        manager.dialog_data['events_pub_filter'] = 'all'
+    elif btn_id == 'evt_filter_pub':
+        manager.dialog_data['events_pub_filter'] = 'published'
+    elif btn_id == 'evt_filter_hidden':
+        manager.dialog_data['events_pub_filter'] = 'hidden'
+    manager.dialog_data['events_page'] = 0
+    await manager.switch_to(Admin.events_menu)
+
+async def on_events_search_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if _is_skip(raw) or not raw:
+        manager.dialog_data['events_search'] = ''
+        await message.answer("🔍 Поиск очищен")
+    else:
+        manager.dialog_data['events_search'] = raw
+        await message.answer(f"🔍 Поиск установлен: {raw}")
+    manager.dialog_data['events_page'] = 0
+    await manager.switch_to(Admin.events_menu)
+
+async def get_event_admin_details(dialog_manager: DialogManager, **kwargs):
+    session_factory = dialog_manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    event_id = dialog_manager.dialog_data.get('selected_event_id')
+    item = await ev.get_event(event_id) if event_id else None
+    if not item:
+        return {"event_text": "Событие не найдено"}
+    text = (
+        f"<b>{item.title}</b>\n"
+        f"🆔 {item.id}\n"
+        f"Статус: {'✅ Опубликовано' if item.is_published else '🚫 Скрыто'}\n"
+    )
+    if item.start_at: text += f"🗓 {item.start_at}\n"
+    if item.location: text += f"📍 {item.location}\n"
+    try:
+        if item.category:
+            text += f"🗂 Категория: {item.category.name}\n"
+    except Exception:
+        pass
+    if item.link: text += f"🔗 {item.link}\n"
+    if getattr(item, 'image_file_id', None): text += f"🖼 Изображение: добавлено\n"
+    if item.description: text += f"\n{item.description}"
+    return {"event_text": text, "is_published": item.is_published, "has_image": bool(getattr(item, 'image_file_id', None))}
+
+async def on_event_delete(callback: CallbackQuery, button: Button, manager: DialogManager):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    event_id = manager.dialog_data.get('selected_event_id')
+    if event_id:
+        await ev.delete_event(event_id)
+        await callback.answer("🗑️ Удалено")
+    await manager.switch_to(Admin.events_menu)
+
+async def on_event_toggle_publish(callback: CallbackQuery, button: Button, manager: DialogManager):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    event_id = manager.dialog_data.get('selected_event_id')
+    item = await ev.get_event(event_id)
+    if item:
+        await ev.update_event(event_id, is_published=not item.is_published)
+        await callback.answer("Статус обновлён")
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_menu(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.switch_to(Admin.event_edit_menu)
+
+async def on_event_edit_title(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if not raw:
+        await message.answer("❌ Заголовок не может быть пустым")
+        return
+    if len(raw) > 255:
+        await message.answer("❌ Заголовок слишком длинный (максимум 255 символов)")
+        return
+    await ev.update_event(eid, title=raw)
+    await message.answer("✅ Заголовок обновлён")
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_datetime(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    from datetime import datetime as dt
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if not raw:
+        await ev.update_event(eid, start_at=None)
+        await message.answer("✅ Дата/время очищены")
+        await manager.switch_to(Admin.event_details)
+        return
+    try:
+        # Проверяем, есть ли уже сохранённая дата из предыдущего шага
+        base_date_str = manager.dialog_data.get('edit_date')
+        
+        # Если пользователь ввёл только время (ЧЧ:ММ) и есть сохранённая дата
+        if ":" in raw and "." not in raw and base_date_str:
+            try:
+                # Десериализуем дату из ISO строки
+                base_date = dt.fromisoformat(base_date_str)
+                hh, mm = raw.split(":", 1)
+                result = base_date.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+                await ev.update_event(eid, start_at=result)
+                await message.answer("✅ Дата и время обновлены")
+                manager.dialog_data.pop('edit_date', None)  # Очищаем сохранённую дату
+                await manager.switch_to(Admin.event_details)
+                return
+            except (ValueError, TypeError):
+                await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ")
+                return
+        
+        # Если пользователь ввёл дату и время вместе (ДД.ММ.ГГГГ ЧЧ:ММ)
+        if " " in raw:
+            d_part, t_part = raw.split(" ", 1)
+            d_val = dt.strptime(d_part.strip(), "%d.%m.%Y")
+            hh, mm = t_part.strip().split(":", 1)
+            result = d_val.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+            await ev.update_event(eid, start_at=result)
+            await message.answer("✅ Дата и время обновлены")
+            manager.dialog_data.pop('edit_date', None)  # Очищаем сохранённую дату
+            await manager.switch_to(Admin.event_details)
+            return
+        
+        # Если пользователь ввёл только дату (ДД.ММ.ГГГГ)
+        else:
+            date_val = dt.strptime(raw, "%d.%m.%Y")
+            # Сохраняем дату как ISO строку для JSON сериализации
+            manager.dialog_data['edit_date'] = date_val.isoformat()
+            await message.answer("✅ Дата принята. Теперь введите время в формате ЧЧ:ММ (или пусто)")
+            await manager.switch_to(Admin.event_edit_time)
+            return
+            
+    except Exception:
+        # Если есть сохранённая дата и пользователь ввёл только время
+        base_date_str = manager.dialog_data.get('edit_date')
+        if base_date_str and ":" in raw and "." not in raw:
+            await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ")
+        else:
+            await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ, ДД.ММ.ГГГГ ЧЧ:ММ, или просто ЧЧ:ММ если дата уже задана")
+
+async def on_event_edit_time(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    from datetime import datetime as dt, time as dtime
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    base_date_str = manager.dialog_data.get('edit_date')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if not base_date_str:
+        await message.answer("⚠️ Сначала введите дату")
+        await manager.switch_to(Admin.event_edit_datetime)
+        return
+    
+    # Десериализуем дату из ISO строки
+    try:
+        base_date = dt.fromisoformat(base_date_str)
+    except (ValueError, TypeError):
+        await message.answer("⚠️ Ошибка с сохранённой датой. Введите дату заново")
+        await manager.switch_to(Admin.event_edit_datetime)
+        return
+    
+    if raw and not _is_skip(raw) and raw.lower() not in {"пусто", "empty"}:
+        try:
+            hh, mm = raw.split(":", 1)
+            hh_i, mm_i = int(hh), int(mm)
+            result = base_date.replace(hour=hh_i, minute=mm_i, second=0, microsecond=0)
+        except Exception:
+            await message.answer("❌ Неверный формат времени. Используйте ЧЧ:ММ")
+            return
+    else:
+        result = base_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    await ev.update_event(eid, start_at=result)
+    await message.answer("✅ Дата и время обновлены")
+    manager.dialog_data.pop('edit_date', None)  # Очищаем сохранённую дату
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_location(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if _is_skip(raw):
+        await message.answer("↩️ Без изменений")
+        await manager.switch_to(Admin.event_details)
+        return
+    if raw.lower() in {"очистить", "clear"}:
+        await ev.update_event(eid, location=None)
+    else:
+        # Ограничиваем длину локации
+        if len(raw) > 255:
+            await message.answer("❌ Локация слишком длинная (максимум 255 символов)")
+            return
+        await ev.update_event(eid, location=raw)
+    await message.answer("✅ Локация обновлена")
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_description(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if _is_skip(raw):
+        await message.answer("↩️ Без изменений")
+        await manager.switch_to(Admin.event_details)
+        return
+    if raw.lower() in {"очистить", "clear"}:
+        await ev.update_event(eid, description=None)
+    else:
+        await ev.update_event(eid, description=raw)
+    await message.answer("✅ Описание обновлено")
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_link(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.event_details)
+        return
+    if _is_skip(raw):
+        await message.answer("↩️ Без изменений")
+        await manager.switch_to(Admin.event_details)
+        return
+    if raw.lower() in {"очистить", "clear"}:
+        await ev.update_event(eid, link=None)
+    else:
+        # Проверяем длину ссылки
+        if len(raw) > 512:
+            await message.answer("❌ Ссылка слишком длинная (максимум 512 символов)")
+            return
+        # Проверяем формат ссылки (базовая валидация)
+        if raw and not (raw.startswith('http://') or raw.startswith('https://') or raw.startswith('tg://')):
+            await message.answer("⚠️ Предупреждение: ссылка не начинается с http://, https:// или tg://")
+        await ev.update_event(eid, link=raw)
+    await message.answer("✅ Ссылка обновлена")
+    await manager.switch_to(Admin.event_details)
+
+async def on_event_edit_image(message: Message, message_input: MessageInput, manager: DialogManager):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    file_id = None
+    
+    # Проверяем фото
+    if getattr(message, 'photo', None):
+        try:
+            file_id = message.photo[-1].file_id
+        except (IndexError, AttributeError):
+            file_id = None
+    
+    # Проверяем документ (если не фото)
+    if not file_id and getattr(message, 'document', None):
+        try:
+            doc = message.document
+            # Проверяем размер файла (максимум 20MB для Telegram Bot API)
+            if doc.file_size and doc.file_size > 20 * 1024 * 1024:
+                await message.answer("❌ Файл слишком большой (максимум 20MB)")
+                return
+            # Проверяем MIME-type
+            if (doc.mime_type or '').startswith('image/'):
+                file_id = doc.file_id
+            else:
+                await message.answer("❌ Документ должен быть изображением")
+                return
+        except Exception:
+            file_id = None
+    
+    if not file_id:
+        await message.answer("❌ Пришлите фото или изображение документом")
+        return
+    
+    try:
+        await ev.update_event(eid, image_file_id=file_id)
+        await message.answer("✅ Изображение сохранено")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сохранения: {e}")
+    await manager.switch_to(Admin.event_details)
+
+
+
+async def on_category_create(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    raw = (message.text or "").strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.categories_menu)
+        return
+    if not raw:
+        await message.answer("❌ Пустое название категории")
+        return
+    name = raw
+    parent_id = None
+    if "|" in raw:
+        try:
+            name, parent_str = raw.split("|", 1)
+            name = name.strip()
+            parent_id = int(parent_str.strip()) if parent_str.strip() else None
+        except ValueError:
+            await message.answer("❌ Неверный формат parent_id. Используйте число или оставьте пустым")
+            return
+    if not name:
+        await message.answer("❌ Название категории не может быть пустым")
+        return
+    if len(name) > 255:
+        await message.answer("❌ Название категории слишком длинное (максимум 255 символов)")
+        return
+    try:
+        await ev.create_category(name=name, parent_id=parent_id)
+        await message.answer("✅ Категория создана")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+    await manager.switch_to(Admin.categories_menu)
+
+async def on_event_create(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    from datetime import datetime as dt
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    raw = (message.text or "").strip()
+    # Формат: Заголовок|YYYY-MM-DD HH:MM|Локация|КатегорияID|Ссылка
+    try:
+        if _is_cancel(raw):
+            await message.answer("↩️ Отменено")
+            await manager.switch_to(Admin.events_menu)
+            return
+        parts = [p.strip() for p in raw.split("|")]
+        title = parts[0]
+        start_at = dt.strptime(parts[1], "%Y-%m-%d %H:%M") if len(parts) > 1 and parts[1] else None
+        location = parts[2] if len(parts) > 2 else None
+        category_id = int(parts[3]) if len(parts) > 3 and parts[3] else None
+        link = parts[4] if len(parts) > 4 else None
+        await ev.create_event(title=title, start_at=start_at, location=location, category_id=category_id, link=link)
+        await message.answer("✅ Мероприятие создано")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+    await manager.switch_to(Admin.events_menu)
+
+# --- Создание события (пошагово) ---
+async def on_cr_title(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    title = (message.text or "").strip()
+    if _is_cancel(title):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if not title:
+        await message.answer("❌ Введите заголовок или отмените создание")
+        return
+    if len(title) > 255:
+        await message.answer("❌ Заголовок слишком длинный (максимум 255 символов)")
+        return
+    manager.dialog_data['cr_title'] = title
+    await manager.switch_to(Admin.event_create_datetime)
+
+async def on_cr_date(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or "").strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if raw:
+        try:
+            from datetime import datetime as dt
+            if " " in raw:
+                d_part, t_part = raw.split(" ", 1)
+                d_val = dt.strptime(d_part.strip(), "%d.%m.%Y")
+                hh, mm = t_part.strip().split(":", 1)
+                result_dt = d_val.replace(hour=int(hh), minute=int(mm), second=0, microsecond=0)
+                # Сохраняем дату с временем как ISO строку
+                manager.dialog_data['cr_dt'] = result_dt.isoformat()
+                manager.dialog_data['cr_time'] = (int(hh), int(mm))
+            else:
+                date_val = dt.strptime(raw, "%d.%m.%Y")
+                # Сохраняем дату как ISO строку для JSON сериализации
+                manager.dialog_data['cr_dt'] = date_val.isoformat()
+        except ValueError:
+            await message.answer("❌ Неверный формат. Используйте ДД.ММ.ГГГГ или ДД.ММ.ГГГГ ЧЧ:ММ")
+            return
+    else:
+        manager.dialog_data['cr_dt'] = None
+    # Если дата указана — спрашиваем время, иначе переходим к локации
+    if manager.dialog_data.get('cr_dt') and not manager.dialog_data.get('cr_time'):
+        await manager.switch_to(Admin.event_create_time)
+    else:
+        await manager.switch_to(Admin.event_create_location)
+
+async def on_cr_location(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or "").strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if raw and len(raw) > 255:
+        await message.answer("❌ Локация слишком длинная (максимум 255 символов)")
+        return
+    manager.dialog_data['cr_loc'] = raw
+    await manager.switch_to(Admin.event_create_description)
+
+async def on_cr_desc(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or "").strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    manager.dialog_data['cr_desc'] = raw
+    await manager.switch_to(Admin.event_create_link)
+
+async def on_cr_link(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    txt = (message.text or "").strip()
+    if _is_cancel(txt):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if txt.lower() in {"пропустить", "skip", "-"}:
+        manager.dialog_data['cr_link'] = ''
+    else:
+        if txt and len(txt) > 512:
+            await message.answer("❌ Ссылка слишком длинная (максимум 512 символов)")
+            return
+        if txt and not (txt.startswith('http://') or txt.startswith('https://') or txt.startswith('tg://')):
+            await message.answer("⚠️ Предупреждение: ссылка не начинается с http://, https:// или tg://")
+        manager.dialog_data['cr_link'] = txt
+    await manager.switch_to(Admin.event_create_confirm)
+
+
+
+async def on_cr_time(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or '').strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.events_menu)
+        return
+    if _is_skip(raw) or raw.lower() in {"пусто", "empty"}:
+        manager.dialog_data['cr_time'] = (0, 0)
+        await manager.switch_to(Admin.event_create_location)
+        return
+    try:
+        hh, mm = raw.split(":", 1)
+        manager.dialog_data['cr_time'] = (int(hh), int(mm))
+        await manager.switch_to(Admin.event_create_location)
+    except Exception:
+        await message.answer("❌ Неверный формат. Используйте ЧЧ:ММ, 'пропустить' или 'пусто'")
+
+async def on_cr_confirm(callback: CallbackQuery, button: Button, manager: DialogManager):
+    session_factory = manager.middleware_data.get("session_factory")
+    evm = EventsManager(session_factory)
+    from datetime import datetime as dt
+    title = manager.dialog_data.get('cr_title')
+    date_str = manager.dialog_data.get('cr_dt')
+    time_tuple = manager.dialog_data.get('cr_time') or (0, 0)
+    
+    if date_str is None:
+        start_at = None
+    else:
+        try:
+            # Десериализуем дату из ISO строки
+            date_obj = dt.fromisoformat(date_str)
+            # Если время уже было установлено при парсинге (дата+время), используем как есть
+            if date_obj.hour != 0 or date_obj.minute != 0:
+                start_at = date_obj
+            else:
+                # Иначе добавляем время из отдельного поля
+                start_at = date_obj.replace(hour=time_tuple[0], minute=time_tuple[1], second=0, microsecond=0)
+        except (ValueError, TypeError):
+            start_at = None
+    
+    location = manager.dialog_data.get('cr_loc') or None
+    description = manager.dialog_data.get('cr_desc') or None
+    link = manager.dialog_data.get('cr_link') or None
+    await evm.create_event(
+        title=title,
+        start_at=start_at,
+        location=location,
+        description=description,
+        link=link,
+    )
+    await callback.answer("✅ Создано")
+    await manager.switch_to(Admin.events_menu)
+
+async def on_event_show_image(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot: Bot = manager.middleware_data.get("bot")
+    session_factory = manager.middleware_data.get("session_factory")
+    ev = EventsManager(session_factory)
+    eid = manager.dialog_data.get('selected_event_id')
+    item = await ev.get_event(eid) if eid else None
+    if not item or not getattr(item, 'image_file_id', None):
+        await callback.answer("❌ Изображение не задано", show_alert=True)
+        return
+    
+    # Формируем текст мероприятия
+    text = f"<b>{item.title}</b>\n"
+    if item.start_at: 
+        text += f"🗓 {item.start_at.strftime('%d.%m.%Y %H:%M')}\n"
+    if item.location: 
+        text += f"📍 {item.location}\n"
+    try:
+        if item.category:
+            text += f"🗂 Категория: {item.category.name}\n"
+    except Exception:
+        pass
+    if item.link: 
+        text += f"🔗 {item.link}\n"
+    if item.description: 
+        text += f"\n{item.description}"
+    
+    try:
+        # Пытаемся отправить как фото с подписью
+        await bot.send_photo(
+            callback.from_user.id, 
+            item.image_file_id,
+            caption=text,
+            parse_mode="HTML"
+        )
+    except Exception:
+        try:
+            # Если не получается как фото, отправляем как документ с подписью
+            await bot.send_document(
+                callback.from_user.id, 
+                item.image_file_id,
+                caption=text,
+                parse_mode="HTML"
+            )
+        except Exception:
+            # Если совсем не получается, отправляем отдельно изображение и текст
+            try:
+                await bot.send_photo(callback.from_user.id, item.image_file_id)
+                await bot.send_message(callback.from_user.id, text, parse_mode="HTML")
+            except Exception:
+                await callback.answer("❌ Не удалось отправить изображение", show_alert=True)
+
+async def get_create_preview(dialog_manager: DialogManager, **kwargs):
+    title = dialog_manager.dialog_data.get('cr_title') or "(нет)"
+    date_str = dialog_manager.dialog_data.get('cr_dt')
+    time_tuple = dialog_manager.dialog_data.get('cr_time') or (0, 0)
+    dt_text = "(нет)"
+    if date_str is not None:
+        try:
+            from datetime import datetime as dt
+            date_obj = dt.fromisoformat(date_str)
+            # Если время уже установлено в дате, используем его
+            if date_obj.hour != 0 or date_obj.minute != 0:
+                dt_text = date_obj.strftime('%d.%m.%Y %H:%M')
+            else:
+                # Иначе добавляем время из отдельного поля
+                dt_full = date_obj.replace(hour=time_tuple[0], minute=time_tuple[1], second=0, microsecond=0)
+                dt_text = dt_full.strftime('%d.%m.%Y %H:%M')
+        except Exception:
+            dt_text = "(ошибка формата)"
+    location = dialog_manager.dialog_data.get('cr_loc') or "(нет)"
+    description = dialog_manager.dialog_data.get('cr_desc') or "(нет)"
+    link = dialog_manager.dialog_data.get('cr_link') or "(нет)"
+    text = (
+        f"<b>Предпросмотр</b>\n\n"
+        f"Название: <b>{title}</b>\n"
+        f"Дата/время: <b>{dt_text}</b>\n"
+        f"Локация: <b>{location}</b>\n"
+        f"Ссылка: <b>{link}</b>\n\n"
+        f"Описание:\n{description}"
+    )
+    return {"create_preview": text}
 
 async def on_edit_fall_semester(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Переход к редактированию даты осеннего семестра."""
@@ -602,21 +1280,50 @@ async def on_cancel_generation(callback: CallbackQuery):
 
 
 admin_dialog = Dialog(
+    # Главный экран: разделы
     Window(
-        Const("👑 <b>Админ-панель</b>\n\nВыберите действие:"),
+        Const("👑 <b>Админ-панель</b>\n\nВыберите раздел:"),
+        Row(
+            SwitchTo(Const("📬 Рассылки"), id="section_broadcasts", state=Admin.broadcast_menu),
+            SwitchTo(Const("🧪 Диагностика"), id="section_diagnostics", state=Admin.diagnostics_menu),
+        ),
+        Row(
+            SwitchTo(Const("🧹 Кэш и генерация"), id="section_cache", state=Admin.cache_menu),
+            SwitchTo(Const("⚙️ Настройки"), id="section_settings", state=Admin.semester_settings),
+        ),
+        Row(
+            SwitchTo(Const("👤 Пользователи"), id="section_users", state=Admin.enter_user_id),
+            SwitchTo(Const("🎉 Мероприятия"), id="section_events", state=Admin.events_menu),
+        ),
         SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
-        SwitchTo(Const("👤 Управление пользователем"), id="manage_user", state=Admin.enter_user_id),
-        SwitchTo(Const("📣 Сделать рассылку"), id=WidgetIds.BROADCAST, state=Admin.broadcast),
-        SwitchTo(Const("🎯 Сегментированная рассылка"), id="segmented", state=Admin.segment_menu),
-        Button(Const("⚙️ Тест утренней рассылки"), id=WidgetIds.TEST_MORNING, on_click=on_test_morning),
-        Button(Const("⚙️ Тест вечерней рассылки"), id=WidgetIds.TEST_EVENING, on_click=on_test_evening),
-        Button(Const("🧪 Тест напоминаний о парах"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
-        Button(Const("🧪 Тест алёрта"), id="test_alert", on_click=on_test_alert),
-        Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache", on_click=on_clear_cache),
-        Button(Const("📸 Сгенерировать полное расписание"), id=WidgetIds.GENERATE_FULL_SCHEDULE, on_click=on_generate_full_schedule),
-        Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated_groups", on_click=on_check_graduated_groups),
-        SwitchTo(Const("📅 Настройки семестров"), id="semester_settings", state=Admin.semester_settings),
         state=Admin.menu
+    ),
+    # Раздел: Рассылки
+    Window(
+        Const("📬 Раздел ‘Рассылки’"),
+        SwitchTo(Const("📣 Массовая рассылка"), id="go_broadcast", state=Admin.broadcast),
+        SwitchTo(Const("🎯 Сегментированная"), id="go_segment", state=Admin.segment_menu),
+        SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_broadcasts", state=Admin.menu),
+        state=Admin.broadcast_menu
+    ),
+    # Раздел: Диагностика
+    Window(
+        Const("🧪 Раздел ‘Диагностика’"),
+        Button(Const("⚙️ Тест утренней"), id=WidgetIds.TEST_MORNING, on_click=on_test_morning),
+        Button(Const("⚙️ Тест вечерней"), id=WidgetIds.TEST_EVENING, on_click=on_test_evening),
+        Button(Const("🧪 Тест напоминаний"), id=WidgetIds.TEST_REMINDERS, on_click=on_test_reminders_for_week),
+        Button(Const("🧪 Тест алёрта"), id="test_alert2", on_click=on_test_alert),
+        SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_diag", state=Admin.menu),
+        state=Admin.diagnostics_menu
+    ),
+    # Раздел: Кэш и генерация
+    Window(
+        Const("🧹 Раздел ‘Кэш и генерация’"),
+        Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache2", on_click=on_clear_cache),
+        Button(Const("📸 Сгенерировать полное расписание"), id="gen_full2", on_click=on_generate_full_schedule),
+        Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated2", on_click=on_check_graduated_groups),
+        SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_cache", state=Admin.menu),
+        state=Admin.cache_menu
     ),
     Window(
         Format("{stats_text}"),
@@ -706,5 +1413,178 @@ admin_dialog = Dialog(
         TextInput(id="spring_semester_input", on_success=on_spring_semester_input),
         SwitchTo(Const("◀️ Назад"), id="spring_semester_back", state=Admin.semester_settings),
         state=Admin.edit_spring_semester
-    )
+    ),
+    # --- Категории (админ) ---
+    Window(
+        Format("🗂 <b>Категории мероприятий</b>\n\n{categories_text}"),
+        SwitchTo(Const("➕ Создать"), id="cat_create", state=Admin.category_create),
+        SwitchTo(Const("◀️ Назад"), id="cat_back", state=Admin.menu),
+        state=Admin.categories_menu,
+        getter=get_categories_list,
+        parse_mode="HTML"
+    ),
+    Window(
+        Const("Введите название категории (или напишите 'отмена'). Для подкатегории укажите: Название|parent_id"),
+        TextInput(id="cat_create_input", on_success=on_category_create),
+        SwitchTo(Const("◀️ Назад"), id="cat_create_back", state=Admin.categories_menu),
+        state=Admin.category_create
+    ),
+    # --- Мероприятия (админ) ---
+    Window(
+        Format("🎫 <b>Мероприятия</b> (всего: {total_events})\nСтр. {page}\n\n🔍 Поиск: введите текст или 'отмена'/'пропустить' для сброса"),
+        Row(
+            Button(Const("Показать все"), id="evt_filter_all", on_click=on_events_set_filter),
+            Button(Const("Опубликованные"), id="evt_filter_pub", on_click=on_events_set_filter),
+            Button(Const("Скрытые"), id="evt_filter_hidden", on_click=on_events_set_filter),
+        ),
+        # Поле ввода не является клавиатурным виджетом, его нельзя вкладывать в Row
+        TextInput(id="evt_search_input", on_success=on_events_search_input),
+        Row(
+            Button(Const("⬅️"), id="evt_prev", on_click=on_events_prev, when="has_prev"),
+            Button(Const("➡️"), id="evt_next", on_click=on_events_next, when="has_next"),
+        ),
+        Column(
+            Select(
+                Format("{item[0]}"),
+                id="admin_events_select",
+                item_id_getter=lambda item: item[1],
+                items="events_items",
+                on_click=on_event_selected,
+            ),
+        ),
+        Row(
+            SwitchTo(Const("➕ Создать"), id="evt_create", state=Admin.event_create_title),
+            SwitchTo(Const("◀️ Назад"), id="evt_back", state=Admin.menu),
+        ),
+        state=Admin.events_menu,
+        getter=get_events_list,
+        parse_mode="HTML"
+    ),
+    Window(
+        Format("{event_text}"),
+        Row(
+            Button(Const("👁️/🙈 Публиковать"), id="evt_toggle", on_click=on_event_toggle_publish),
+        ),
+        Row(
+            Button(Const("🖼 Предпросмотр"), id="evt_show_image", on_click=on_event_show_image, when="has_image"),
+        ),
+        Row(
+            SwitchTo(Const("📝 Заголовок"), id="evt_quick_title", state=Admin.event_edit_title),
+            SwitchTo(Const("📅 Дата/время"), id="evt_quick_dt", state=Admin.event_edit_datetime),
+        ),
+        Row(
+            SwitchTo(Const("📍 Локация"), id="evt_quick_loc", state=Admin.event_edit_location),
+        ),
+        Row(
+            SwitchTo(Const("📝 Описание"), id="evt_quick_desc", state=Admin.event_edit_description),
+            SwitchTo(Const("🔗 Ссылка"), id="evt_quick_link", state=Admin.event_edit_link),
+        ),
+        Row(
+            SwitchTo(Const("🖼 Изображение"), id="evt_quick_img", state=Admin.event_edit_image),
+        ),
+        Row(
+            SwitchTo(Const("🗑️ Удалить"), id="evt_delete_confirm", state=Admin.event_delete_confirm),
+            SwitchTo(Const("◀️ Назад"), id="evt_details_back", state=Admin.events_menu),
+        ),
+        state=Admin.event_details,
+        getter=get_event_admin_details,
+        parse_mode="HTML"
+    ),
+    Window(
+        Const("Удалить это мероприятие? Это действие необратимо."),
+        Row(
+            Button(Const("✅ Да, удалить"), id="evt_delete", on_click=on_event_delete),
+            SwitchTo(Const("◀️ Отмена"), id="evt_delete_cancel", state=Admin.event_details),
+        ),
+        state=Admin.event_delete_confirm
+    ),    
+    Window(
+        Const("Введите новый заголовок (или напишите 'отмена'):"),
+        TextInput(id="evt_edit_title_input", on_success=on_event_edit_title),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_title_back", state=Admin.event_details),
+        state=Admin.event_edit_title
+    ),
+    Window(
+        Const("Отправьте фото или изображение документом. Будет сохранён file_id для отправки пользователям."),
+        MessageInput(on_event_edit_image, content_types=[ContentType.PHOTO, ContentType.DOCUMENT]),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_image_back", state=Admin.event_details),
+        state=Admin.event_edit_image
+    ),
+    Window(
+        Const("Введите дату в формате ДД.ММ.ГГГГ, дату и время ДД.ММ.ГГГГ ЧЧ:ММ, или только время ЧЧ:ММ если дата уже задана (пусто для очистки, 'отмена' для отмены):"),
+        TextInput(id="evt_edit_dt_input", on_success=on_event_edit_datetime),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_dt_back", state=Admin.event_details),
+        state=Admin.event_edit_datetime
+    ),
+    Window(
+        Const("Введите время в формате ЧЧ:ММ (или 'пусто'/'пропустить' для 00:00, или 'отмена'):"),
+        TextInput(id="evt_edit_time_input", on_success=on_event_edit_time),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_time_back", state=Admin.event_edit_datetime),
+        state=Admin.event_edit_time
+    ),
+    Window(
+        Const("Введите локацию (или пусто для очистки, или напишите 'отмена'):"),
+        TextInput(id="evt_edit_loc_input", on_success=on_event_edit_location),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_loc_back", state=Admin.event_details),
+        state=Admin.event_edit_location
+    ),
+
+    Window(
+        Const("Введите описание (или пусто для очистки, или напишите 'отмена'):"),
+        TextInput(id="evt_edit_desc_input", on_success=on_event_edit_description),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_desc_back", state=Admin.event_details),
+        state=Admin.event_edit_description
+    ),
+    Window(
+        Const("Введите ссылку (или пусто для очистки, или напишите 'отмена'):"),
+        TextInput(id="evt_edit_link_input", on_success=on_event_edit_link),
+        SwitchTo(Const("◀️ Назад"), id="evt_edit_link_back", state=Admin.event_details),
+        state=Admin.event_edit_link
+    ),
+    Window(
+        Const("Шаг 1/6: Введите заголовок (или напишите 'отмена'):"),
+        TextInput(id="evt_cr_title", on_success=on_cr_title),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_title_back", state=Admin.events_menu),
+        state=Admin.event_create_title
+    ),
+    Window(
+        Const("Шаг 2/7: Введите дату в формате ДД.ММ.ГГГГ (или напишите 'пропустить' для без даты, или 'отмена'):"),
+        TextInput(id="evt_cr_dt", on_success=on_cr_date),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_dt_back", state=Admin.event_create_title),
+        state=Admin.event_create_datetime
+    ),
+    Window(
+        Const("Шаг 3/7: Введите время в формате ЧЧ:ММ (или 'пропустить'/'пусто' для 00:00, или 'отмена'):"),
+        TextInput(id="evt_cr_time", on_success=on_cr_time),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_time_back", state=Admin.event_create_datetime),
+        state=Admin.event_create_time
+    ),
+    Window(
+        Const("Шаг 4/6: Введите локацию (или напишите 'пропустить' / 'очистить', или 'отмена'):"),
+        TextInput(id="evt_cr_loc", on_success=on_cr_location),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_loc_back", state=Admin.event_create_time),
+        state=Admin.event_create_location
+    ),
+    Window(
+        Const("Шаг 5/6: Введите описание (или напишите 'пропустить' / 'очистить', или 'отмена'):"),
+        TextInput(id="evt_cr_desc", on_success=on_cr_desc),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_desc_back", state=Admin.event_create_location),
+        state=Admin.event_create_description
+    ),
+    Window(
+        Const("Шаг 6/6: Введите ссылку (или напишите 'пропустить' / 'очистить', или 'отмена'):"),
+        TextInput(id="evt_cr_link", on_success=on_cr_link),
+        SwitchTo(Const("◀️ Назад"), id="evt_cr_link_back", state=Admin.event_create_description),
+        state=Admin.event_create_link
+    ),
+    Window(
+        Format("{create_preview}"),
+        Row(
+            Button(Const("✅ Создать"), id="evt_cr_confirm", on_click=on_cr_confirm),
+            SwitchTo(Const("◀️ Назад"), id="evt_cr_conf_back", state=Admin.event_create_link),
+        ),
+        state=Admin.event_create_confirm,
+        getter=get_create_preview,
+        parse_mode="HTML"
+    ),
 )
