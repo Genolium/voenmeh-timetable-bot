@@ -302,21 +302,36 @@ async def get_event_admin_details(dialog_manager: DialogManager, **kwargs):
     item = await ev.get_event(event_id) if event_id else None
     if not item:
         return {"event_text": "Событие не найдено"}
-    text = (
-        f"<b>{item.title}</b>\n"
-        f"🆔 {item.id}\n"
-        f"Статус: {'✅ Опубликовано' if item.is_published else '🚫 Скрыто'}\n"
-    )
-    if item.start_at: text += f"🗓 {item.start_at}\n"
-    if item.location: text += f"📍 {item.location}\n"
-    try:
-        if item.category:
-            text += f"🗂 Категория: {item.category.name}\n"
-    except Exception:
-        pass
-    if item.link: text += f"🔗 {item.link}\n"
-    if getattr(item, 'image_file_id', None): text += f"🖼 Изображение: добавлено\n"
-    if item.description: text += f"\n{item.description}"
+    text_parts = [
+        f"<b>{item.title}</b>",
+        f"🆔 {item.id}",
+        f"Статус: {'✅ Опубликовано' if item.is_published else '🚫 Скрыто'}"
+    ]
+    
+    # Дата/время (если указана и не 00:00)
+    if item.start_at:
+        if item.start_at.hour == 0 and item.start_at.minute == 0:
+            text_parts.append(f"🗓 {item.start_at.strftime('%d.%m.%Y')}")
+        else:
+            text_parts.append(f"🗓 {item.start_at.strftime('%d.%m.%Y %H:%M')}")
+    
+    # Локация (если указана)
+    if item.location and item.location.strip():
+        text_parts.append(f"📍 {item.location}")
+    
+    # Ссылка (если указана)
+    if item.link and item.link.strip():
+        text_parts.append(f"🔗 {item.link}")
+    
+    # Изображение (если есть)
+    if getattr(item, 'image_file_id', None):
+        text_parts.append("🖼 Изображение: добавлено")
+    
+    # Описание (если указано)
+    if item.description and item.description.strip():
+        text_parts.append(f"\n{item.description}")
+    
+    text = "\n".join(text_parts)
     return {"event_text": text, "is_published": item.is_published, "has_image": bool(getattr(item, 'image_file_id', None))}
 
 async def on_event_delete(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -827,10 +842,21 @@ async def on_event_show_image(callback: CallbackQuery, button: Button, manager: 
                 await callback.answer("❌ Не удалось отправить изображение", show_alert=True)
 
 async def get_create_preview(dialog_manager: DialogManager, **kwargs):
-    title = dialog_manager.dialog_data.get('cr_title') or "(нет)"
+    title = dialog_manager.dialog_data.get('cr_title')
     date_str = dialog_manager.dialog_data.get('cr_dt')
     time_tuple = dialog_manager.dialog_data.get('cr_time') or (0, 0)
-    dt_text = "(нет)"
+    location = dialog_manager.dialog_data.get('cr_loc')
+    description = dialog_manager.dialog_data.get('cr_desc')
+    link = dialog_manager.dialog_data.get('cr_link')
+    
+    # Формируем текст предпросмотра
+    text_parts = ["<b>Предпросмотр</b>\n"]
+    
+    # Название (обязательное)
+    if title:
+        text_parts.append(f"Название: <b>{title}</b>")
+    
+    # Дата/время (если указана)
     if date_str is not None:
         try:
             from datetime import datetime as dt
@@ -841,21 +867,28 @@ async def get_create_preview(dialog_manager: DialogManager, **kwargs):
             else:
                 # Иначе добавляем время из отдельного поля
                 dt_full = date_obj.replace(hour=time_tuple[0], minute=time_tuple[1], second=0, microsecond=0)
-                dt_text = dt_full.strftime('%d.%m.%Y %H:%M')
+                # Если время 00:00, показываем только дату
+                if dt_full.hour == 0 and dt_full.minute == 0:
+                    dt_text = dt_full.strftime('%d.%m.%Y')
+                else:
+                    dt_text = dt_full.strftime('%d.%m.%Y %H:%M')
+            text_parts.append(f"Дата/время: <b>{dt_text}</b>")
         except Exception:
-            dt_text = "(ошибка формата)"
-    location = dialog_manager.dialog_data.get('cr_loc') or "(нет)"
-    description = dialog_manager.dialog_data.get('cr_desc') or "(нет)"
-    link = dialog_manager.dialog_data.get('cr_link') or "(нет)"
-    text = (
-        f"<b>Предпросмотр</b>\n\n"
-        f"Название: <b>{title}</b>\n"
-        f"Дата/время: <b>{dt_text}</b>\n"
-        f"Локация: <b>{location}</b>\n"
-        f"Ссылка: <b>{link}</b>\n\n"
-        f"Описание:\n{description}"
-    )
-    return {"create_preview": text}
+            text_parts.append("Дата/время: <b>(ошибка формата)</b>")
+    
+    # Локация (если указана)
+    if location:
+        text_parts.append(f"Локация: <b>{location}</b>")
+    
+    # Ссылка (если указана)
+    if link:
+        text_parts.append(f"Ссылка: <b>{link}</b>")
+    
+    # Описание (если указано)
+    if description:
+        text_parts.append(f"\nОписание:\n{description}")
+    
+    return {"create_preview": "\n".join(text_parts)}
 
 async def on_edit_fall_semester(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Переход к редактированию даты осеннего семестра."""

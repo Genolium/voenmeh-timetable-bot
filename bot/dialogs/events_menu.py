@@ -65,18 +65,31 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
     event = await manager.get_event(event_id) if event_id else None
     if not event:
         return {"details": "Событие не найдено", "has_link": False, "event_link": "", "has_image": False, "image_file_id": ""}
-    text = f"<b>{event.title}</b>\n"
+    
+    # Формируем детали мероприятия
+    text_parts = [f"<b>{event.title}</b>"]
+    
+    # Дата/время (если указана и не 00:00)
     if event.start_at:
-        text += f"🗓 {event.start_at.strftime('%d.%m.%Y %H:%M')}\n"
-    if event.location:
-        text += f"📍 {event.location}\n"
+        if event.start_at.hour == 0 and event.start_at.minute == 0:
+            # Показываем только дату без времени
+            text_parts.append(f"🗓 {event.start_at.strftime('%d.%m.%Y')}")
+        else:
+            # Показываем дату и время
+            text_parts.append(f"🗓 {event.start_at.strftime('%d.%m.%Y %H:%M')}")
+    
+    # Локация (если указана)
+    if event.location and event.location.strip():
+        text_parts.append(f"📍 {event.location}")
 
-    if event.description:
-        text += f"\n{event.description}"
+    # Описание (если указано)
+    if event.description and event.description.strip():
+        text_parts.append(f"\n{event.description}")
+    
     link = (event.link or "").strip()
     link_valid = link and (link.startswith("http://") or link.startswith("https://") or link.startswith("tg://"))
     return {
-        "details": text,
+        "details": "\n".join(text_parts),
         "has_link": link_valid,
         "event_link": link if link_valid else "",
         "has_image": bool(getattr(event, "image_file_id", None)),
