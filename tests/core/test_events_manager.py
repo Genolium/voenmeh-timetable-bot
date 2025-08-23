@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.pool import StaticPool
 
-from core.db.models import Base, Event, EventCategory
+from core.db.models import Base, Event
 from core.events_manager import EventsManager
 
 
@@ -34,18 +34,7 @@ async def events_manager(async_session):
 
 
 @pytest.fixture
-async def sample_category(async_session):
-    """Создание тестовой категории"""
-    async with async_session() as session:
-        category = EventCategory(name="Тестовая категория", sort_order=1, is_active=True)
-        session.add(category)
-        await session.commit()
-        await session.refresh(category)
-        return category
-
-
-@pytest.fixture
-async def sample_event(async_session, sample_category):
+async def sample_event(async_session):
     """Создание тестового события"""
     async with async_session() as session:
         event = Event(
@@ -54,7 +43,6 @@ async def sample_event(async_session, sample_category):
             start_at=datetime(2025, 12, 31, 23, 59, 0),
             location="Тестовая локация",
             link="https://example.com",
-            category_id=sample_category.id,
             is_published=True
         )
         session.add(event)
@@ -73,108 +61,9 @@ class TestEventsManager:
         manager = EventsManager(async_session)
         assert manager.session_factory == async_session
 
-    async def test_list_categories_empty(self, events_manager):
-        """Тест получения пустого списка категорий"""
-        categories = await events_manager.list_categories()
-        assert categories == []
 
-    async def test_create_category_basic(self, events_manager):
-        """Тест создания простой категории"""
-        category_id = await events_manager.create_category("Новая категория")
-        assert isinstance(category_id, int)
-        assert category_id > 0
-        
-        categories = await events_manager.list_categories()
-        assert len(categories) == 1
-        assert categories[0].name == "Новая категория"
-        assert categories[0].parent_id is None
-        assert categories[0].sort_order == 0
-        assert categories[0].is_active is True
 
-    async def test_create_category_with_params(self, events_manager):
-        """Тест создания категории с параметрами"""
-        parent_id = await events_manager.create_category("Родительская")
-        child_id = await events_manager.create_category(
-            "Дочерняя", 
-            parent_id=parent_id, 
-            sort_order=5, 
-            is_active=False
-        )
-        
-        categories = await events_manager.list_categories(only_active=False)
-        child_category = next(c for c in categories if c.id == child_id)
-        
-        assert child_category.name == "Дочерняя"
-        assert child_category.parent_id == parent_id
-        assert child_category.sort_order == 5
-        assert child_category.is_active is False
 
-    async def test_create_category_strips_name(self, events_manager):
-        """Тест обрезки пробелов в названии категории"""
-        category_id = await events_manager.create_category("  Категория с пробелами  ")
-        categories = await events_manager.list_categories()
-        assert categories[0].name == "Категория с пробелами"
-
-    async def test_list_categories_only_active(self, events_manager):
-        """Тест фильтрации активных категорий"""
-        await events_manager.create_category("Активная", is_active=True)
-        await events_manager.create_category("Неактивная", is_active=False)
-        
-        active_categories = await events_manager.list_categories(only_active=True)
-        all_categories = await events_manager.list_categories(only_active=False)
-        
-        assert len(active_categories) == 1
-        assert len(all_categories) == 2
-        assert active_categories[0].name == "Активная"
-
-    async def test_update_category_name(self, events_manager, sample_category):
-        """Тест обновления названия категории"""
-        result = await events_manager.update_category(sample_category.id, name="Новое название")
-        assert result is True
-        
-        categories = await events_manager.list_categories()
-        assert categories[0].name == "Новое название"
-
-    async def test_update_category_strips_name(self, events_manager, sample_category):
-        """Тест обрезки пробелов при обновлении названия"""
-        await events_manager.update_category(sample_category.id, name="  Новое название  ")
-        categories = await events_manager.list_categories()
-        assert categories[0].name == "Новое название"
-
-    async def test_update_category_parent_id(self, events_manager, sample_category):
-        """Тест обновления parent_id категории"""
-        parent_id = await events_manager.create_category("Родитель")
-        await events_manager.update_category(sample_category.id, parent_id=parent_id)
-        
-        categories = await events_manager.list_categories()
-        updated_category = next(c for c in categories if c.id == sample_category.id)
-        assert updated_category.parent_id == parent_id
-
-    async def test_update_category_sort_order(self, events_manager, sample_category):
-        """Тест обновления порядка сортировки"""
-        await events_manager.update_category(sample_category.id, sort_order=10)
-        categories = await events_manager.list_categories()
-        assert categories[0].sort_order == 10
-
-    async def test_update_category_is_active(self, events_manager, sample_category):
-        """Тест обновления статуса активности"""
-        await events_manager.update_category(sample_category.id, is_active=False)
-        categories = await events_manager.list_categories(only_active=False)
-        updated_category = next(c for c in categories if c.id == sample_category.id)
-        assert updated_category.is_active is False
-
-    async def test_update_category_no_values(self, events_manager, sample_category):
-        """Тест обновления категории без параметров"""
-        result = await events_manager.update_category(sample_category.id)
-        assert result is True
-
-    async def test_delete_category(self, events_manager, sample_category):
-        """Тест удаления категории"""
-        result = await events_manager.delete_category(sample_category.id)
-        assert result is True
-        
-        categories = await events_manager.list_categories()
-        assert len(categories) == 0
 
     # --- Тесты событий ---
 
@@ -194,11 +83,11 @@ class TestEventsManager:
         assert count == 1
         assert events[0].title == "Тестовое событие"
 
-    async def test_create_event_with_all_params(self, events_manager, sample_category):
+    async def test_create_event_with_all_params(self, events_manager):
         """Тест создания события со всеми параметрами"""
         start_time = datetime(2025, 12, 31, 23, 59, 0)
         end_time = datetime(2026, 1, 1, 0, 30, 0)
-        
+
         event_id = await events_manager.create_event(
             title="Полное событие",
             description="Полное описание",
@@ -207,7 +96,6 @@ class TestEventsManager:
             location="Тестовая локация",
             link="https://example.com",
             image_file_id="test_file_id",
-            category_id=sample_category.id,
             is_published=False
         )
         
@@ -219,7 +107,6 @@ class TestEventsManager:
         assert event.location == "Тестовая локация"
         assert event.link == "https://example.com"
         assert event.image_file_id == "test_file_id"
-        assert event.category_id == sample_category.id
         assert event.is_published is False
 
     async def test_create_event_strips_fields(self, events_manager):
@@ -279,14 +166,9 @@ class TestEventsManager:
         event = await events_manager.get_event(99999)
         assert event is None
 
-    async def test_get_event_with_category(self, events_manager, sample_event, sample_category):
-        """Тест получения события с загруженной категорией"""
-        event = await events_manager.get_event(sample_event.id)
-        assert event.category is not None
-        assert event.category.id == sample_category.id
-        assert event.category.name == sample_category.name
 
-    async def test_list_events_published_filter(self, events_manager, sample_category):
+
+    async def test_list_events_published_filter(self, events_manager):
         """Тест фильтрации опубликованных событий"""
         await events_manager.create_event(title="Опубликованное", is_published=True)
         await events_manager.create_event(title="Неопубликованное", is_published=False)
@@ -301,21 +183,7 @@ class TestEventsManager:
         assert published_events[0].title == "Опубликованное"
         assert unpublished_events[0].title == "Неопубликованное"
 
-    async def test_list_events_category_filter(self, events_manager, sample_category):
-        """Тест фильтрации событий по категории"""
-        other_category_id = await events_manager.create_category("Другая категория")
-        
-        await events_manager.create_event(title="В основной категории", category_id=sample_category.id)
-        await events_manager.create_event(title="В другой категории", category_id=other_category_id)
-        await events_manager.create_event(title="Без категории")
-        
-        main_events, main_count = await events_manager.list_events(category_id=sample_category.id)
-        other_events, other_count = await events_manager.list_events(category_id=other_category_id)
-        
-        assert main_count == 1
-        assert other_count == 1
-        assert main_events[0].title == "В основной категории"
-        assert other_events[0].title == "В другой категории"
+
 
     async def test_list_events_pagination(self, events_manager):
         """Тест пагинации событий"""

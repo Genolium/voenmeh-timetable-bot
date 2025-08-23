@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 from sqlalchemy import select, update, delete
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.db.models import Event
@@ -26,17 +27,25 @@ class EventsManager:
         now: Optional[datetime] = None,
         time_filter: Optional[str] = None,  # 'today' | 'this_week' | None (all)
         from_now_only: bool = False,
+
     ) -> Tuple[List[Event], int]:
         async with self.session_factory() as session:
+            # Временно отключаем загрузку категории, пока миграция не применена
             base = select(Event)
             if only_published is True:
                 base = base.where(Event.is_published == True)
             elif only_published is False:
                 base = base.where(Event.is_published == False)
+
+
             
             # Фильтр по времени
             if time_filter:
                 ref = now or datetime.utcnow()
+                # Конвертируем datetime с timezone в naive datetime для PostgreSQL
+                if hasattr(ref, 'tzinfo') and ref.tzinfo is not None:
+                    ref = ref.replace(tzinfo=None)
+
                 if time_filter == 'today':
                     start_day = ref.replace(hour=0, minute=0, second=0, microsecond=0)
                     end_day = start_day + timedelta(days=1)
@@ -48,8 +57,13 @@ class EventsManager:
                     base = base.where(Event.start_at.is_not(None)).where(Event.start_at >= start_week).where(Event.start_at < end_week)
             elif from_now_only:
                 ref = now or datetime.utcnow()
-                # показываем события без даты или с датой >= сейчас
-                base = base.where((Event.start_at.is_(None)) | (Event.start_at >= ref.replace(microsecond=0)))
+                # Конвертируем datetime с timezone в naive datetime для PostgreSQL
+                if hasattr(ref, 'tzinfo') and ref.tzinfo is not None:
+                    ref = ref.replace(tzinfo=None)
+                # Сравниваем только по дате, игнорируя время
+                # Показываем события без даты или с датой >= сегодня (00:00:00)
+                today_start = ref.replace(hour=0, minute=0, second=0, microsecond=0)
+                base = base.where((Event.start_at.is_(None)) | (Event.start_at >= today_start))
             base = base.order_by(Event.start_at.nullslast(), Event.created_at.desc())
 
             count_stmt = base.with_only_columns(Event.id).order_by(None)
@@ -61,6 +75,7 @@ class EventsManager:
 
     async def get_event(self, event_id: int) -> Optional[Event]:
         async with self.session_factory() as session:
+            # Временно отключаем загрузку категории, пока миграция не применена
             stmt = select(Event).where(Event.id == event_id)
             result = await session.execute(stmt)
             return result.scalars().first()
@@ -75,6 +90,7 @@ class EventsManager:
         location: Optional[str] = None,
         link: Optional[str] = None,
         image_file_id: Optional[str] = None,
+
         is_published: bool = True,
     ) -> int:
         # Валидация данных
@@ -120,3 +136,4 @@ class EventsManager:
             await session.execute(stmt)
             await session.commit()
             return True
+

@@ -7,6 +7,7 @@ from aiogram.types import ContentType
 
 from .states import Events
 from core.events_manager import EventsManager
+from core.config import MOSCOW_TZ
 from datetime import datetime, timedelta
 
 
@@ -14,7 +15,7 @@ def _is_empty_field(value: str) -> bool:
     """Проверяет, является ли поле пустым или содержит служебные слова"""
     if not value or not value.strip():
         return True
-    
+
     # Приводим к нижнему регистру для проверки
     lower_value = value.strip().lower()
     skip_words = [
@@ -24,8 +25,29 @@ def _is_empty_field(value: str) -> bool:
         '-', '—', '–', '.',
         'пусто', 'empty', 'null'
     ]
-    
+
     return lower_value in skip_words
+
+
+def _filter_skip_words(text: str, skip_words: list) -> str:
+    """Фильтрует служебные слова из текста"""
+    if not text:
+        return text
+
+    # Приводим список skip_words к нижнему регистру для сравнения
+    skip_words_lower = [word.lower() for word in skip_words]
+
+    words = text.split()
+    filtered_words = []
+
+    for word in words:
+        # Приводим к нижнему регистру для проверки
+        lower_word = word.lower()
+        # Проверяем, не является ли слово служебным
+        if lower_word not in skip_words_lower:
+            filtered_words.append(word)
+
+    return ' '.join(filtered_words) if filtered_words else ''
 
 
 async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
@@ -35,30 +57,51 @@ async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
     time_filter = dialog_manager.dialog_data.get('time_filter')  # None|'today'|'this_week'
     limit = 10
     offset = page * limit
-    # по умолчанию показываем только "сегодня и позже"
+
+    # Определяем, показывать ли только будущие мероприятия
+    # Для всех фильтров показываем только будущие мероприятия (с сегодняшнего дня)
+    from_now_only = True  # Всегда True - показываем от сегодняшнего дня для всех фильтров
+
     items, total = await manager.list_events(
         only_published=True,
         limit=limit,
         offset=offset,
-        now=datetime.utcnow(),
+        now=datetime.now(MOSCOW_TZ),
         time_filter=time_filter,
-        from_now_only=(time_filter is None),
+        from_now_only=from_now_only,
     )
     def present(e):
         # Ограничиваем название до 25 символов
         title = e.title[:25] + "..." if len(e.title) > 25 else e.title
-        
+
+        # Фильтруем служебные слова из заголовка
+        skip_words = [
+            'пропустить', 'пропуск', 'skip',
+            'отмена', 'отменить', 'cancel',
+            'нет', 'no', 'none',
+            '-', '—', '–', '.',
+            'пусто', 'empty', 'null'
+        ]
+        title = _filter_skip_words(title, skip_words).strip()
+
+        # Если после фильтрации заголовок пустой, используем исходный
+        if not title:
+            title = e.title[:25] + "..." if len(e.title) > 25 else e.title
+
         # Добавляем дату компактно
         date_part = ""
         if e.start_at:
             date_part = f" {e.start_at.strftime('%d.%m')}"
-        
+
         # Добавляем локацию очень кратко
         loc_part = ""
         if e.location:
-            loc_short = e.location[:10] + "..." if len(e.location) > 10 else e.location
-            loc_part = f" @{loc_short}"
-            
+            # Фильтруем служебные слова из локации
+            filtered_location = _filter_skip_words(e.location, skip_words).strip()
+            if filtered_location:  # Показываем только если после фильтрации что-то осталось
+                loc_short = filtered_location[:10] + "..." if len(filtered_location) > 10 else filtered_location
+                loc_part = f" @{loc_short}"
+
         return f"{title}{date_part}{loc_part}"
     return {
         "events": [(present(e), str(e.id)) for e in items],

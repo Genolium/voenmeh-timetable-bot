@@ -18,6 +18,7 @@ from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.user_data import UserDataManager
 from core.semester_settings import SemesterSettingsManager
+from core.config import MOSCOW_TZ
 from core.events_manager import EventsManager
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 
@@ -240,10 +241,14 @@ async def get_events_list(dialog_manager: DialogManager, **kwargs):
     else:  # 'all'
         only_published = None
     
+    # Показываем мероприятия начиная с сегодняшнего дня (без прошедших)
+    from datetime import datetime as _dt
     items, total = await events.list_events(
-        only_published=only_published, 
-        limit=EVENTS_PAGE_SIZE, 
-        offset=offset
+        only_published=only_published,
+        limit=EVENTS_PAGE_SIZE,
+        offset=offset,
+        now=_dt.now(MOSCOW_TZ),
+        from_now_only=True,
     )
     # Применяем поисковый фильтр если есть
     search_query = dialog_manager.dialog_data.get('events_search', '').strip().lower()
@@ -259,14 +264,35 @@ async def get_events_list(dialog_manager: DialogManager, **kwargs):
         # Применяем пагинацию после фильтрации
         items = items[offset:offset + EVENTS_PAGE_SIZE]
     
-    lines = [f"{('✅' if e.is_published else '🚫')} <b>{e.title}</b> (id={e.id})" for e in items]
+    # Фильтрация служебных слов из заголовков
+    skip_words = {
+        'пропустить', 'пропуск', 'skip',
+        'отмена', 'отменить', 'cancel',
+        'нет', 'no', 'none',
+        '-', '—', '–', '.',
+        'пусто', 'empty', 'null'
+    }
+
+    def _clean_title(title: str) -> str:
+        if not title:
+            return title
+        filtered = " ".join(w for w in title.split() if w.lower() not in skip_words).strip()
+        return filtered or title
+
+    lines = [
+        f"{('✅' if e.is_published else '🚫')} <b>{_clean_title(e.title)}</b> (id={e.id})"
+        for e in items
+    ]
     return {
         "events_text": ("\n".join(lines) or "Мероприятий нет"),
         "total_events": total,
         "page": page,
         "has_prev": page > 0,
         "has_next": (offset + EVENTS_PAGE_SIZE) < total,
-        "events_items": [(f"{('✅' if e.is_published else '🚫')} {e.title}", str(e.id)) for e in items]
+        "events_items": [
+            (f"{('✅' if e.is_published else '🚫')} {_clean_title(e.title)}", str(e.id))
+            for e in items
+        ]
     }
 
 async def on_events_prev(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -658,9 +684,8 @@ async def on_event_create(message: Message, widget: TextInput, manager: DialogMa
         title = parts[0]
         start_at = dt.strptime(parts[1], "%Y-%m-%d %H:%M") if len(parts) > 1 and parts[1] else None
         location = parts[2] if len(parts) > 2 else None
-        category_id = int(parts[3]) if len(parts) > 3 and parts[3] else None
-        link = parts[4] if len(parts) > 4 else None
-        await ev.create_event(title=title, start_at=start_at, location=location, category_id=category_id, link=link)
+        link = parts[3] if len(parts) > 3 else None
+        await ev.create_event(title=title, start_at=start_at, location=location, link=link)
         await message.answer("✅ Мероприятие создано")
     except Exception as e:
         await message.answer(f"❌ Ошибка: {e}")
@@ -823,11 +848,7 @@ async def on_event_show_image(callback: CallbackQuery, button: Button, manager: 
         text += f"🗓 {item.start_at.strftime('%d.%m.%Y %H:%M')}\n"
     if item.location: 
         text += f"📍 {item.location}\n"
-    try:
-        if item.category:
-            text += f"🗂 Категория: {item.category.name}\n"
-    except Exception:
-        pass
+
     if item.link: 
         text += f"🔗 {item.link}\n"
     if item.description: 

@@ -11,6 +11,7 @@ full_schedule_cache.json
 # Файл базы данных SQLite с данными пользователей
 users.db
 users.db-journal # Временный файл SQLite
+*.sql
 
 # #################### #
 # Файлы окружения Python #

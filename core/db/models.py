@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime 
-from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date, Index, Text, ForeignKey
+from sqlalchemy import BigInteger, String, TIMESTAMP, Boolean, Integer, Date, Index, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -39,6 +39,9 @@ class SemesterSettings(Base):
     spring_semester_start: Mapped[datetime] = mapped_column(Date, nullable=False)  # Дата начала весеннего семестра
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     updated_by: Mapped[int] = mapped_column(BigInteger, nullable=False)  # Telegram ID администратора
+
+
+
 
 
 

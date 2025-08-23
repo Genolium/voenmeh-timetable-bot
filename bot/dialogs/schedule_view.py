@@ -13,7 +13,7 @@ from .constants import DialogDataKeys, WidgetIds
 from core.manager import TimetableManager
 from core.image_generator import generate_schedule_image
 from bot.text_formatters import (
-    format_schedule_text, generate_dynamic_header
+    format_schedule_text, generate_dynamic_header, calculate_semester_week_number
 )
 from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, MEDIA_PATH, SUBSCRIPTION_CHANNEL
 from core.metrics import SCHEDULE_GENERATION_TIME, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, GROUP_POPULARITY, USER_ACTIVITY_DAILY
@@ -127,32 +127,36 @@ async def get_cache_info():
 
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
+    session_factory = dialog_manager.middleware_data.get("session_factory")
     ctx = dialog_manager.current_context()
 
     if DialogDataKeys.GROUP not in ctx.dialog_data:
         ctx.dialog_data[DialogDataKeys.GROUP] = dialog_manager.start_data.get(DialogDataKeys.GROUP)
-        
+
     if not ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
         ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
     current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
     group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
-    
+
     day_info = await manager.get_schedule_for_day(group, target_date=current_date)
-    
+
     # Метрики активности и популярности
     try:
         GROUP_POPULARITY.labels(group_name=group.upper()).inc()
         USER_ACTIVITY_DAILY.labels(action_type="view_day", user_group=group.upper()).inc()
     except Exception:
         pass
-    
+
     dynamic_header, progress_bar = generate_dynamic_header(day_info.get("lessons", []), current_date)
+
+    # Рассчитываем номер недели с начала семестра
+    week_number = await calculate_semester_week_number(current_date, session_factory)
 
     return {
         "dynamic_header": dynamic_header,
         "progress_bar": progress_bar,
-        "schedule_text": format_schedule_text(day_info),
+        "schedule_text": format_schedule_text(day_info, week_number),
         "has_lessons": bool(day_info.get("lessons"))
     }
 

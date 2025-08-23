@@ -4,10 +4,141 @@ from datetime import datetime, time, date, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 
 from core.config import MOSCOW_TZ
+from core.semester_settings import SemesterSettingsManager
+
+async def calculate_semester_week_number(target_date: date, session_factory) -> int:
+    """
+    Рассчитывает номер недели с начала текущего семестра на основе настроек из БД.
+
+    Args:
+        target_date: Дата для расчета
+        session_factory: Фабрика сессий для работы с БД
+
+    Returns:
+        int: Номер недели (1-32, минимум 1)
+    """
+    try:
+        # Получаем настройки семестров из БД
+        settings_manager = SemesterSettingsManager(session_factory)
+        semester_settings = await settings_manager.get_semester_settings()
+
+        if not semester_settings:
+            # Если настройки не установлены, используем значения по умолчанию
+            # Осенний семестр: 1 сентября, Весенний семестр: 9 февраля
+            year = target_date.year
+            if target_date < date(year, 9, 1):
+                year -= 1
+            fall_start = date(year, 9, 1)
+            spring_start = date(year, 2, 9)
+        else:
+            fall_start, spring_start = semester_settings
+            # Корректируем год для дат семестров
+            year = target_date.year
+            if target_date < fall_start:
+                # Если дата до осеннего семестра, используем предыдущий год
+                year -= 1
+            fall_start = fall_start.replace(year=year)
+            spring_start = spring_start.replace(year=year)
+
+        # Определяем, в каком семестре находится дата
+        # Считаем недели только в пределах указанных начальных дат семестров
+
+        # Корректируем даты на текущий год
+        current_year_fall = fall_start.replace(year=target_date.year)
+        current_year_spring = spring_start.replace(year=target_date.year)
+
+        # Определяем границы семестров на основе типичной продолжительности
+        # Осенний семестр: обычно 17-18 недель (сентябрь - январь)
+        # Весенний семестр: обычно 17-18 недель (февраль - июнь)
+
+        if fall_start.month > spring_start.month:
+            # Стандартный случай: осенний с сентября, весенний с февраля
+
+            # Весенний семестр: с spring_start до spring_start + 17 недель
+            spring_end = current_year_spring + timedelta(weeks=17)
+
+            # Осенний семестр: с fall_start до fall_start + 17 недель
+            fall_end = current_year_fall + timedelta(weeks=17)
+
+            if current_year_spring <= target_date < spring_end:
+                # Весенний семестр - считаем недели
+                semester_start = current_year_spring
+            elif current_year_fall <= target_date < fall_end:
+                # Осенний семестр - считаем недели
+                semester_start = current_year_fall
+            else:
+                # Дата находится вне активных семестров
+                # Не считаем недели - возвращаем 0
+                return 0
+        else:
+            # Весенний семестр начинается раньше осеннего в году
+
+            # Весенний семестр: с spring_start до spring_start + 17 недель
+            spring_end = current_year_spring + timedelta(weeks=17)
+
+            # Осенний семестр: с fall_start до fall_start + 17 недель
+            fall_end = current_year_fall + timedelta(weeks=17)
+
+            if current_year_spring <= target_date < spring_end:
+                # Весенний семестр - считаем недели
+                semester_start = current_year_spring
+            elif current_year_fall <= target_date < fall_end:
+                # Осенний семестр - считаем недели
+                semester_start = current_year_fall
+            else:
+                # Дата находится вне активных семестров
+                # Не считаем недели - возвращаем 0
+                return 0
+
+        # Считаем разницу в днях
+        days_diff = (target_date - semester_start).days
+
+        # Считаем номер недели (начинаем с 1)
+        week_number = (days_diff // 7) + 1
+
+        return max(week_number, 1)
+
+    except Exception as e:
+        logging.error(f"Ошибка при расчете номера недели семестра: {e}")
+        # В случае ошибки возвращаем расчет по старой логике (1 сентября)
+        year = target_date.year
+        if target_date < date(year, 9, 1):
+            year -= 1
+        semester_start = date(year, 9, 1)
+        days_diff = (target_date - semester_start).days
+        week_number = (days_diff // 7) + 1
+        return max(week_number, 1)
+
+
+def calculate_semester_week_number_fallback(target_date: date) -> int:
+    """
+    Функция для обратной совместимости - рассчитывает номер недели с 1 сентября.
+
+    Args:
+        target_date: Дата для расчета
+
+    Returns:
+        int: Номер недели (1-32, минимум 1)
+    """
+    # Определяем начало учебного года (1 сентября)
+    year = target_date.year
+    # Если текущая дата до 1 сентября, используем предыдущий год
+    if target_date < date(year, 9, 1):
+        year -= 1
+
+    semester_start = date(year, 9, 1)
+
+    # Считаем разницу в днях
+    days_diff = (target_date - semester_start).days
+
+    # Считаем номер недели (начинаем с 1)
+    week_number = (days_diff // 7) + 1
+
+    return max(week_number, 1)
 
 # --- ОБЩИЕ ФОРМАТТЕРЫ ---
 
-def format_schedule_text(day_info: dict) -> str:
+def format_schedule_text(day_info: dict, week_number: int | None = None) -> str:
     """Форматирует расписание на день для группы."""
     if not day_info or 'error' in day_info:
         return f"❌ <b>Ошибка:</b> {day_info.get('error', 'Неизвестная ошибка')}"
@@ -20,7 +151,10 @@ def format_schedule_text(day_info: dict) -> str:
     day_name = day_info.get('day_name', '')
     week_type = f"({day_info.get('week_name', '')})" if day_info.get('week_name') else ""
 
-    header = f"🗓 <b>{date_str} · {day_name}</b> {week_type}\n"
+    # Добавляем номер недели если он указан
+    week_info = f" · Неделя {week_number}" if week_number and week_number <= 32 else ""
+
+    header = f"🗓 <b>{date_str} · {day_name}</b> {week_type}{week_info}\n"
     
     lessons = day_info.get('lessons')
     if not lessons:
