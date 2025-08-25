@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
@@ -13,7 +14,8 @@ from core.metrics import SCHEDULE_GENERATION_TIME
 from bot.utils.image_compression import get_telegram_safe_image_path
 
 # Глобальный семафор для ограничения количества одновременных генераций изображений
-_generation_semaphore = asyncio.Semaphore(1)  # Максимум 1 одновременная генерация на процесс
+# Используем threading.Semaphore для работы в разных event loop'ах Dramatiq
+_generation_semaphore = threading.Semaphore(1)  # Максимум 1 одновременная генерация на процесс
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,7 @@ class ImageService:
         start_time = datetime.now()
 
         # Ограничение на количество одновременных генераций
-        async with _generation_semaphore:
+        with _generation_semaphore:
             logger.info(f"🔄 Starting image generation for {cache_key} (semaphore acquired)")
 
             # Создаем лок для предотвращения дублирования генерации
