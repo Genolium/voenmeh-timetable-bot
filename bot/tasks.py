@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 import time
 from typing import Dict, Any
 
@@ -151,7 +152,8 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
     asyncio.run(_inner())
 
 # Семафор для ограничения количества одновременных задач генерации изображений
-_generation_semaphore = asyncio.Semaphore(2)  # Максимум 2 одновременные задачи
+# Используем threading.Semaphore вместо asyncio.Semaphore для работы в разных event loop'ах Dramatiq
+_generation_semaphore = threading.Semaphore(2)  # Максимум 2 одновременные задачи
 
 @dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
 def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week_name: str, group: str, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None):
@@ -159,59 +161,59 @@ def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week
         is_auto_generation = user_id is None
 
         # Ожидаем доступности слота в семафоре
-        async with _generation_semaphore:
+        with _generation_semaphore:
             log.info(f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key} (семафор получен)")
 
             try:
-            redis_client = get_redis_client(decode_responses=False)
-            cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
-            # Создаём бота в текущем лупе только если он действительно понадобится
-            bot_for_images: Bot | None = None
-            if not is_auto_generation:
-                bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-            image_service = ImageService(cache_manager, bot_for_images)
-            
-            week_key = cache_key.split("_")[-1]
-            
-            if is_auto_generation:
-                success, _ = await image_service._generate_and_cache_image(
-                    cache_key,
-                    week_schedule,
-                    week_name,
-                    group,
-                    generated_by="mass"
-                )
-                if success:
-                    log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
-                else:
-                    log.error(f"❌ [АВТО] Не удалось сгенерировать изображение {cache_key}")
-            else:
-                # Используем контекстный менеджер для корректного закрытия сессии бота
-                assert bot_for_images is not None
-                async with bot_for_images:
-                    success, _ = await image_service.get_or_generate_week_image(
-                        group=group,
-                        week_key=week_key,
-                        week_name=week_name,
-                        week_schedule=week_schedule,
-                        user_id=user_id,
-                        placeholder_msg_id=placeholder_msg_id,
-                        final_caption=final_caption
+                redis_client = get_redis_client(decode_responses=False)
+                cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
+                # Создаём бота в текущем лупе только если он действительно понадобится
+                bot_for_images: Bot | None = None
+                if not is_auto_generation:
+                    bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+                image_service = ImageService(cache_manager, bot_for_images)
+
+                week_key = cache_key.split("_")[-1]
+
+                if is_auto_generation:
+                    success, _ = await image_service._generate_and_cache_image(
+                        cache_key,
+                        week_schedule,
+                        week_name,
+                        group,
+                        generated_by="mass"
                     )
-                if not success and user_id:
-                    await _send_error_message(user_id, "Не удалось сгенерировать изображение")
-        except Exception as e:
-            log.error(f"❌ generate_week_image_task failed: {e}")
-            if not is_auto_generation and user_id:
-                await _send_error_message(user_id, "Произошла ошибка при генерации")
-        finally:
-            if 'redis_client' in locals():
-                try:
-                    aclose = getattr(redis_client, 'aclose', None)
-                    if aclose and asyncio.iscoroutinefunction(aclose):
-                        await aclose()
-                except Exception:
-                    pass
+                    if success:
+                        log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
+                    else:
+                        log.error(f"❌ [АВТО] Не удалось сгенерировать изображение {cache_key}")
+                else:
+                    # Используем контекстный менеджер для корректного закрытия сессии бота
+                    assert bot_for_images is not None
+                    async with bot_for_images:
+                        success, _ = await image_service.get_or_generate_week_image(
+                            group=group,
+                            week_key=week_key,
+                            week_name=week_name,
+                            week_schedule=week_schedule,
+                            user_id=user_id,
+                            placeholder_msg_id=placeholder_msg_id,
+                            final_caption=final_caption
+                        )
+                    if not success and user_id:
+                        await _send_error_message(user_id, "Не удалось сгенерировать изображение")
+            except Exception as e:
+                log.error(f"❌ generate_week_image_task failed: {e}")
+                if not is_auto_generation and user_id:
+                    await _send_error_message(user_id, "Произошла ошибка при генерации")
+            finally:
+                if 'redis_client' in locals():
+                    try:
+                        aclose = getattr(redis_client, 'aclose', None)
+                        if aclose and asyncio.iscoroutinefunction(aclose):
+                            await aclose()
+                    except Exception:
+                        pass
     asyncio.run(_inner())
 
 async def _send_error_message(user_id: int, error_text: str):

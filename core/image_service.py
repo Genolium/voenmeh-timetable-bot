@@ -124,69 +124,69 @@ class ImageService:
                 self.generation_locks[cache_key] = asyncio.Lock()
 
             async with self.generation_locks[cache_key]:
-            # Проверяем кэш еще раз после получения лока
-            if await self.cache_manager.is_cached(cache_key):
-                logger.info(f"✅ Another process generated {cache_key} while waiting")
+                # Проверяем кэш еще раз после получения лока
+                if await self.cache_manager.is_cached(cache_key):
+                    logger.info(f"✅ Another process generated {cache_key} while waiting")
+                    file_path = self.cache_manager.get_file_path(cache_key)
+                    return True, str(file_path)
+
+                # Генерируем изображение
                 file_path = self.cache_manager.get_file_path(cache_key)
-                return True, str(file_path)
-            
-            # Генерируем изображение
-            file_path = self.cache_manager.get_file_path(cache_key)
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            logger.info(f"🔄 Generating image for {cache_key}")
-            
-            try:
-                highres_vp = {"width":1500, "height": 1125}
-                
-                success = await generate_schedule_image(
-                    schedule_data=schedule_data,
-                    week_type=week_type,
-                    group=group,
-                    output_path=str(file_path),
-                    viewport_size=highres_vp
-                )
-                
-                if not success or not file_path.exists():
-                    logger.error(f"❌ Failed to generate image for {cache_key}")
-                    # Проверяем, есть ли файл и его размер
-                    if file_path.exists():
-                        file_size = file_path.stat().st_size
-                        logger.error(f"   File exists but size is {file_size} bytes")
-                    else:
-                        logger.error(f"   File does not exist: {file_path}")
-                    return False, None
-                
-                # Сохраняем в кэш
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+
+                logger.info(f"🔄 Generating image for {cache_key}")
+
                 try:
-                    with open(file_path, 'rb') as f:
-                        image_bytes = f.read()
-                    
-                    await self.cache_manager.cache_image(cache_key, image_bytes, metadata={
-                        "group": group,
-                        "week_key": week_type,
-                        "generated_at": datetime.now().isoformat(),
-                        "file_size": len(image_bytes),
-                        "generated_by": generated_by,
-                        **({"schedule_hash": schedule_hash} if schedule_hash else {}),
-                    })
-                    
-                    logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
-                    
+                    highres_vp = {"width":1500, "height": 1125}
+
+                    success = await generate_schedule_image(
+                        schedule_data=schedule_data,
+                        week_type=week_type,
+                        group=group,
+                        output_path=str(file_path),
+                        viewport_size=highres_vp
+                    )
+
+                    if not success or not file_path.exists():
+                        logger.error(f"❌ Failed to generate image for {cache_key}")
+                        # Проверяем, есть ли файл и его размер
+                        if file_path.exists():
+                            file_size = file_path.stat().st_size
+                            logger.error(f"   File exists but size is {file_size} bytes")
+                        else:
+                            logger.error(f"   File does not exist: {file_path}")
+                        return False, None
+
+                    # Сохраняем в кэш
+                    try:
+                        with open(file_path, 'rb') as f:
+                            image_bytes = f.read()
+
+                        await self.cache_manager.cache_image(cache_key, image_bytes, metadata={
+                            "group": group,
+                            "week_key": week_type,
+                            "generated_at": datetime.now().isoformat(),
+                            "file_size": len(image_bytes),
+                            "generated_by": generated_by,
+                            **({"schedule_hash": schedule_hash} if schedule_hash else {}),
+                        })
+
+                        logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
+
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
+                        # Не возвращаем False, так как файл все равно создан
+
+                    # Обновляем метрики времени генерации
+                    generation_time = (datetime.now() - start_time).total_seconds()
+                    SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
+
+                    logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")
+                    return True, str(file_path)
+
                 except Exception as e:
-                    logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
-                    # Не возвращаем False, так как файл все равно создан
-                
-                # Обновляем метрики времени генерации
-                generation_time = (datetime.now() - start_time).total_seconds()
-                SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
-                
-                logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")
-                return True, str(file_path)
-                
-            except Exception as e:
-                logger.error(f"❌ Error generating {cache_key}: {e}")
-                return False, None
+                    logger.error(f"❌ Error generating {cache_key}: {e}")
+                    return False, None
     
     async def _send_image_to_user(
         self,
