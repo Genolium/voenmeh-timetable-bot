@@ -91,13 +91,41 @@ class RabbitMQMonitor:
     async def wait_for_rabbitmq_startup(self, timeout: int = 120) -> bool:
         """Ждет запуска RabbitMQ после перезапуска"""
         logger.info(f"Ожидание запуска RabbitMQ (таймаут: {timeout}с)...")
-        
+
         start_time = time.time()
         while time.time() - start_time < timeout:
             if await self.check_rabbitmq_health():
                 logger.info("RabbitMQ успешно запустился")
                 return True
             await asyncio.sleep(5)
+
+    async def check_worker_health(self) -> bool:
+        """Проверяет состояние dramatiq worker"""
+        try:
+            # Проверяем количество активных соединений
+            if '@' in self.rabbitmq_url:
+                auth_part = self.rabbitmq_url.split('@')[0].replace('amqp://', '')
+                username, password = auth_part.split(':')
+            else:
+                username, password = 'guest', 'guest'
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{self.management_url}/api/connections",
+                    auth=aiohttp.BasicAuth(username, password),
+                    timeout=10
+                ) as response:
+                    if response.status == 200:
+                        connections = await response.json()
+                        active_connections = len([c for c in connections if 'dramatiq' in c.get('client_properties', {}).get('product', '')])
+                        logger.info(f"Активных dramatiq соединений: {active_connections}")
+                        return active_connections > 0
+                    else:
+                        logger.warning(f"Не удалось получить информацию о соединениях: {response.status}")
+                        return False
+        except Exception as e:
+            logger.error(f"Ошибка при проверке worker: {e}")
+            return False
         
         logger.error("Таймаут ожидания запуска RabbitMQ")
         return False

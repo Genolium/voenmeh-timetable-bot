@@ -36,8 +36,7 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
 _bg_images_cache = {}
 _template_cache = None
 _template_mtime: float | None = None
-_browser_instance = None
-_playwright_ctx = None  # Храним ссылку на контекст Playwright для корректного закрытия
+# Удалены глобальные переменные браузера для предотвращения конфликтов между процессами
 # Пер-луповые состояния для управления браузером и локами (не делиться между event loop)
 _loop_state = weakref.WeakKeyDictionary()
 

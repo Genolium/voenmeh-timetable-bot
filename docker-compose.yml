@@ -38,7 +38,7 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-    command: python -m dramatiq --processes 3 bot.tasks
+    command: python -m dramatiq --processes 1 --threads 2 bot.tasks
 
   rabbitmq_monitor:
     <<: *base-app-service

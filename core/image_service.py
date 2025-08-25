@@ -12,6 +12,9 @@ from core.config import MEDIA_PATH
 from core.metrics import SCHEDULE_GENERATION_TIME
 from bot.utils.image_compression import get_telegram_safe_image_path
 
+# Глобальный семафор для ограничения количества одновременных генераций изображений
+_generation_semaphore = asyncio.Semaphore(1)  # Максимум 1 одновременная генерация на процесс
+
 logger = logging.getLogger(__name__)
 
 class ImageService:
@@ -100,23 +103,27 @@ class ImageService:
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
-        
+
         Args:
             cache_key: Ключ кэша
             schedule_data: Данные расписания
             week_type: Тип недели
             group: Группа
-            
+
         Returns:
             Tuple[success, file_path]
         """
         start_time = datetime.now()
-        
-        # Создаем лок для предотвращения дублирования генерации
-        if cache_key not in self.generation_locks:
-            self.generation_locks[cache_key] = asyncio.Lock()
-        
-        async with self.generation_locks[cache_key]:
+
+        # Ограничение на количество одновременных генераций
+        async with _generation_semaphore:
+            logger.info(f"🔄 Starting image generation for {cache_key} (semaphore acquired)")
+
+            # Создаем лок для предотвращения дублирования генерации
+            if cache_key not in self.generation_locks:
+                self.generation_locks[cache_key] = asyncio.Lock()
+
+            async with self.generation_locks[cache_key]:
             # Проверяем кэш еще раз после получения лока
             if await self.cache_manager.is_cached(cache_key):
                 logger.info(f"✅ Another process generated {cache_key} while waiting")

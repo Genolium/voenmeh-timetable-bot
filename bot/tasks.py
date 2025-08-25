@@ -35,6 +35,24 @@ from core.image_generator import generate_schedule_image
 
 load_dotenv()
 
+# --- Конфигурация Redis пула ---
+_redis_pool = None
+
+def get_redis_client(decode_responses: bool = False):
+    """Возвращает Redis клиент из пула или создает новый"""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.ConnectionPool.from_url(
+            redis_url,
+            password=redis_password,
+            max_connections=10,
+            decode_responses=decode_responses,
+            retry_on_timeout=True,
+            socket_timeout=10,
+            socket_connect_timeout=5
+        )
+    return redis.Redis(connection_pool=_redis_pool, decode_responses=decode_responses)
+
 # --- Конфигурация брокера RabbitMQ ---
 broker_url = os.getenv("DRAMATIQ_BROKER_URL")
 if not broker_url:
@@ -132,14 +150,20 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
             log.error(f"Dramatiq task send_lesson_reminder_task FAILED to prepare reminder for {user_id}: {e}")
     asyncio.run(_inner())
 
+# Семафор для ограничения количества одновременных задач генерации изображений
+_generation_semaphore = asyncio.Semaphore(2)  # Максимум 2 одновременные задачи
+
 @dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
 def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week_name: str, group: str, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None):
     async def _inner():
         is_auto_generation = user_id is None
-        log.info(f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key}")
 
-        try:
-            redis_client = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=False)
+        # Ожидаем доступности слота в семафоре
+        async with _generation_semaphore:
+            log.info(f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key} (семафор получен)")
+
+            try:
+            redis_client = get_redis_client(decode_responses=False)
             cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
             # Создаём бота в текущем лупе только если он действительно понадобится
             bot_for_images: Bot | None = None
@@ -207,7 +231,7 @@ async def _send_error_message(user_id: int, error_text: str):
 def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: str):
     async def _inner():
         try:
-            r = redis.Redis.from_url(redis_url, password=redis_password, decode_responses=True)
+            r = get_redis_client(decode_responses=True)
             bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
             async with bot:
                 is_subscribed = False
