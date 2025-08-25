@@ -40,12 +40,18 @@ broker_url = os.getenv("DRAMATIQ_BROKER_URL")
 if not broker_url:
     raise RuntimeError("DRAMATIQ_BROKER_URL не найден. Воркер не может стартовать.")
 
-# Настройки для автоматического переподключения к RabbitMQ
-# NOTE: When using 'url', do not pass pika parameters; set timeouts via environment if needed
-rabbitmq_broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
+# Configure RabbitMQ broker with URL-based configuration
+# Connection parameters are handled via rabbitmq.conf and retry middleware
+rabbitmq_broker = RabbitmqBroker(
+    url=broker_url,
+    confirm_delivery=True
+)
 
 # Настройка энкодера
 rabbitmq_broker.encoder = JSONEncoder()
+
+# Note: Dramatiq has built-in retry middleware, connection stability is handled
+# via rabbitmq.conf settings and proper error handling in individual tasks
 
 dramatiq.set_broker(rabbitmq_broker)
 

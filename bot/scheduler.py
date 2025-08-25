@@ -661,17 +661,67 @@ async def generate_and_cache(cache_key: str, week_schedule: dict, week_name: str
         logger.warning(f"generate_and_cache failed for {cache_key}: {e}")
 
 async def auto_backup(redis_client: Redis):
-    # Backup DB (assume PostgreSQL)
-    db_url = os.getenv("DATABASE_URL")
-    backup_file = f"db_backup_{datetime.now().strftime('%Y%m%d')}.sql"
-    os.system(f"pg_dump {db_url} > {backup_file}")
-    
-    # Backup schedules from Redis
-    from core.config import REDIS_SCHEDULE_CACHE_KEY
-    schedules = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
-    with open("schedules_backup.json", "w") as f:
-        f.write(schedules.decode() if schedules else "{}")
-    logger.info("Auto-backup completed.")
+    try:
+        # Backup DB (assume PostgreSQL)
+        db_url = os.getenv("DATABASE_URL")
+        if db_url:
+            backup_file = f"db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+            result = os.system(f"pg_dump {db_url} > {backup_file}")
+            if result == 0:
+                logger.info(f"Database backup created: {backup_file}")
+            else:
+                logger.error(f"Failed to create database backup: {backup_file}")
+        else:
+            logger.warning("DATABASE_URL not found, skipping database backup")
+
+        # Backup schedules from Redis
+        from core.config import REDIS_SCHEDULE_CACHE_KEY
+        schedules = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
+
+        if schedules:
+            try:
+                # Try to decompress the data (it's likely gzip-compressed)
+                import gzip
+                import pickle
+                import json
+
+                try:
+                    # First try to decompress as gzip + pickle (the format used by TimetableManager)
+                    decompressed = gzip.decompress(schedules)
+                    schedule_data = pickle.loads(decompressed)
+                    logger.info("Successfully decompressed schedule data using gzip+pickle")
+                except (gzip.BadGzipFile, pickle.UnpicklingError):
+                    try:
+                        # Fallback: try as plain JSON
+                        schedule_data = json.loads(schedules.decode('utf-8'))
+                        logger.info("Successfully parsed schedule data as plain JSON")
+                    except UnicodeDecodeError:
+                        # Last resort: try to decode with error handling
+                        schedule_data = json.loads(schedules.decode('utf-8', errors='replace'))
+                        logger.warning("Successfully parsed schedule data with error replacement")
+
+                # Write the decompressed data as readable JSON
+                backup_file = f"schedules_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(backup_file, "w", encoding='utf-8') as f:
+                    json.dump(schedule_data, f, ensure_ascii=False, indent=2)
+                logger.info(f"Schedule backup created: {backup_file}")
+
+            except Exception as e:
+                logger.error(f"Failed to process schedule data for backup: {e}")
+                # Fallback: save raw data as binary
+                backup_file = f"schedules_backup_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bin"
+                with open(backup_file, "wb") as f:
+                    f.write(schedules)
+                logger.info(f"Raw schedule backup created: {backup_file}")
+        else:
+            logger.info("No schedule data found in Redis cache")
+
+        logger.info("Auto-backup completed successfully")
+
+    except Exception as e:
+        logger.error(f"Auto-backup failed with error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 async def handle_graduated_groups(user_data_manager: UserDataManager, timetable_manager: TimetableManager, redis_client: Redis):
     """
