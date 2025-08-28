@@ -181,6 +181,8 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
             async with rate_limiter:
                 await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
         log.info(f"Сообщение (ID: {message_id}) успешно скопировано пользователю {user_id}")
+    except TelegramForbiddenError as e:
+        log.info(f"User {user_id} has blocked the bot: {e}. Skipping further attempts.")
     except Exception as e:
         log.error(f"Dramatiq task FAILED to copy message (ID: {message_id}) to {user_id}: {e}")
         raise

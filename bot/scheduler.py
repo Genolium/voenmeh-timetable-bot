@@ -189,25 +189,32 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
         if not user or not user.group or not user.lesson_reminders:
             return
         today = datetime.now(MOSCOW_TZ).date()
+        now_in_moscow = datetime.now(MOSCOW_TZ)
+        
+        # Сначала проверяем, есть ли вообще смысл планировать напоминания
+        # Получаем расписание только если время напоминания еще актуально
         schedule_info = await timetable_manager.get_schedule_for_day(user.group, target_date=today)
         if not (schedule_info and not schedule_info.get('error') and schedule_info.get('lessons')):
             return
+        
         # Сортируем пары
         try:
             lessons = sorted(schedule_info['lessons'], key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         except (ValueError, KeyError):
             return
-        now_in_moscow = datetime.now(MOSCOW_TZ)
+        
         # Первая пара с учётом времени напоминания
         if lessons:
             try:
                 start_time_obj = datetime.strptime(lessons[0]['start_time_raw'], '%H:%M').time()
                 start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
                 reminder_dt = start_dt - timedelta(minutes=(user.reminder_time_minutes or 60))
-                # Планируем только если время напоминания еще не прошло
+                
+                # ИСПРАВЛЕНИЕ: Проверяем время напоминания ПЕРЕД любыми действиями
                 if reminder_dt < now_in_moscow:
-                    logger.info(f"Время напоминания уже прошло для пользователя {user_id}, пропускаем")
+                    logger.info(f"Время напоминания уже прошло для пользователя {user_id} (напоминание должно было быть в {reminder_dt}, сейчас {now_in_moscow}), пропускаем")
                     return
+                    
                 run_at = reminder_dt
                 scheduler.add_job(
                     send_lesson_reminder_task.send,
@@ -216,8 +223,9 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
                     id=f"reminder_{user_id}_{today.isoformat()}_first",
                     replace_existing=True,
                 )
-            except Exception:
-                pass
+                logger.info(f"Запланировано напоминание для пользователя {user_id} на {reminder_dt}")
+            except Exception as e:
+                logger.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
         # Перерывы/конец
         for i, lesson in enumerate(lessons):
             try:

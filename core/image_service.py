@@ -121,6 +121,10 @@ class ImageService:
         # Ограничение на количество одновременных генераций
         with _generation_semaphore:
             logger.info(f"🔄 Starting image generation for {cache_key} (semaphore acquired)")
+            
+            # Добавляем метрику начала генерации
+            from core.metrics import SCHEDULE_GENERATION_TIME, IMAGE_CACHE_MISSES
+            IMAGE_CACHE_MISSES.labels(cache_type="generation_requested").inc()
 
             # Создаем лок для предотвращения дублирования генерации
             if cache_key not in self.generation_locks:
@@ -131,6 +135,8 @@ class ImageService:
                 if await self.cache_manager.is_cached(cache_key):
                     logger.info(f"✅ Another process generated {cache_key} while waiting")
                     file_path = self.cache_manager.get_file_path(cache_key)
+                    from core.metrics import IMAGE_CACHE_HITS
+                    IMAGE_CACHE_HITS.labels(cache_type="concurrent_generation").inc()
                     return True, str(file_path)
 
                 # Генерируем изображение
@@ -140,13 +146,15 @@ class ImageService:
                 logger.info(f"🔄 Generating image for {cache_key}")
 
                 try:
-                    highres_vp = {"width":1500, "height": 1125}
+                    # Измеряем время генерации для метрик
+                    with SCHEDULE_GENERATION_TIME.labels(schedule_type="week").time():
+                        highres_vp = {"width":1500, "height": 1125}
 
-                    success = await generate_schedule_image(
-                        schedule_data=schedule_data,
-                        week_type=week_type,
-                        group=group,
-                        output_path=str(file_path),
+                        success = await generate_schedule_image(
+                            schedule_data=schedule_data,
+                            week_type=week_type,
+                            group=group,
+                            output_path=str(file_path),
                         viewport_size=highres_vp
                     )
 
@@ -158,6 +166,9 @@ class ImageService:
                             logger.error(f"   File exists but size is {file_size} bytes")
                         else:
                             logger.error(f"   File does not exist: {file_path}")
+                        # Метрика неудачной генерации
+                        from core.metrics import IMAGE_CACHE_MISSES
+                        IMAGE_CACHE_MISSES.labels(cache_type="generation_failed").inc()
                         return False, None
 
                     # Сохраняем в кэш
@@ -173,6 +184,10 @@ class ImageService:
                             "generated_by": generated_by,
                             **({"schedule_hash": schedule_hash} if schedule_hash else {}),
                         })
+                        
+                        # Метрика успешного кэширования
+                        from core.metrics import IMAGE_CACHE_OPERATIONS
+                        IMAGE_CACHE_OPERATIONS.labels(operation="store").inc()
 
                         logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
 

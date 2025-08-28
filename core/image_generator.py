@@ -185,7 +185,7 @@ async def generate_schedule_image(
             try:
                 attempt = 0
                 last_error = None
-                while attempt < 3:
+                while attempt < 5:  # Increased from 3 to 5
                     attempt += 1
                     try:
                         # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
@@ -197,70 +197,81 @@ async def generate_schedule_image(
                         
                         print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
                         
-                        # Отдельный таймаут для set_content
-                        await page.set_content(html, wait_until="domcontentloaded", timeout=60000)
+                        await page.set_content(html, timeout=120000)  # Increased timeout
                         
-                        # Ждём полной прогрузки шрифтов
-                        await page.evaluate("document.fonts.ready")
-                        await page.wait_for_timeout(500)  # Увеличиваем время ожидания
-
-                        # --- ИЗМЕРЯЕМ ВЫСОТУ КОНТЕНТА ---
-                        print_progress_bar(4, 5, f"Генерация {group}", "Измерение размеров")
+                        # Ждем полной загрузки (увеличенный таймаут)
+                        await page.wait_for_load_state("networkidle", timeout=120000)
                         
-                        # Находим элемент, который мы хотим измерить
-                        content_element = await page.query_selector('.content-wrapper')
-                        if not content_element:
-                            raise ValueError("Не удалось найти элемент .content-wrapper на странице.")
-
-                        # Получаем его реальные размеры в широком окне
-                        bounding_box = await content_element.bounding_box()
-                        if not bounding_box:
-                            raise ValueError("Не удалось измерить размеры элемента .content-wrapper.")
-
-                        # Вычисляем размеры контента
-                        content_height = bounding_box['height']
-                        top_margin = bounding_box['y']  # Отступ сверху
-                        bottom_margin = min(top_margin, 100)  # Симметричный нижний отступ
-
-                        # Целевой размер кадра: фиксированный 3:2 (как в оптимизированной версии)
-                        target_width = initial_width
-                        target_height = initial_height
-
-                        # Текущая требуемая высота под контент
-                        required_height = int(content_height + top_margin + bottom_margin)
-
-                        # Если контент выше — не масштабирую, фиксированная область как было изначально
-
-                        # Используем фиксированную высоту 3:2
-                        final_height = target_height
-
-                        # --- УСТАНАВЛИВАЕМ ФИНАЛЬНЫЙ РАЗМЕР И ДЕЛАЕМ СКРИНШОТ ---
-                        print_progress_bar(5, 5, f"Генерация {group}", "Создание скриншота")
+                        # --- ИЗМЕРЯЕМ РЕАЛЬНУЮ ВЫСОТУ КОНТЕНТА ---
+                        content_height = await page.evaluate("""
+                            () => {
+                                // Пробуем найти основной контейнер по разным селекторам
+                                const selectors = ['.content-wrapper', '.days-grid', 'body'];
+                                for (const selector of selectors) {
+                                    const container = document.querySelector(selector);
+                                    if (container) {
+                                        const rect = container.getBoundingClientRect();
+                                        console.log(`Found ${selector}: height=${rect.height}`);
+                                        return rect.height;
+                                    }
+                                }
+                                // Fallback: измеряем всю страницу
+                                const bodyHeight = Math.max(
+                                    document.body.scrollHeight,
+                                    document.body.offsetHeight,
+                                    document.documentElement.clientHeight,
+                                    document.documentElement.scrollHeight,
+                                    document.documentElement.offsetHeight
+                                );
+                                console.log(`Fallback body height: ${bodyHeight}`);
+                                return bodyHeight;
+                            }
+                        """)
                         
-                        # Устанавливаем финальный viewport фиксированного размера
-                        await page.set_viewport_size({"width": target_width, "height": final_height})
-                        # Форсируем полный рефлоу и два кадра, чтобы все стили применились перед скриншотом
-                        try:
-                            await page.evaluate("() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-                        except Exception:
-                            pass
+                        if content_height == 0:
+                            raise ValueError("Не удалось измерить высоту контента - все селекторы вернули 0")
                         
-                        # Делаем скриншот всей страницы, которая теперь имеет идеальный размер
-                        await page.screenshot(path=output_path, type="png", timeout=30000)
+                        # Подгоняем высоту viewport под контент + отступы
+                        final_height = int(content_height + 100)  # 100px запас
                         
-                        logging.info(f"✅ Изображение успешно сгенерировано: {output_path}")
-                        break
-                    
-                    except Exception as e:
-                        last_error = e
-                        logging.error(f"❌ Попытка {attempt}/3: ошибка при генерации изображения для {group}: {e}")
-                        try:
-                            await page.close()
-                        except Exception:
-                            pass
-                        if attempt >= 3:
-                            return False
-                        await asyncio.sleep(0.5)
+                        await page.set_viewport_size({"width": initial_width, "height": final_height})
+                        
+                        # Дополнительная задержка для стабилизации после изменения viewport
+                        await asyncio.sleep(1.0)
+                        
+                        # Проверяем, что элементы действительно загрузились
+                        elements_loaded = await page.evaluate("""
+                            () => {
+                                const wrapper = document.querySelector('.content-wrapper');
+                                const grid = document.querySelector('.days-grid');
+                                const lessons = document.querySelectorAll('.lesson-row');
+                                return {
+                                    wrapper: wrapper ? wrapper.offsetHeight : 0,
+                                    grid: grid ? grid.offsetHeight : 0,
+                                    lessons: lessons.length
+                                };
+                            }
+                        """)
+                        
+                        logging.info(f"Elements loaded: {elements_loaded}")
+                        
+                        print_progress_bar(4, 5, f"Генерация {group}", "Скриншот")
+                        
+                        await page.screenshot(
+                            path=output_path,
+                            full_page=False,
+                            type="png",
+                            timeout=120000
+                        )
+                        
+                        print_progress_bar(5, 5, f"Генерация {group}", "Готово")
+                        
+                        return True
+                        
+                    except Exception as inner_e:
+                        last_error = inner_e
+                        logging.warning(f"Попытка {attempt}/5 провалилась: {inner_e}")
+                        await asyncio.sleep(1)  # Small delay before retry
                 
             finally:
                 # Всегда закрываем страницу

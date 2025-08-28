@@ -24,8 +24,8 @@ class RabbitMQMonitor:
         self.rabbitmq_url = os.getenv("DRAMATIQ_BROKER_URL", "amqp://guest:guest@rabbitmq:5672/")
         self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379")
         self.management_url = os.getenv("RABBITMQ_MANAGEMENT_URL", "http://rabbitmq:15672")
-        self.check_interval = 60  # секунды
-        self.max_failures = 3
+        self.check_interval = 120  # секунды
+        self.max_failures = 5
         self.failure_count = 0
         
     async def check_rabbitmq_health(self) -> bool:
