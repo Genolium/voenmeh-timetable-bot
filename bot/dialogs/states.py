@@ -1,7 +1,9 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class MainMenu(StatesGroup):
-    enter_group = State()
+    choose_user_type = State()  # Выбор роли: студент или преподаватель
+    enter_group = State()       # Ввод группы для студентов
+    enter_teacher = State()     # Ввод ФИО преподавателя
     offer_tutorial = State()
 
 class Schedule(StatesGroup):

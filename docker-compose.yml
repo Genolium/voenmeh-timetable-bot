@@ -38,7 +38,7 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-    command: python -m dramatiq --processes 1 --threads 2 bot.tasks
+    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-2} --threads ${DRAMATIQ_THREADS:-4} bot.tasks
 
   rabbitmq_monitor:
     <<: *base-app-service
@@ -90,23 +90,14 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
-      # Настройки для стабильности соединений
-      RABBITMQ_TCP_LISTENERS: 5672
-      RABBITMQ_LOOPBACK_USERS: none
-      RABBITMQ_HIPE_COMPILE: false
-      # Heartbeat и таймауты
-      RABBITMQ_HEARTBEAT: 30
-      RABBITMQ_FRAME_MAX: 131072
-      RABBITMQ_CHANNEL_MAX: 0
-      # Логирование
-      RABBITMQ_LOG_LEVEL: info
     restart: unless-stopped
+    # Enhanced healthcheck with connection status
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 20s
-      timeout: 10s
-      retries: 10
-      start_period: 90s
+      test: ["CMD", "sh", "-c", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
+      interval: 30s  # Increased interval to reduce load
+      timeout: 15s   # Increased timeout
+      retries: 5     # Reduced retries for faster restart
+      start_period: 120s  # Increased start period
 
   prometheus:
     image: prom/prometheus:v2.53.0

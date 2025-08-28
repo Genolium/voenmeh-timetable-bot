@@ -221,8 +221,8 @@ async def test_morning_summary_broadcast_no_lessons(mock_user_data_manager, mock
 
 @pytest.mark.asyncio
 async def test_lesson_reminders_planner_success(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime для корректной работы
-    mock_now = datetime.now(MOSCOW_TZ) - timedelta(hours=3)  # Время до уроков (3 часа до 09:00)
+    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
     monkeypatch.setattr('bot.scheduler.datetime', MagicMock(now=lambda tz: mock_now))
     
     # Mock datetime.combine to return naive datetime
@@ -324,8 +324,8 @@ async def test_cancel_reminders_for_user_exception_handling(mock_scheduler):
 
 @pytest.mark.asyncio
 async def test_plan_reminders_for_user_success(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime для корректной работы
-    mock_now = datetime.now(MOSCOW_TZ) - timedelta(hours=3)  # Время до уроков (3 часа до 09:00)
+    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
     monkeypatch.setattr('bot.scheduler.datetime', MagicMock(now=lambda tz: mock_now))
     
     # Mock datetime.combine to return naive datetime
@@ -781,8 +781,8 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
 
 @pytest.mark.asyncio
 async def test_lesson_reminders_planner_with_break_duration_calculation(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime для корректной работы
-    mock_now = datetime.now(MOSCOW_TZ) - timedelta(hours=3)  # Время до уроков (3 часа до 09:00)
+    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
     monkeypatch.setattr('bot.scheduler.datetime', MagicMock(now=lambda tz: mock_now))
     
     # Mock datetime.combine to return naive datetime
@@ -831,8 +831,8 @@ async def test_lesson_reminders_planner_with_break_duration_calculation(mock_sch
 
 @pytest.mark.asyncio
 async def test_plan_reminders_for_user_with_custom_reminder_time(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime для корректной работы
-    mock_now = datetime.now(MOSCOW_TZ) - timedelta(hours=3)  # Время до уроков (3 часа до 09:00)
+    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
     monkeypatch.setattr('bot.scheduler.datetime', MagicMock(now=lambda tz: mock_now))
     
     # Mock datetime.combine to return naive datetime

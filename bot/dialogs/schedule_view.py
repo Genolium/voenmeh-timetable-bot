@@ -13,7 +13,8 @@ from .constants import DialogDataKeys, WidgetIds
 from core.manager import TimetableManager
 from core.image_generator import generate_schedule_image
 from bot.text_formatters import (
-    format_schedule_text, generate_dynamic_header, calculate_semester_week_number
+    format_schedule_text, format_teacher_schedule_text,
+    generate_dynamic_header, calculate_semester_week_number
 )
 from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, MEDIA_PATH, SUBSCRIPTION_CHANNEL
 from core.metrics import SCHEDULE_GENERATION_TIME, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, GROUP_POPULARITY, USER_ACTIVITY_DAILY
@@ -128,6 +129,7 @@ async def get_cache_info():
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     session_factory = dialog_manager.middleware_data.get("session_factory")
+    user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     ctx = dialog_manager.current_context()
 
     if DialogDataKeys.GROUP not in ctx.dialog_data:
@@ -139,7 +141,33 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
     group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
 
-    day_info = await manager.get_schedule_for_day(group, target_date=current_date)
+    # Определяем тип пользователя для корректного отображения
+    user_type = "student"  # По умолчанию
+    user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
+    if user_id and user_data_manager:
+        try:
+            user_type = await user_data_manager.get_user_type(user_id) or "student"
+        except Exception:
+            pass
+    
+    ctx.dialog_data["user_type"] = user_type
+
+    # Получаем расписание на день: для преподавателя используем teacher-метод
+    if user_type == "teacher":
+        # Нормализуем имя преподавателя: если в индексе нет точного ключа,
+        # подбираем ближайшее и сразу сохраняем канонический вариант в БД.
+        if group not in manager._teachers_index:
+            canonical = manager.resolve_canonical_teacher(group)
+            if canonical:
+                try:
+                    await user_data_manager.set_user_group(user_id=user_id, group=canonical)
+                    ctx.dialog_data[DialogDataKeys.GROUP] = canonical
+                    group = canonical
+                except Exception:
+                    pass
+        day_info = await manager.get_teacher_schedule(group, target_date=current_date)
+    else:
+        day_info = await manager.get_schedule_for_day(group, target_date=current_date)
 
     # Метрики активности и популярности
     try:
@@ -153,11 +181,20 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     # Рассчитываем номер недели с начала семестра
     week_number = await calculate_semester_week_number(current_date, session_factory)
 
+    # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
+    schedule_text = (
+        format_teacher_schedule_text(day_info)
+        if user_type == "teacher" else format_schedule_text(day_info, week_number)
+    )
+
     return {
         "dynamic_header": dynamic_header,
         "progress_bar": progress_bar,
-        "schedule_text": format_schedule_text(day_info, week_number),
-        "has_lessons": bool(day_info.get("lessons"))
+        "schedule_text": schedule_text,
+        "has_lessons": bool(day_info.get("lessons")),
+        "user_type": user_type,
+        "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
+        "user_type_text": "" if user_type == "student" else "Преподаватель:"
     }
 
 async def on_full_week_image_click(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -237,13 +274,35 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     image_service = ImageService(cache_manager, bot)
     
     # Получаем данные расписания
-    full_schedule = manager._schedules.get(group.upper(), {})
-    week_schedule = full_schedule.get(week_key, {})
+    if ctx.dialog_data.get("user_type") == "teacher":
+        # Сбор недельного расписания преподавателя по индексам
+        week_schedule = { 
+            "Понедельник": [], "Вторник": [], "Среда": [], 
+            "Четверг": [], "Пятница": [], "Суббота": []
+        }
+        teacher_lessons = manager._teachers_index.get(group, [])
+        for lesson in teacher_lessons:
+            # Фильтруем по типу недели
+            lesson_week_code = lesson.get('week_code', '0')
+            is_every_week = lesson_week_code == '0'
+            is_odd_match = week_key == 'odd' and lesson_week_code == '1'
+            is_even_match = week_key == 'even' and lesson_week_code == '2'
+            if is_every_week or is_odd_match or is_even_match:
+                day = lesson.get('day')
+                if day in week_schedule:
+                    week_schedule[day].append(lesson)
+    else:
+        full_schedule = manager._schedules.get(group.upper(), {})
+        week_schedule = full_schedule.get(week_key, {})
     
     # Формируем подпись
+    subject_line = (
+        f"🗓 <b>Расписание для преподавателя {group}</b>" if ctx.dialog_data.get("user_type") == "teacher"
+        else f"🗓 <b>Расписание для группы {group}</b>"
+    )
     final_caption = (
         "✅ Расписание на неделю готово!\n\n"
-        f"🗓 <b>Расписание для группы {group}</b>\n"
+        f"{subject_line}\n"
         f"Неделя: <b>{week_name}</b>\n"
         f"Период: <b>с {start_date_str} по {end_date_str}</b>"
     )
@@ -330,8 +389,19 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                     await manager.switch_to(Schedule.full_quality_gate)
                 except Exception:
                     pass
+                # Корректно формируем ссылку на канал
+                channel_link = SUBSCRIPTION_CHANNEL
+                if channel_link.startswith('@'):
+                    channel_link = f"https://t.me/{channel_link[1:]}"
+                elif channel_link.startswith('-'):
+                    # Для каналов с числовым ID используем tg://
+                    channel_link = f"tg://resolve?domain={channel_link}"
+                elif not channel_link.startswith('http'):
+                    # Для обычных имен каналов
+                    channel_link = f"https://t.me/{channel_link}"
+                    
                 kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔔 Подписаться", url=f"https://t.me/{str(SUBSCRIPTION_CHANNEL).lstrip('@')}")],
+                    [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)],
                     [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
                 ])
                 await callback.message.answer("Доступ к полному качеству доступен по подписке на канал.", reply_markup=kb)
@@ -395,7 +465,7 @@ async def on_today_click(callback: CallbackQuery, button: Button, manager: Dialo
     manager.current_context().dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
     
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
-    await manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
+    await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
     
 async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.start(SettingsMenu.main)
@@ -431,6 +501,62 @@ async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager)
     except Exception:
         pass
 
+async def auto_delete_old_messages(manager: DialogManager, user_id: int, keep_last: int = 3):
+    """
+    Автоматически удаляет старые сообщения пользователя, оставляя только последние keep_last.
+    """
+    try:
+        bot: Bot = manager.middleware_data.get("bot")
+        if not bot:
+            return
+            
+        redis = manager.middleware_data.get("manager", {}).get("redis")
+        if not redis:
+            return
+            
+        # Ключ для хранения ID сообщений пользователя
+        msg_key = f"user_messages:{user_id}"
+        
+        # Получаем список сообщений пользователя
+        message_ids = await redis.lrange(msg_key, 0, -1)
+        if not message_ids:
+            return
+            
+        # Если сообщений больше чем keep_last, удаляем старые
+        if len(message_ids) > keep_last:
+            to_delete = message_ids[:-keep_last]  # Все кроме последних keep_last
+            
+            for msg_id in to_delete:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=int(msg_id.decode() if isinstance(msg_id, bytes) else msg_id))
+                    await redis.lrem(msg_key, 1, msg_id)
+                except Exception:
+                    # Сообщение уже удалено или не может быть удалено
+                    await redis.lrem(msg_key, 1, msg_id)
+                    continue
+                    
+        # Устанавливаем TTL для ключа (24 часа)
+        await redis.expire(msg_key, 86400)
+        
+    except Exception as e:
+        # Молча игнорируем ошибки автоочистки
+        pass
+
+async def track_message(manager: DialogManager, user_id: int, message_id: int):
+    """
+    Отслеживает ID сообщения для автоматической очистки.
+    """
+    try:
+        redis = manager.middleware_data.get("manager", {}).get("redis")
+        if not redis:
+            return
+            
+        msg_key = f"user_messages:{user_id}"
+        await redis.rpush(msg_key, message_id)
+        await redis.expire(msg_key, 86400)  # TTL 24 часа
+    except Exception:
+        pass
+
 schedul_dialog_windows = [
     Window(
         StaticMedia(
@@ -448,14 +574,19 @@ schedul_dialog_windows = [
             Button(Const("▶️"), id=WidgetIds.NEXT_DAY, on_click=lambda c, b, m: on_date_shift(c, b, m, 1)),
             Button(Const("⏩"), id=WidgetIds.NEXT_WEEK, on_click=lambda c, b, m: on_date_shift(c, b, m, 7)),
         ),
+        # Для преподавателей скрываем кнопки Неделя/Настройки/Поиск/Новости
         Row(
-            Button(Const("🗓 Расписание на неделю"), id="week_as_image", on_click=on_full_week_image_click),
-            Button(Const("🔄 Сменить группу"), id=WidgetIds.CHANGE_GROUP, on_click=on_change_group_click),
-            Button(Const("⚙️ Настройки"), id=WidgetIds.SETTINGS, on_click=on_settings_click),
+            Button(Const("🗓 Неделя"), id="week_as_image", on_click=on_full_week_image_click,
+                   when=lambda data, w, m: data.get("user_type") != "teacher"),
+            Button(Const("🔄 Сменить"), id=WidgetIds.CHANGE_GROUP, on_click=on_change_group_click),
+            Button(Const("⚙️ Настройки"), id=WidgetIds.SETTINGS, on_click=on_settings_click,
+                   when=lambda data, w, m: data.get("user_type") != "teacher"),
         ),
         Row(
-            Button(Const("🔍 Поиск"), id=WidgetIds.FIND_BTN, on_click=on_find_click),
-            Button(Const("📢 Новости"), id="news_btn", on_click=on_news_clicked),
+            Button(Const("🔍 Поиск"), id=WidgetIds.FIND_BTN, on_click=on_find_click,
+                   when=lambda data, w, m: data.get("user_type") != "teacher"),
+            Button(Const("📢 Новости"), id="news_btn", on_click=on_news_clicked,
+                   when=lambda data, w, m: data.get("user_type") != "teacher"),
         ),
         state=Schedule.view, getter=get_schedule_data,
         parse_mode="HTML", disable_web_page_preview=True

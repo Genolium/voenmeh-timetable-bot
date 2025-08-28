@@ -15,7 +15,8 @@ from bot.utils.image_compression import get_telegram_safe_image_path
 
 # Глобальный семафор для ограничения количества одновременных генераций изображений
 # Используем threading.Semaphore для работы в разных event loop'ах Dramatiq
-_generation_semaphore = threading.Semaphore(1)  # Максимум 1 одновременная генерация на процесс
+import os
+_generation_semaphore = threading.Semaphore(int(os.getenv('IMAGE_SERVICE_SEMAPHORE', '2')))  # Максимум 2 одновременных генерации на процесс
 
 logger = logging.getLogger(__name__)
 

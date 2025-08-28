@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     BOT_TOKEN: str
     REDIS_URL: str
     DATABASE_URL: str
+    # RabbitMQ configuration for Dramatiq [[memory:6606082]]
+    DRAMATIQ_BROKER_URL: str | None = None  
+    RABBITMQ_USER: str | None = None
+    RABBITMQ_PASSWORD: str | None = None
     MEDIA_PATH: str = "bot/media"
     SCREENSHOTS_PATH: str = "bot/screenshots"
     # Optional environment variables
@@ -32,6 +36,12 @@ class Settings(BaseSettings):
     FEEDBACK_CHAT_ID: str | None = None
     SUBSCRIPTION_CHANNEL: str | None = None
     CHECK_INTERVAL_MINUTES: int = 30
+    # Worker optimization settings for 4 cores / 8GB RAM
+    DRAMATIQ_PROCESSES: int = 2
+    DRAMATIQ_THREADS: int = 4
+    IMAGE_GENERATION_SEMAPHORE: int = 4
+    IMAGE_SERVICE_SEMAPHORE: int = 2
+    IMAGE_CACHE_MAX_MB: int = 750  # Increased for 8GB RAM
     model_config = {
         "env_file": ".env",
         "extra": "ignore"

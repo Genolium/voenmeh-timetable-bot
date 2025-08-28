@@ -59,7 +59,57 @@ class TimetableManager:
                     print("Новое расписание загружено и сохранено в кэш Redis.")
                     return temp_instance
                 else:
-                    return None
+                    # Пытаемся восстановить из последней резервной копии
+                    print("Сервер недоступен. Пытаемся восстановить из резервной копии...")
+                    backup_data = await cls._restore_from_backup(redis_client)
+                    if backup_data:
+                        temp_instance = cls(backup_data, redis_client)
+                        await temp_instance.save_to_cache()  # Восстанавливаем основной кэш
+                        print("Расписание восстановлено из резервной копии!")
+                        return temp_instance
+                    else:
+                        print("Критическая ошибка: нет доступных резервных копий расписания.")
+                        return None
+
+    @classmethod
+    async def _restore_from_backup(cls, redis_client: Redis):
+        """
+        Восстанавливает расписание из последней резервной копии в Redis.
+        
+        Returns:
+            dict: Данные расписания или None если резервных копий нет
+        """
+        try:
+            # Ищем все резервные копии
+            backup_pattern = "timetable:backup:*"
+            backup_keys = await redis_client.keys(backup_pattern)
+            
+            if not backup_keys:
+                print("Резервные копии в Redis не найдены")
+                return None
+            
+            # Сортируем по дате (последние сначала) и берем самую свежую
+            backup_keys.sort(reverse=True)
+            latest_backup_key = backup_keys[0]
+            
+            print(f"Восстанавливаем из резервной копии: {latest_backup_key}")
+            backup_data_raw = await redis_client.get(latest_backup_key)
+            
+            if backup_data_raw:
+                # Создаем временный экземпляр для разжатия данных
+                temp_instance = cls.__new__(cls)
+                temp_instance._use_compression = True
+                backup_data = temp_instance._decompress_data(backup_data_raw)
+                
+                print(f"Резервная копия успешно загружена. Групп: {len([k for k in backup_data.keys() if not k.startswith('__')])}")
+                return backup_data
+            else:
+                print("Резервная копия пуста")
+                return None
+                
+        except Exception as e:
+            print(f"Ошибка при восстановлении из резервной копии: {e}")
+            return None
 
     async def save_to_cache(self):
         """Сохраняет текущее состояние менеджера в кэш Redis."""
@@ -235,10 +285,68 @@ class TimetableManager:
         )
         return [name for name, score, _ in results]
 
+    def resolve_canonical_teacher(self, raw_name: str) -> str | None:
+        """Возвращает каноническое имя преподавателя по «сырым» данным пользователя.
+
+        Последовательность:
+        1) точное совпадение
+        2) нормализация (без регистра/точек/пробелов)
+        3) fuzzy поиск (мягкий порог)
+        """
+        if not raw_name:
+            return None
+        # 1) exact
+        if raw_name in self._teachers_index:
+            return raw_name
+
+        # 2) normalization
+        def _normalize(n: str) -> str:
+            try:
+                return ''.join(ch for ch in n.replace(' ', '').replace('\u00A0', '').replace('.', '')).upper()
+            except Exception:
+                return (n or '').upper()
+
+        normalized_to_canonical = { _normalize(k): k for k in self._teachers_index.keys() }
+        norm_key = _normalize(raw_name)
+        if norm_key in normalized_to_canonical:
+            return normalized_to_canonical[norm_key]
+
+        # 3) fuzzy fallback
+        fit = self.find_teachers_fuzzy(raw_name, limit=1, score_cutoff=55)
+        return fit[0] if fit else None
+
     async def get_teacher_schedule(self, teacher_name: str, target_date: date) -> dict | None:
-        """Возвращает расписание преподавателя на конкретный день."""
-        if teacher_name not in self._teachers_index:
-            return {'error': f"Преподаватель '{teacher_name}' не найден в индексе."}
+        """Возвращает расписание преподавателя на конкретный день.
+
+        ВАЖНО: Здесь используем ТОЛЬКО точное совпадение. Нечёткий поиск выполняется
+        на этапе регистрации и мы сохраняем каноническое имя преподавателя в БД.
+        Это исключает риск того, что в заголовке будет один преподаватель,
+        а расписание отобразится другого.
+        """
+        # 1) Точное совпадение (быстро)
+        if teacher_name in self._teachers_index:
+            exact_match = teacher_name
+        else:
+            # 2) Нормализация: убираем точки/пробелы, сравниваем без регистра
+            def _normalize(n: str) -> str:
+                try:
+                    return ''.join(ch for ch in n.replace(' ', '').replace('\u00A0', '').replace('.', '')).upper()
+                except Exception:
+                    return (n or '').upper()
+
+            normalized_to_canonical: dict[str, str] = {
+                _normalize(k): k for k in self._teachers_index.keys()
+            }
+            norm_key = _normalize(teacher_name)
+            if norm_key in normalized_to_canonical:
+                exact_match = normalized_to_canonical[norm_key]
+            else:
+                # 3) Fallback: ne чёткий поиск по исходным ключам (регистрация могла сохранить вариант с опечаткой)
+                fuzzy_results = self.find_teachers_fuzzy(teacher_name, limit=1, score_cutoff=50)
+                if fuzzy_results:
+                    exact_match = fuzzy_results[0]
+                else:
+                    return {'error': f"Преподаватель '{teacher_name}' не найден в индексе."}
         
         # Используем новую академическую логику определения недели
         week_info = await self.get_academic_week_type(target_date)
@@ -247,7 +355,7 @@ class TimetableManager:
 
         lessons_for_day = []
         if day_name:
-            all_teacher_lessons = self._teachers_index.get(teacher_name, [])
+            all_teacher_lessons = self._teachers_index.get(exact_match, [])
             for lesson in all_teacher_lessons:
                 if lesson.get('day') == day_name:
                     lesson_week_code = lesson.get('week_code', '0')
@@ -259,7 +367,7 @@ class TimetableManager:
                         lessons_for_day.append(lesson)
         
         return {
-            'teacher': teacher_name,
+            'teacher': exact_match,
             'date': target_date,
             'day_name': day_name or 'Воскресенье',
             'week_name': week_name,

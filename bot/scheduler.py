@@ -95,17 +95,23 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
 async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     now_in_moscow = datetime.now(MOSCOW_TZ)
     today = now_in_moscow.date()
-    logger.info(f"Запуск планировщика напоминаний о парах для даты {today.isoformat()}")
 
     users_to_plan = await user_data_manager.get_users_for_lesson_reminders()
     if not users_to_plan:
         return
 
     for user_id, group_name, reminder_time in users_to_plan:
+        try:
+            # Пропускаем преподавателей
+            user = await user_data_manager.get_full_user_info(user_id)
+            if getattr(user, 'user_type', 'student') == 'teacher':
+                continue
+        except Exception:
+            pass
         schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
         if not (schedule_info and not schedule_info.get('error') and schedule_info.get('lessons')):
             continue
-        
+
         try:
             lessons = sorted(schedule_info['lessons'], key=lambda x: datetime.strptime(x['start_time_raw'], '%H:%M').time())
         except (ValueError, KeyError):
@@ -116,16 +122,20 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                 start_time_obj = datetime.strptime(lessons[0]['start_time_raw'], '%H:%M').time()
                 start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
                 reminder_dt = start_dt - timedelta(minutes=reminder_time)
-                
-                # Планируем всегда: если время прошло, ставим на ближайшую секунду
-                run_at = reminder_dt if reminder_dt >= now_in_moscow else now_in_moscow + timedelta(seconds=1)
-                scheduler.add_job(
-                    send_lesson_reminder_task.send,
-                    trigger=DateTrigger(run_date=run_at),
-                    args=(user_id, lessons[0], "first", None, reminder_time),
-                    id=f"reminder_{user_id}_{today.isoformat()}_first",
-                    replace_existing=True,
-                )
+
+                # Планируем только если время напоминания еще не прошло
+                if reminder_dt >= now_in_moscow:
+                    run_at = reminder_dt
+                    scheduler.add_job(
+                        send_lesson_reminder_task.send,
+                        trigger=DateTrigger(run_date=run_at),
+                        args=(user_id, lessons[0], "first", None, reminder_time),
+                        id=f"reminder_{user_id}_{today.isoformat()}_first",
+                        replace_existing=True,
+                    )
+                else:
+                    # Если время напоминания уже прошло, пропускаем напоминание
+                    continue
             except (ValueError, KeyError) as e:
                 logger.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
 
@@ -134,7 +144,10 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                 end_time_obj = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
                 reminder_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
                 
-                run_at = reminder_dt if reminder_dt >= now_in_moscow else now_in_moscow + timedelta(seconds=1)
+                # Планируем только если время напоминания еще не прошло
+                if reminder_dt < now_in_moscow:
+                    continue  # Пропускаем прошедшие напоминания
+                run_at = reminder_dt
                 is_last_lesson = (i == len(lessons) - 1)
                 reminder_type = "final" if is_last_lesson else "break"
                 next_lesson = lessons[i+1] if not is_last_lesson else None
@@ -170,6 +183,9 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
     try:
         # Получаем группу и время напоминания
         user = await user_data_manager.get_full_user_info(user_id)
+        # Пропускаем преподавателей
+        if user and getattr(user, 'user_type', 'student') == 'teacher':
+            return
         if not user or not user.group or not user.lesson_reminders:
             return
         today = datetime.now(MOSCOW_TZ).date()
@@ -188,7 +204,11 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
                 start_time_obj = datetime.strptime(lessons[0]['start_time_raw'], '%H:%M').time()
                 start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
                 reminder_dt = start_dt - timedelta(minutes=(user.reminder_time_minutes or 60))
-                run_at = reminder_dt if reminder_dt >= now_in_moscow else now_in_moscow + timedelta(seconds=1)
+                # Планируем только если время напоминания еще не прошло
+                if reminder_dt < now_in_moscow:
+                    logger.info(f"Время напоминания уже прошло для пользователя {user_id}, пропускаем")
+                    return
+                run_at = reminder_dt
                 scheduler.add_job(
                     send_lesson_reminder_task.send,
                     trigger=DateTrigger(run_date=run_at),
@@ -203,7 +223,10 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
             try:
                 end_time_obj = datetime.strptime(lesson['end_time_raw'], '%H:%M').time()
                 reminder_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
-                run_at = reminder_dt if reminder_dt >= now_in_moscow else now_in_moscow + timedelta(seconds=1)
+                # Планируем только если время напоминания еще не прошло
+                if reminder_dt < now_in_moscow:
+                    continue  # Пропускаем прошедшие напоминания
+                run_at = reminder_dt
                 is_last = (i == len(lessons) - 1)
                 next_lesson = lessons[i+1] if not is_last else None
                 break_duration = None
@@ -524,6 +547,11 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
         if not new_schedule_data:
             logger.error("Не удалось получить расписание с сервера вуза.")
+            # Проверяем, есть ли актуальные данные в основном кэше
+            cached_data = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
+            if not cached_data:
+                logger.warning("Основной кэш также пуст. Система работает на резервных копиях.")
+                # Здесь можно добавить дополнительные действия при работе на резервных копиях
             return
             
         new_hash = new_schedule_data.get('__current_xml_hash__')
@@ -662,15 +690,42 @@ async def generate_and_cache(cache_key: str, week_schedule: dict, week_name: str
 
 async def auto_backup(redis_client: Redis):
     try:
-        # Backup DB (assume PostgreSQL)
+        # Backup DB using Docker (safer approach)
         db_url = os.getenv("DATABASE_URL")
         if db_url:
             backup_file = f"db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
-            result = os.system(f"pg_dump {db_url} > {backup_file}")
-            if result == 0:
-                logger.info(f"Database backup created: {backup_file}")
+            backup_path = f"/app/data/{backup_file}"
+            
+            # Extract connection details from DATABASE_URL
+            import re
+            match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', db_url)
+            if match:
+                user, password, host, port, dbname = match.groups()
+                
+                # Use docker exec to run pg_dump inside PostgreSQL container
+                cmd = [
+                    "docker", "exec", "-i", "voenmeh_postgres",
+                    "pg_dump", "-h", "localhost", "-U", user, "-d", dbname
+                ]
+                
+                try:
+                    import subprocess
+                    with open(backup_path, 'w') as f:
+                        result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, 
+                                              text=True, timeout=300, 
+                                              env={**os.environ, 'PGPASSWORD': password})
+                    
+                    if result.returncode == 0:
+                        logger.info(f"Database backup created: {backup_file}")
+                    else:
+                        logger.error(f"Failed to create database backup: {backup_file}")
+                        logger.error(f"Error: {result.stderr}")
+                except subprocess.TimeoutExpired:
+                    logger.error(f"Database backup timed out: {backup_file}")
+                except Exception as e:
+                    logger.error(f"Exception during database backup: {e}")
             else:
-                logger.error(f"Failed to create database backup: {backup_file}")
+                logger.error("Could not parse DATABASE_URL for backup")
         else:
             logger.warning("DATABASE_URL not found, skipping database backup")
 

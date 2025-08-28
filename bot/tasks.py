@@ -37,22 +37,22 @@ from core.image_generator import generate_schedule_image
 load_dotenv()
 
 # --- Конфигурация Redis пула ---
-_redis_pool = None
-
 def get_redis_client(decode_responses: bool = False):
-    """Возвращает Redis клиент из пула или создает новый"""
-    global _redis_pool
-    if _redis_pool is None:
-        _redis_pool = redis.ConnectionPool.from_url(
-            redis_url,
-            password=redis_password,
-            max_connections=10,
-            decode_responses=decode_responses,
-            retry_on_timeout=True,
-            socket_timeout=10,
-            socket_connect_timeout=5
-        )
-    return redis.Redis(connection_pool=_redis_pool, decode_responses=decode_responses)
+    """Создает новый Redis-клиент для текущего event loop.
+
+    Важно: не переиспользуем глобальные пулы между потоками/лупами Dramatiq,
+    чтобы избежать ошибок вида "Future attached to a different loop".
+    """
+    return redis.Redis.from_url(
+        redis_url,
+        password=redis_password,
+        decode_responses=decode_responses,
+        retry_on_timeout=True,
+        socket_timeout=10,
+        socket_connect_timeout=5,
+        health_check_interval=30,
+        max_connections=10,
+    )
 
 # --- Конфигурация брокера RabbitMQ ---
 broker_url = os.getenv("DRAMATIQ_BROKER_URL")
@@ -69,8 +69,41 @@ rabbitmq_broker = RabbitmqBroker(
 # Настройка энкодера
 rabbitmq_broker.encoder = JSONEncoder()
 
-# Note: Dramatiq has built-in retry middleware, connection stability is handled
-# via rabbitmq.conf settings and proper error handling in individual tasks
+# Add retry middleware for better connection stability
+from dramatiq.middleware import Middleware
+from dramatiq.results.backends import RedisBackend
+from dramatiq.middleware.retries import Retries
+from dramatiq.middleware.time_limit import TimeLimit
+
+# Enhanced retry middleware with exponential backoff for RabbitMQ connection issues
+class RobustRetries(Retries):
+    """Enhanced retry middleware with better handling for connection issues."""
+    
+    def after_process_message(self, broker, message, *, result=None, exception=None):
+        if exception is not None:
+            # Special handling for RabbitMQ connection issues
+            if any(error_type in str(exception).lower() for error_type in [
+                'broken pipe', 'connection lost', 'stream lost', 'connection reset',
+                'server disconnected', 'amqp connection error'
+            ]):
+                # Exponential backoff for connection issues
+                retries_left = message.options.get('retries', self.max_retries)
+                if retries_left > 0:
+                    # Increase backoff for connection issues
+                    backoff = min(self.max_backoff, self.min_backoff * (2 ** (self.max_retries - retries_left)))
+                    message.options['retries'] = retries_left - 1
+                    broker.enqueue(message, delay=backoff)
+                    return
+        
+        # Fall back to default retry logic
+        super().after_process_message(broker, message, result=result, exception=exception)
+
+# Configure middleware stack
+rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
+rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))  # 5 minutes
+
+# Note: Connection stability is enhanced via rabbitmq.conf settings, 
+# connection pooling config above, and robust retry middleware
 
 dramatiq.set_broker(rabbitmq_broker)
 
@@ -90,35 +123,55 @@ if not BOT_TOKEN:
 BOT_INSTANCE = None  # Не используется напрямую; бот создаётся внутри задач
 rate_limiter = AsyncLimiter(25, 1)
 
-async def _send_message(user_id: int, text: str):
-    try:
-        log.info(f"Попытка отправки сообщения пользователю {user_id}")
-        # Создаём экземпляр бота в рамках текущего event loop,
-        # чтобы избежать ошибок повторного использования закрытого лупа/сессии
-        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-        async with bot:
-            async with rate_limiter:
-                await bot.send_message(user_id, text, disable_web_page_preview=True)
-        log.info(f"Сообщение успешно отправлено пользователю {user_id}")
-    except TelegramForbiddenError as e:
-        # Пользователь заблокировал бота — не ретраем, просто фиксируем
-        log.info(f"User {user_id} blocked the bot. Skipping send.")
-        return
-    except TelegramBadRequest as e:
-        # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
-        text = str(e)
-        if 'bot was blocked by the user' in text.lower():
-            log.info(f"User {user_id} blocked the bot (BadRequest). Skipping send.")
+async def _send_message(user_id: int, text: str, max_retries: int = 3):
+    """Enhanced message sending with connection error handling."""
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            log.info(f"Попытка отправки сообщения пользователю {user_id} (попытка {attempt + 1}/{max_retries})")
+            # Создаём экземпляр бота в рамках текущего event loop,
+            # чтобы избежать ошибок повторного использования закрытого лупа/сессии
+            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+            async with bot:
+                async with rate_limiter:
+                    await bot.send_message(user_id, text, disable_web_page_preview=True)
+            log.info(f"Сообщение успешно отправлено пользователю {user_id}")
+            return  # Success, exit retry loop
+            
+        except TelegramForbiddenError as e:
+            # Пользователь заблокировал бота — не ретраем, просто фиксируем
+            log.info(f"User {user_id} blocked the bot. Skipping send.")
             return
-        log.error(f"BadRequest sending to {user_id}: {e}")
-        raise
-    except RetryAfter as e:
-        # Рейт-лимит от Telegram: пробросим исключение, чтобы сработал dramatiq retry/backoff
-        log.warning(f"RetryAfter while sending to {user_id}: {e}")
-        raise
-    except Exception as e:
-        log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
-        raise
+        except TelegramBadRequest as e:
+            # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
+            text_error = str(e)
+            if 'bot was blocked by the user' in text_error.lower():
+                log.info(f"User {user_id} blocked the bot (BadRequest). Skipping send.")
+                return
+            log.error(f"BadRequest sending to {user_id}: {e}")
+            raise
+        except RetryAfter as e:
+            # Рейт-лимит от Telegram: пробросим исключение, чтобы сработал dramatiq retry/backoff
+            log.warning(f"RetryAfter while sending to {user_id}: {e}")
+            raise
+        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
+            # Network connection issues - retry with backoff
+            last_exception = e
+            if attempt < max_retries - 1:
+                backoff_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
+                log.warning(f"Connection error sending to {user_id}, retrying in {backoff_time}s: {e}")
+                await asyncio.sleep(backoff_time)
+                continue
+            log.error(f"All retry attempts failed for user {user_id}: {e}")
+            raise
+        except Exception as e:
+            log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
+            raise
+    
+    # If we reach here, all retries failed
+    if last_exception:
+        raise last_exception
 
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
     try:
@@ -153,7 +206,7 @@ def send_lesson_reminder_task(user_id: int, lesson: Dict[str, Any] | None, remin
 
 # Семафор для ограничения количества одновременных задач генерации изображений
 # Используем threading.Semaphore вместо asyncio.Semaphore для работы в разных event loop'ах Dramatiq
-_generation_semaphore = threading.Semaphore(2)  # Максимум 2 одновременные задачи
+_generation_semaphore = threading.Semaphore(int(os.getenv('IMAGE_GENERATION_SEMAPHORE', '4')))  # Оптимизировано для 4 ядер
 
 @dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
 def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week_name: str, group: str, user_id: int | None = None, placeholder_msg_id: int | None = None, final_caption: str | None = None):
@@ -255,8 +308,19 @@ def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: st
                     pass
 
                 if not is_subscribed and SUBSCRIPTION_CHANNEL:
+                    # Корректно формируем ссылку на канал
+                    channel_link = SUBSCRIPTION_CHANNEL
+                    if channel_link.startswith('@'):
+                        channel_link = f"https://t.me/{channel_link[1:]}"
+                    elif channel_link.startswith('-'):
+                        # Для каналов с числовым ID
+                        channel_link = f"tg://resolve?domain={channel_link}"
+                    elif not channel_link.startswith('http'):
+                        # Для обычных имен каналов
+                        channel_link = f"https://t.me/{channel_link}"
+                        
                     kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="🔔 Подписаться", url=f"https://t.me/{str(SUBSCRIPTION_CHANNEL).lstrip('@')}")]
+                        [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]
                     ])
                     await bot.send_message(user_id, "Доступ к полному качеству по подписке на канал.", reply_markup=kb)
                     return

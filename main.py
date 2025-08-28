@@ -33,6 +33,7 @@ from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
+from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware
 from bot.scheduler import setup_scheduler
 
 # --- Импорты диалогов ---
@@ -105,7 +106,7 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
     if saved_group:
         await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
     else:
-        await dialog_manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
+        await dialog_manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
 
 async def about_command_handler(message: Message, dialog_manager: DialogManager):
     try:
@@ -248,8 +249,9 @@ async def main():
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
     dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
+    dp.update.middleware(ChatCleanupMiddleware(keep_messages=5))  # Автоочистка старых сообщений
     dp.update.middleware(SimpleRateLimiter(max_per_sec=10, redis=redis_client))  # анти-флуд на входящие события
-    dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler}))
+    dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler, 'redis_client': redis_client}))
     dp.errors.register(error_handler)
 
     # Регистрация диалогов и хэндлеров

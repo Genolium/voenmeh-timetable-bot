@@ -12,7 +12,8 @@ class User(Base):
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     username: Mapped[str] = mapped_column(String, nullable=True)
-    group: Mapped[str] = mapped_column(String, nullable=True)
+    group: Mapped[str] = mapped_column(String, nullable=True)  # Для студентов - группа, для преподов - ФИО
+    user_type: Mapped[str] = mapped_column(String, nullable=False, default='student')  # 'student' или 'teacher'
     
     registration_date: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     last_active_date: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
@@ -26,6 +27,7 @@ class User(Base):
     # Индексы для оптимизации частых запросов
     __table_args__ = (
         Index('idx_user_group', 'group'),  # Для поиска по группам
+        Index('idx_user_type', 'user_type'),  # Для поиска по типу пользователя
         Index('idx_user_last_active', 'last_active_date'),  # Для статистики активности
         Index('idx_user_registration', 'registration_date'),  # Для статистики регистраций
         Index('idx_user_notifications', 'evening_notify', 'morning_summary', 'lesson_reminders'),  # Для рассылок

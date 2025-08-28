@@ -33,6 +33,20 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
+    async def set_user_type(self, user_id: int, user_type: str):
+        """Устанавливает тип пользователя (student/teacher)."""
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(user_type=user_type)
+            await session.execute(stmt)
+            await session.commit()
+
+    async def get_user_type(self, user_id: int) -> Optional[str]:
+        """Возвращает тип пользователя (student/teacher)."""
+        async with self.async_session_maker() as session:
+            stmt = select(User.user_type).where(User.user_id == user_id)
+            result = await session.scalar(stmt)
+            return result
+
     async def get_user_group(self, user_id: int) -> Optional[str]:
         """Получает учебную группу пользователя."""
         async with self.async_session_maker() as session:

@@ -24,7 +24,8 @@ async def get_find_data(dialog_manager: DialogManager, **kwargs):
     data = {"found_items": dialog_manager.dialog_data.get(DialogDataKeys.FOUND_ITEMS, [])}
     
     if teacher_name := dialog_manager.dialog_data.get(DialogDataKeys.TEACHER_NAME):
-        schedule_info = await manager.get_teacher_schedule(teacher_name, current_date)
+        canonical = manager.resolve_canonical_teacher(teacher_name) or teacher_name
+        schedule_info = await manager.get_teacher_schedule(canonical, current_date)
         data["result_text"] = format_teacher_schedule_text(schedule_info)
     elif classroom_number := dialog_manager.dialog_data.get(DialogDataKeys.CLASSROOM_NUMBER):
         schedule_info = await manager.get_classroom_schedule(classroom_number, current_date)

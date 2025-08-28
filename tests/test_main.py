@@ -142,9 +142,9 @@ class TestCommandHandlers:
 
         await main.start_command_handler(mock_message, mock_dialog_manager)
 
-        # Проверяем, что был запущен диалог ввода группы
+        # Проверяем, что был запущен диалог выбора типа пользователя
         mock_dialog_manager.start.assert_called_once_with(
-            MainMenu.enter_group,
+            MainMenu.choose_user_type,
             mode=main.StartMode.RESET_STACK
         )
 
