@@ -35,6 +35,7 @@ from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware
 from bot.scheduler import setup_scheduler
+from bot.utils.cleanup_bot import CleanupBot
 
 # --- Импорты диалогов ---
 from bot.dialogs.about_menu import about_dialog
@@ -234,7 +235,13 @@ async def main():
     # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
     # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
     http_session = AiohttpSession(timeout=180)
-    bot = Bot(token=bot_token or "", default=default_properties, session=http_session)
+    bot = CleanupBot(
+        token=bot_token or "",
+        default=default_properties,
+        session=http_session,
+        redis=redis_client,
+        keep_messages=1,
+    )
     dp = Dispatcher(storage=storage)
 
     scheduler = setup_scheduler(

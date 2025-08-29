@@ -344,32 +344,10 @@ class TestAdminMenuHandlers:
             pass
 
     @pytest.mark.asyncio
-    async def test_on_generate_full_schedule(self, mock_callback, mock_manager):
-        """Тест функции генерации полного расписания."""
-        # Настраиваем моки
-        mock_manager.middleware_data["user_data_manager"] = AsyncMock()
-        mock_manager.middleware_data["manager"] = AsyncMock()
-        mock_manager.middleware_data["redis_client"] = AsyncMock()
-        mock_manager.middleware_data["manager"]._schedules = {
-            "TEST_GROUP": {
-                "odd": {"lessons": [{"name": "Test"}]},
-                "even": {"lessons": [{"name": "Test"}]}
-            }
-        }
-        
-        # Очищаем активные генерации
-        active_generations.clear()
-        
+    async def test_on_generate_full_schedule_disabled(self, mock_callback, mock_manager):
+        """Тест заглушки массовой генерации (отключено)."""
         await on_generate_full_schedule(mock_callback, MagicMock(), mock_manager)
-        
-        mock_callback.answer.assert_called_once_with("🚀 Запускаю генерацию полного расписания в фоне...")
-        mock_manager.middleware_data["bot"].send_message.assert_called()
-        
-        # Проверяем, что генерация была запущена
-        assert mock_callback.from_user.id in active_generations
-        
-        # Очищаем
-        active_generations.clear()
+        mock_callback.answer.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_admin_events(self, mock_callback, mock_manager):

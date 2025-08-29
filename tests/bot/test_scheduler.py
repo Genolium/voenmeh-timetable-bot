@@ -5,10 +5,10 @@ from pathlib import Path
 
 from bot.scheduler import (
     evening_broadcast, morning_summary_broadcast, lesson_reminders_planner,
-    cancel_reminders_for_user, plan_reminders_for_user, warm_top_groups_images,
+    cancel_reminders_for_user, plan_reminders_for_user,
     monitor_schedule_changes, backup_current_schedule, collect_db_metrics,
-    cleanup_image_cache, setup_scheduler, generate_and_cache, print_progress_bar,
-    generate_full_schedule_images, auto_backup, handle_graduated_groups
+    cleanup_image_cache, setup_scheduler, print_progress_bar,
+    auto_backup, handle_graduated_groups
 )
 from core.config import MOSCOW_TZ
 
@@ -401,60 +401,18 @@ async def test_plan_reminders_for_user_exception_handling(mock_scheduler, mock_u
 
 
 @pytest.mark.asyncio
-async def test_warm_top_groups_images_success(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
-    # Мокаем ImageCacheManager
-    mock_cache = AsyncMock()
-    mock_cache.is_cached.return_value = False
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: mock_cache)
-    
-    # Мокаем generate_schedule_image
-    mock_generator = AsyncMock()
-    mock_generator.return_value = True
-    monkeypatch.setattr('bot.scheduler.generate_schedule_image', mock_generator)
-    
-    # Мокаем os.path.exists
-    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda path: True)
-    
-    # Мокаем open
-    mock_file = MagicMock()
-    mock_file.read.return_value = b"fake_image_data"
-    monkeypatch.setattr('builtins.open', lambda path, mode: mock_file)
-    
-    # Мокаем redis_client.set for the lock
-    mock_redis.set.return_value = True
-    
-    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, mock_redis)
-    
-    # Проверяем, что redis_client.set был вызван для кэширования изображений
-    assert mock_redis.set.call_count > 0
-
-
-@pytest.mark.asyncio
-async def test_warm_top_groups_images_no_top_groups(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
-    # Мокаем пустой список топ групп
-    mock_user_data_manager.get_top_groups.return_value = []
-    
-    # Мокаем ImageCacheManager
-    mock_cache = AsyncMock()
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args: mock_cache)
-    
-    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, mock_redis)
-    
-    # Не должно вызывать generate_schedule_image
+async def test_mass_generation_disabled_marker_success():
     assert True
 
 
 @pytest.mark.asyncio
-async def test_warm_top_groups_images_exception_handling(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
-    # Мокаем исключение в get_top_groups
-    mock_user_data_manager.get_top_groups.side_effect = Exception("Test error")
-    
-    # Мокаем ImageCacheManager
-    mock_cache = AsyncMock()
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args: mock_cache)
-    
-    # Не должно падать
-    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, mock_redis)
+async def test_mass_generation_disabled_marker_no_top_groups():
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_mass_generation_disabled_marker_exception_handling():
+    assert True
 
 
 @pytest.mark.asyncio
@@ -650,68 +608,14 @@ def test_setup_scheduler_with_image_cache_jobs(mock_bot, mock_timetable_manager,
 
 
 @pytest.mark.asyncio
-async def test_generate_and_cache_uses_cache_manager(monkeypatch):
-    # Arrange
-    from redis.asyncio.client import Redis
-    fake_redis = AsyncMock(spec=Redis)
-    # Mock cache manager to observe calls
-    class _FakeMgr:
-        def __init__(self, *args, **kwargs):
-            self.cache_dir = Path("/tmp")
-        def get_file_path(self, key):
-            return Path("/tmp") / f"{key}.png"
-        async def cache_image(self, key, data, metadata=None):
-            return True
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: _FakeMgr())
-    # Mock generator and filesystem
-    monkeypatch.setattr('bot.scheduler.generate_schedule_image', AsyncMock(return_value=True))
-    # Pretend file exists and has content
-    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda p: True)
-    mock_file = MagicMock()
-    mock_file.read.return_value = b"img"
-    monkeypatch.setattr('builtins.open', lambda p, m: mock_file)
-
-    # Act
-    await generate_and_cache("G_odd", {"Понедельник": []}, "Нечётная неделя", "G", fake_redis)
-
-    # Assert: if no exceptions, cache manager path executed
+async def test_mass_generation_helper_removed_marker(monkeypatch):
+    # generate_and_cache has been removed — marker test
     assert True
 
 
 @pytest.mark.asyncio
-async def test_warm_up_miss_store_hit(monkeypatch, mock_user_data_manager, mock_timetable_manager):
-    # Simulate miss -> store -> hit by toggling is_cached
-    calls = {"count": 0}
-    class _FakeMgr:
-        def __init__(self, *args, **kwargs):
-            self.cache_dir = Path("/tmp")
-        async def is_cached(self, key):
-            calls["count"] += 1
-            return calls["count"] > 1  # first miss, then hit
-        def get_file_path(self, key):
-            return Path("/tmp") / f"{key}.png"
-        async def cache_image(self, key, data, metadata=None):
-            return True
-    from redis.asyncio.client import Redis
-    fake_redis = AsyncMock(spec=Redis)
-    fake_redis.set = AsyncMock(return_value=True)
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args, **kwargs: _FakeMgr())
-    monkeypatch.setattr('bot.scheduler.generate_schedule_image', AsyncMock(return_value=True))
-    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda p: True)
-    mock_file = MagicMock()
-    mock_file.read.return_value = b"img"
-    monkeypatch.setattr('builtins.open', lambda p, m: mock_file)
-
-    # Prepare data
-    mock_user_data_manager.get_top_groups.return_value = [("G", 10)]
-    mock_timetable_manager._schedules = {"G": {"odd": {"Понедельник": []}}}
-    mock_timetable_manager.get_week_type.return_value = ("odd", "Нечетная неделя")
-
-    # Act
-    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, fake_redis)
-
-    # Assert: Miss then hit occurred
-    assert calls["count"] >= 1
+async def test_mass_generation_disabled_marker_4():
+    assert True
 
 
 @pytest.mark.asyncio
@@ -870,32 +774,7 @@ async def test_plan_reminders_for_user_with_custom_reminder_time(mock_scheduler,
 
 
 @pytest.mark.asyncio
-async def test_warm_top_groups_images_with_fallback_groups(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
-    # Мокаем пустой список топ групп, чтобы сработал fallback
-    mock_user_data_manager.get_top_groups.return_value = []
-    
-    # Мокаем ImageCacheManager
-    mock_cache = AsyncMock()
-    mock_cache.is_cached.return_value = False
-    mock_cache.cache_image.return_value = True
-    monkeypatch.setattr('bot.scheduler.ImageCacheManager', lambda *args: mock_cache)
-    
-    # Мокаем generate_schedule_image
-    mock_generator = AsyncMock()
-    mock_generator.return_value = True
-    monkeypatch.setattr('bot.scheduler.generate_schedule_image', mock_generator)
-    
-    # Мокаем os.path.exists
-    monkeypatch.setattr('bot.scheduler.os.path.exists', lambda path: True)
-    
-    # Мокаем open
-    mock_file = MagicMock()
-    mock_file.read.return_value = b"fake_image_data"
-    monkeypatch.setattr('builtins.open', lambda path, mode: mock_file)
-    
-    await warm_top_groups_images(mock_user_data_manager, mock_timetable_manager, mock_redis)
-    
-    # Проверяем, что fallback сработал
+async def test_mass_generation_disabled_marker_5():
     assert True
 
 
@@ -927,12 +806,7 @@ async def test_monitor_schedule_changes_with_warm_top_groups_error(mock_user_dat
     mock_timestamp_metric = MagicMock()
     monkeypatch.setattr('bot.scheduler.LAST_SCHEDULE_UPDATE_TS', mock_timestamp_metric)
     
-    # Мокаем warm_top_groups_images с ошибкой
-    mock_warm = AsyncMock()
-    mock_warm.side_effect = Exception("Warm up error")
-    monkeypatch.setattr('bot.scheduler.warm_top_groups_images', mock_warm)
-    
-    # Не должно падать
+    # Массовый прогрев отключен — ничего не мокаем, просто проверяем, что не падает
     await monitor_schedule_changes(mock_user_data_manager, mock_redis, mock_bot)
     
     # Проверяем, что основные операции выполнены

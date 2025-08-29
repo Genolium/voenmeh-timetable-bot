@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from redis.asyncio.client import Redis
 
-from bot.tasks import send_lesson_reminder_task, send_message_task, generate_week_image_task
+from bot.tasks import send_lesson_reminder_task, send_message_task
 from bot.text_formatters import (
     format_schedule_text, generate_evening_intro, generate_morning_intro, get_footer_with_promo
 )
@@ -254,283 +254,6 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
     except Exception as e:
         logger.warning(f"plan_reminders_for_user failed for {user_id}: {e}")
 
-async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_manager: TimetableManager, redis_client: Redis):
-    """Тёплый прогрев картинок топ-групп через Dramatiq-воркеры (не блокируем основной процесс бота).
-
-    Раньше генерация выполнялась прямо тут, что при сбоях Playwright могла подвесить event loop бота.
-    Теперь только отправляем задачи в очередь, а сами изображения генерятся в worker-процессах.
-    """
-    try:
-        cache = ImageCacheManager(redis_client, cache_ttl_hours=192)
-        # Топ-10 групп по пользователям
-        try:
-            top = await user_data_manager.get_top_groups(limit=10)
-            top_groups = [g for g, _ in top if g]
-        except Exception:
-            top_groups = []
-        # Если БД не дала топ, возьмём первые 10 ключей расписаний
-        if not top_groups:
-            top_groups = list(k for k in timetable_manager._schedules.keys())[:10]
-        if not top_groups:
-            return
-        today = datetime.now(MOSCOW_TZ).date()
-        week_key_name = timetable_manager.get_week_type(today)
-        if not week_key_name:
-            return
-        week_key, week_name = week_key_name
-
-        # Собираем список задач к отправке
-        to_enqueue: list[tuple[str, dict, str, str]] = []
-        for group in top_groups:
-            cache_key = f"{group}_{week_key}"
-            if await cache.is_cached(cache_key):
-                continue
-            # Redis-лок на генерацию конкретного ключа, чтобы избежать дубликатов
-            gen_lock_key = f"image_gen_lock:warm:{cache_key}"
-            lock_acquired = False
-            try:
-                lock_acquired = await redis_client.set(gen_lock_key, "1", nx=True, ex=180)
-            except Exception:
-                pass
-            if not lock_acquired:
-                continue
-            full_schedule = timetable_manager._schedules.get(group.upper(), {})
-            week_schedule = full_schedule.get(week_key, {})
-            if not week_schedule:
-                continue
-            to_enqueue.append((cache_key, week_schedule, week_name, group))
-
-        if not to_enqueue:
-            logger.info("Все изображения уже в кэше, генерация не требуется")
-            return
-
-        # Отправляем задачи в Dramatiq
-        from bot.tasks import generate_week_image_task
-        total = len(to_enqueue)
-        sent = 0
-        for cache_key, week_schedule, week_name, group in to_enqueue:
-            try:
-                generate_week_image_task.send(
-                    cache_key=cache_key,
-                    week_schedule=week_schedule,
-                    week_name=week_name,
-                    group=group,
-                    user_id=None,
-                    placeholder_msg_id=None,
-                    final_caption=None,
-                )
-                sent += 1
-                print_progress_bar(sent, total, "Прогрев изображений", f"{sent}/{total} задач отправлено")
-            except Exception as e:
-                logger.warning(f"Не удалось отправить задачу прогрева для {cache_key}: {e}")
-
-        logger.info(f"Прогрев изображений отправлен в очередь: {sent}/{total} задач")
-    except Exception as e:
-        logger.warning(f"warm_top_groups_images failed: {e}")
-
-async def generate_full_schedule_images(user_data_manager: UserDataManager, timetable_manager: TimetableManager, redis_client: Redis, admin_id: int = None, bot: Bot = None):
-    """
-    Генерирует изображения расписания для всех групп раз в неделю через Dramatiq воркеры.
-    Запускается в 4 утра в ночь с субботы на воскресенье.
-    Генерирует расписание для обеих недель (чётной и нечётной) параллельно через воркеры.
-    """
-    # Импортируем необходимые модули
-    from aiogram import Bot
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    import time
-    try:
-        logger.info("🔄 Начинаю генерацию полного расписания для всех групп через воркеры")
-        
-        # Инициализация для обновления прогресса
-        start_time = time.time()
-        status_msg_id = None
-        
-        if admin_id is not None:
-            from bot.dialogs.admin_menu import active_generations
-            if admin_id in active_generations:
-                status_msg_id = active_generations[admin_id].get("status_msg_id")
-        
-        # Получаем все доступные группы
-        all_groups = list(timetable_manager._schedules.keys())
-        logger.info(f"📊 Всего групп для обработки: {len(all_groups)}")
-        logger.info(f"📅 Генерируем для обеих недель: чётная и нечётная")
-        if not all_groups:
-            logger.warning("⚠️ Нет доступных групп для генерации расписания")
-            return
-        
-        # Создаем директорию для изображений
-        from core.config import MEDIA_PATH
-        output_dir = MEDIA_PATH / "generated"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        tasks_sent = 0
-        tasks_skipped = 0
-        total_tasks = len(all_groups) * 2  # 2 недели для каждой группы
-        
-        # Функция для обновления прогресса
-        async def update_progress(current, total, message=""):
-            if admin_id is not None and status_msg_id:
-                try:
-                    progress_percent = int((current / total) * 100) if total > 0 else 0
-                    progress_bar = "█" * (progress_percent // 5) + "░" * (20 - progress_percent // 5)
-                    elapsed_time = time.time() - start_time
-                    
-                    status_text = (
-                        f"🔄 <b>Генерация изображений расписания</b>\n\n"
-                        f"📊 Прогресс: {progress_percent}%\n"
-                        f"📈 {progress_bar}\n"
-                        f"📤 Отправлено задач: {current}/{total}\n"
-                        f"⏱️ Прошло времени: {elapsed_time:.1f}с\n"
-                        f"💬 {message}"
-                    )
-                    
-                    # Создаем клавиатуру с кнопкой отмены
-                    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="⏹️ Остановить генерацию", callback_data="cancel_generation")]
-                    ])
-                    
-                    # Обновляем сообщение
-                    if bot:
-                        await bot.edit_message_text(
-                            chat_id=admin_id,
-                            message_id=status_msg_id,
-                            text=status_text,
-                            parse_mode="HTML",
-                            reply_markup=cancel_kb
-                        )
-                    else:
-                        logger.info(f"📊 Прогресс: {progress_percent}% | {current}/{total} | {message}")
-                except Exception as e:
-                    logger.warning(f"⚠️ Ошибка обновления прогресса: {e}")
-        
-        # Генерируем для обеих недель
-        week_types = [
-            ("odd", "Нечётная неделя"),
-            ("even", "Чётная неделя")
-        ]
-        
-        # Начальное обновление прогресса
-        await update_progress(0, total_tasks, "Подготовка к отправке задач...")
-        
-        logger.info(f"📊 Отправляю задачи для {len(all_groups)} групп, обеих недель в очередь Dramatiq")
-        
-        # Проверяем кэш перед отправкой задач
-        cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
-        
-        # Параллелим отправку задач по неделям и группам в окне ограниченного пула
-        from asyncio import Semaphore, gather, create_task
-        import os
-        pool_size = int(os.getenv('GEN_ENQUEUE_POOL', '20'))
-        semaphore = Semaphore(pool_size)  # ограничиваем одновременную активность для плавности нагрузки
-
-        async def enqueue_one(group: str, week_key: str, week_name: str):
-            async with semaphore:
-                try:
-                    full_schedule = timetable_manager._schedules.get(group, {})
-                    week_schedule = full_schedule.get(week_key, {})
-                    if not week_schedule:
-                        return False
-                    cache_key = f"{group}_{week_key}"
-                    if await cache_manager.is_cached(cache_key):
-                        return None
-                    generate_week_image_task.send(
-                        cache_key=cache_key,
-                        week_schedule=week_schedule,
-                        week_name=week_name,
-                        group=group,
-                        user_id=None,
-                        placeholder_msg_id=None,
-                        final_caption=None
-                    )
-                    return True
-                except Exception:
-                    return False
-
-        tasks = []
-        for week_key, week_name in week_types:
-            logger.info(f"📅 Отправка задач для {week_name}")
-            for group in all_groups:
-                # Проверяем отмену
-                if admin_id is not None:
-                    from bot.dialogs.admin_menu import active_generations
-                    if admin_id in active_generations and active_generations[admin_id].get("cancelled", False):
-                        logger.info(f"⏹️ Генерация отменена пользователем {admin_id}")
-                        # Чистим флаг активной генерации
-                        try:
-                            from bot.dialogs.admin_menu import active_generations
-                            if admin_id in active_generations:
-                                del active_generations[admin_id]
-                        except Exception:
-                            pass
-                        return
-                tasks.append(create_task(enqueue_one(group, week_key, week_name)))
-
-        results = await gather(*tasks, return_exceptions=True)
-        for res in results:
-            if res is True:
-                tasks_sent += 1
-            elif res is False:
-                tasks_skipped += 1
-        await update_progress(tasks_sent, total_tasks, "Отправка задач завершена")
-        
-        # Финальное обновление прогресса
-        await update_progress(tasks_sent, total_tasks, "Задачи отправлены в очередь!")
-        
-        # Итоговая статистика
-        logger.info("=" * 60)
-        logger.info("📊 ИТОГОВАЯ СТАТИСТИКА ОТПРАВКИ ЗАДАЧ")
-        logger.info("=" * 60)
-        logger.info(f"📤 Задач отправлено в очередь: {tasks_sent}")
-        logger.info(f"⏭️ Задач пропущено (уже в кэше/ошибки): {tasks_skipped}")
-        logger.info(f"📊 Всего групп: {len(all_groups)}")
-        logger.info(f"📊 Всего недель: {len(week_types)}")
-        logger.info(f"📊 Потенциальных задач: {len(all_groups) * len(week_types)}")
-        logger.info("🚀 Задачи отправлены в очередь Dramatiq для параллельной обработки")
-        logger.info("💡 Воркеры будут обрабатывать задачи параллельно")
-        logger.info(f"✅ Автоматическая генерация завершена: {tasks_sent} задач отправлено, {tasks_skipped} пропущено")
-        
-        # Отправляем финальное сообщение пользователю
-        if admin_id is not None and bot:
-            try:
-                final_message = (
-                    f"✅ <b>Генерация завершена!</b>\n\n"
-                    f"📊 <b>Статистика:</b>\n"
-                    f"📤 Задач отправлено: {tasks_sent}\n"
-                    f"⏭️ Задач пропущено: {tasks_skipped}\n"
-                    f"📈 Всего групп: {len(all_groups)}\n"
-                    f"⏱️ Время выполнения: {time.time() - start_time:.1f}с\n\n"
-                    f"🚀 Задачи обрабатываются воркерами параллельно"
-                )
-                
-                await bot.edit_message_text(
-                    chat_id=admin_id,
-                    message_id=status_msg_id,
-                    text=final_message,
-                    parse_mode="HTML"
-                )
-                
-                # После завершения отправки задач – принудительно обновим метрики размера кэша
-                try:
-                    cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=192)
-                    stats = await cache_manager.get_cache_stats()
-                    from core.metrics import IMAGE_CACHE_SIZE
-                    IMAGE_CACHE_SIZE.labels(cache_type="files").set(stats.get("file_count", 0))
-                    IMAGE_CACHE_SIZE.labels(cache_type="size_mb").set(stats.get("file_size_mb", 0))
-                except Exception as e:
-                    logger.warning(f"Failed to refresh cache metrics after generation: {e}")
-
-                # Удаляем из активных генераций
-                if admin_id in active_generations:
-                    del active_generations[admin_id]
-                    
-            except Exception as e:
-                logger.error(f"❌ Ошибка отправки финального сообщения: {e}")
-        
-    except Exception as e:
-        logger.error(f"❌ Критическая ошибка при отправке задач генерации: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-
 async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot):
     logger.info("Проверка изменений в расписании...")
     
@@ -587,18 +310,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             # Переприсваиваем глобальный экземпляр
             global_timetable_manager_instance = new_manager
             
-            # Автоматическая генерация изображений для всех групп при изменении расписания
-            try:
-                logger.info("🔄 Запуск автоматической генерации изображений для всех групп...")
-                await generate_full_schedule_images(user_data_manager, new_manager, redis_client)
-                logger.info("✅ Автоматическая генерация изображений завершена")
-            except Exception as e:
-                logger.error(f"❌ Ошибка автоматической генерации изображений: {e}")
-                # Fallback: прогрев только топ-групп
-                try:
-                    await warm_top_groups_images(user_data_manager, new_manager, redis_client)
-                except Exception:
-                    pass
+            # Массовая генерация изображений отключена
             
             # Уведомляем всех пользователей об обновлении расписания
             all_users = await user_data_manager.get_all_user_ids()
@@ -661,48 +373,7 @@ async def cleanup_image_cache(redis_client: Redis):
     except Exception as e:
         logger.error(f"Ошибка при плановой очистке кэша изображений: {e}")
 
-async def generate_and_cache(cache_key: str, week_schedule: dict, week_name: str, group: str, redis_client: Redis):
-    try:
-        from core.metrics import SCHEDULE_GENERATION_TIME
-        from core.image_cache_manager import ImageCacheManager
-
-        cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=24)
-        output_path = cache_manager.get_file_path(cache_key)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        import time as _time
-        start_ts = _time.time()
-
-        ok = await generate_schedule_image(
-            week_schedule,
-            week_name,
-            group,
-            str(output_path)
-        )
-        if ok and os.path.exists(output_path):
-            with open(output_path, 'rb') as f:
-                image_bytes = f.read()
-            # Приводим week_key для метаданных
-            meta_week_key = 'odd' if 'Неч' in (week_name or '') else 'even'
-            await cache_manager.cache_image(
-                cache_key,
-                image_bytes,
-                metadata={
-                    "group": group,
-                    "week_key": meta_week_key,
-                    "generated_by": "warm_up"
-                }
-            )
-            duration = max(_time.time() - start_ts, 0)
-            try:
-                SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(duration)
-            except Exception:
-                pass
-            logger.info(f"Image for {cache_key} generated and cached via ImageCacheManager.")
-        else:
-            logger.warning(f"Image for {cache_key} generation failed or file not found.")
-    except Exception as e:
-        logger.warning(f"generate_and_cache failed for {cache_key}: {e}")
+# Массовые функции генерации изображений удалены: теплый прогрев, полная генерация, pre-cache helper
 
 async def auto_backup(redis_client: Redis):
     try:
@@ -910,14 +581,9 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     scheduler.add_job(auto_backup, 'cron', hour=2, args=[redis_client])
     scheduler.add_job(handle_graduated_groups, 'interval', minutes=10, args=[user_data_manager, manager, redis_client]) # Добавляем задачу для обработки выпустившихся групп
     
-    # Генерация полного расписания раз в неделю в 4 утра в воскресенье
-    scheduler.add_job(generate_full_schedule_images, 'cron', day_of_week='sun', hour=4, minute=0, args=[user_data_manager, manager, redis_client])
-    
     # Дополнительные задания можно включать через флаг окружения (по умолчанию выключены для облегчения нагрузки и совместимости с тестами)
     if os.getenv('ENABLE_IMAGE_CACHE_JOBS', '0') in ('1', 'true', 'True'):
         # Ежечасная очистка устаревших изображений из кэша
         scheduler.add_job(cleanup_image_cache, 'cron', minute=5, args=[redis_client])
-        # Предпрогрев картинок раз в сутки ночью
-        scheduler.add_job(warm_top_groups_images, 'cron', hour=3, minute=15, args=[user_data_manager, manager, redis_client])
     
     return scheduler

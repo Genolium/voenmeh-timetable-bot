@@ -10,7 +10,7 @@ from aiogram.types import Update, Message, CallbackQuery
 logger = logging.getLogger(__name__)
 
 class ChatCleanupMiddleware(BaseMiddleware):
-    def __init__(self, keep_messages: int = 5):
+    def __init__(self, keep_messages: int = 1):
         self.keep_messages = keep_messages
         
     async def __call__(
@@ -43,7 +43,11 @@ class ChatCleanupMiddleware(BaseMiddleware):
         return result
     
     async def _auto_cleanup_messages(self, user_id: int, message: Message, data: Dict[str, Any]):
-        """Автоматически удаляет старые сообщения пользователя."""
+        """Автоматически удаляет старые сообщения бота в данном чате.
+
+        Примечание: если используется CleanupBot (bot.auto_cleanup_outgoing == True),
+        то отправка уже сама причесывает историю, и тут можно ничего не делать.
+        """
         try:
             # Получаем bot и redis из middleware data
             bot = data.get("bot")
@@ -57,14 +61,18 @@ class ChatCleanupMiddleware(BaseMiddleware):
                 
             if not bot or not redis:
                 return
+            # Если бот сам занимается очисткой исходящих сообщений — выходим
+            if getattr(bot, "auto_cleanup_outgoing", False):
+                return
                 
-            # Ключ для хранения ID сообщений пользователя
-            msg_key = f"chat_cleanup:{user_id}"
-            
-            # Добавляем текущее сообщение в список (если это не callback)
-            if hasattr(message, 'message_id'):
-                await redis.rpush(msg_key, message.message_id)
-                await redis.expire(msg_key, 86400)  # TTL 24 часа
+            # Правильный chat_id (а не from_user.id) и поддержка топиков (forums)
+            chat_id = getattr(getattr(message, "chat", None), "id", None)
+            thread_id = getattr(message, "message_thread_id", None)
+            if chat_id is None:
+                return
+            msg_key = f"chat_cleanup:{chat_id}"
+            if thread_id is not None:
+                msg_key = f"{msg_key}:{thread_id}"
             
             # Получаем все сообщения пользователя
             message_ids = await redis.lrange(msg_key, 0, -1)
@@ -79,7 +87,7 @@ class ChatCleanupMiddleware(BaseMiddleware):
                 for msg_id in to_delete:
                     try:
                         msg_id_int = int(msg_id.decode() if isinstance(msg_id, bytes) else msg_id)
-                        await bot.delete_message(chat_id=user_id, message_id=msg_id_int)
+                        await bot.delete_message(chat_id=chat_id, message_id=msg_id_int)
                         await redis.lrem(msg_key, 1, msg_id)
                         deleted_count += 1
                     except Exception:

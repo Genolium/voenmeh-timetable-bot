@@ -12,7 +12,7 @@ from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo, Colu
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.tasks import copy_message_task, send_message_task
-from bot.scheduler import morning_summary_broadcast, evening_broadcast, generate_full_schedule_images
+from bot.scheduler import morning_summary_broadcast, evening_broadcast
 from bot.text_formatters import generate_reminder_text
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
@@ -25,7 +25,7 @@ from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 from .states import Admin
 from .constants import WidgetIds
 
-# Глобальная переменная для отслеживания активных генераций
+# Генерация полного расписания отключена; переменная сохраняется для совместимости тестов UI
 active_generations = {}
 EVENTS_PAGE_SIZE = 10
 
@@ -113,68 +113,13 @@ async def on_test_alert(callback: CallbackQuery, button: Button, manager: Dialog
     await bot.send_message(admin_id, text)
 
 async def on_generate_full_schedule(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Запуск генерации полного расписания для всех групп."""
+    """Массовая генерация отключена."""
+    await callback.answer("❌ Массовая генерация отключена")
     bot: Bot = manager.middleware_data.get("bot")
-    admin_id = callback.from_user.id
-    user_data_manager = manager.middleware_data.get("user_data_manager")
-    timetable_manager = manager.middleware_data.get("manager")
-    
-    # Создаем правильный Redis-клиент
-    from redis.asyncio import Redis
-    import os
-    redis_url = os.getenv("REDIS_URL")
-    redis_password = os.getenv("REDIS_PASSWORD")
-    redis_client = Redis.from_url(redis_url, password=redis_password, decode_responses=False)
-    
-    # Проверяем, не запущена ли уже генерация
-    if admin_id in active_generations:
-        await callback.answer("⚠️ Генерация уже запущена! Дождитесь завершения.")
-        return
-    
-    await callback.answer("🚀 Запускаю генерацию полного расписания в фоне...")
-    
-    # Отправляем начальное сообщение с кнопкой отмены
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    
-    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="❌ Отменить генерацию", callback_data="cancel_generation")]
-    ])
-    
-    status_msg = await bot.send_message(
-        admin_id, 
-        "🎨 <b>Генерация полного расписания</b>\n\n"
-        "⏳ Подготовка к генерации...\n"
-        "📊 Прогресс: 0%\n"
-        "✅ Сгенерировано: 0\n"
-        "❌ Ошибок: 0\n"
-        "⏱️ Время: 0с",
-        parse_mode="HTML",
-        reply_markup=cancel_kb
-    )
-    
-    # Отмечаем генерацию как активную
-    active_generations[admin_id] = {
-        "status_msg_id": status_msg.message_id,
-        "cancelled": False,
-        "start_time": None
-    }
-    
-    # Запускаем генерацию через воркеры
     try:
-        asyncio.create_task(
-            generate_full_schedule_images(
-                user_data_manager=user_data_manager,
-                timetable_manager=timetable_manager,
-                redis_client=redis_client,
-                admin_id=admin_id,
-                bot=bot
-            )
-        )
-    except Exception as e:
-        # Убираем из активных генераций при ошибке
-        active_generations.pop(admin_id, None)
-        await bot.send_message(admin_id, f"❌ Ошибка запуска генерации: {e}")
-        raise
+        await bot.send_message(callback.from_user.id, "❌ Массовая генерация изображений отключена. Доступна только генерация по запросу пользователя.")
+    except Exception:
+        pass
 
 async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Запуск проверки выпустившихся групп."""
@@ -1391,7 +1336,6 @@ admin_dialog = Dialog(
     Window(
         Const("🧹 Раздел ‘Кэш и генерация’"),
         Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache2", on_click=on_clear_cache),
-        Button(Const("📸 Сгенерировать полное расписание"), id="gen_full2", on_click=on_generate_full_schedule),
         Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated2", on_click=on_check_graduated_groups),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_cache", state=Admin.menu),
         state=Admin.cache_menu

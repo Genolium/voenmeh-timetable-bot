@@ -503,59 +503,15 @@ async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager)
 
 async def auto_delete_old_messages(manager: DialogManager, user_id: int, keep_last: int = 3):
     """
-    Автоматически удаляет старые сообщения пользователя, оставляя только последние keep_last.
+    Deprecated shim. Cleanup now handled by CleanupBot and middleware.
     """
-    try:
-        bot: Bot = manager.middleware_data.get("bot")
-        if not bot:
-            return
-            
-        redis = manager.middleware_data.get("manager", {}).get("redis")
-        if not redis:
-            return
-            
-        # Ключ для хранения ID сообщений пользователя
-        msg_key = f"user_messages:{user_id}"
-        
-        # Получаем список сообщений пользователя
-        message_ids = await redis.lrange(msg_key, 0, -1)
-        if not message_ids:
-            return
-            
-        # Если сообщений больше чем keep_last, удаляем старые
-        if len(message_ids) > keep_last:
-            to_delete = message_ids[:-keep_last]  # Все кроме последних keep_last
-            
-            for msg_id in to_delete:
-                try:
-                    await bot.delete_message(chat_id=user_id, message_id=int(msg_id.decode() if isinstance(msg_id, bytes) else msg_id))
-                    await redis.lrem(msg_key, 1, msg_id)
-                except Exception:
-                    # Сообщение уже удалено или не может быть удалено
-                    await redis.lrem(msg_key, 1, msg_id)
-                    continue
-                    
-        # Устанавливаем TTL для ключа (24 часа)
-        await redis.expire(msg_key, 86400)
-        
-    except Exception as e:
-        # Молча игнорируем ошибки автоочистки
-        pass
+    return
 
 async def track_message(manager: DialogManager, user_id: int, message_id: int):
     """
-    Отслеживает ID сообщения для автоматической очистки.
+    Deprecated shim. Tracking now handled automatically.
     """
-    try:
-        redis = manager.middleware_data.get("manager", {}).get("redis")
-        if not redis:
-            return
-            
-        msg_key = f"user_messages:{user_id}"
-        await redis.rpush(msg_key, message_id)
-        await redis.expire(msg_key, 86400)  # TTL 24 часа
-    except Exception:
-        pass
+    return
 
 schedul_dialog_windows = [
     Window(
