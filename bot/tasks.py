@@ -98,14 +98,55 @@ class RobustRetries(Retries):
         # Fall back to default retry logic
         super().after_process_message(broker, message, result=result, exception=exception)
 
-# Configure middleware stack
+# Configure middleware stack with guards against duplicates
 rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
-rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))  # 5 minutes
+try:
+    if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
+        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))  # 5 minutes
+except Exception:
+    # Fallback: attempt to add once; ignore if duplicated by framework
+    try:
+        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+    except Exception:
+        pass
 
 # Note: Connection stability is enhanced via rabbitmq.conf settings, 
 # connection pooling config above, and robust retry middleware
 
 dramatiq.set_broker(rabbitmq_broker)
+
+# --- Harden broker URL defaults if missing heartbeat/timeouts ---
+try:
+    # Append sane defaults if not present in URL
+    # Works for amqp and amqps URLs
+    from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+    _parsed = urlparse(broker_url)
+    _q = dict(parse_qsl(_parsed.query, keep_blank_values=True))
+    _q.setdefault("heartbeat", "30")
+    _q.setdefault("blocked_connection_timeout", "300")
+    _q.setdefault("connection_attempts", "5")
+    _q.setdefault("retry_delay", "5")
+    if _q != dict(parse_qsl(_parsed.query, keep_blank_values=True)):
+        _new = _parsed._replace(query=urlencode(_q))
+        broker_url = urlunparse(_new)
+        # Reconfigure broker with new URL only if different
+        if getattr(rabbitmq_broker, "url", None) != broker_url:
+            rabbitmq_broker.close()
+            rabbitmq_broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
+            rabbitmq_broker.encoder = JSONEncoder()
+            rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
+            try:
+                if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
+                    rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+            except Exception:
+                try:
+                    rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+                except Exception:
+                    pass
+            dramatiq.set_broker(rabbitmq_broker)
+except Exception:
+    # Do not fail worker on URL tweak errors
+    pass
 
 # Redis-клиент для других нужд (не для брокера)
 redis_url = os.getenv("REDIS_URL")

@@ -1,11 +1,22 @@
 import os
 import logging
 import asyncio
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional
-import weakref
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+"""Утилиты генерации изображений расписания через Playwright.
+
+Реализован надёжный пул persistent-браузеров на уровне event loop:
+- Для каждого event loop создаётся 1 постоянный Chromium (при первом вызове).
+- На каждую задачу создаётся новый Page и закрывается по завершении.
+- Встроены health-check, авто‑рецикл по счётчику задач/времени и фолбэк на
+  безопасный перезапуск при краше. Это даёт экономию на старте браузера и
+  избегает утечек при длительной работе воркера.
+"""
 
 # Экспортируемая ссылка на async_playwright (для тестов она мокается)
 try:
@@ -32,25 +43,24 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
     if current == total:
         print()  # Новая строка в конце
 
-# Глобальные кэши для ускорения
 _bg_images_cache = {}
 _template_cache = None
 _template_mtime: float | None = None
-# Удалены глобальные переменные браузера для предотвращения конфликтов между процессами
-# Пер-луповые состояния для управления браузером и локами (не делиться между event loop)
-_loop_state = weakref.WeakKeyDictionary()
 
-def _get_loop_state():
-    """Возвращает (и при необходимости создаёт) состояние для текущего event loop.
-
-    Структура: {"lock": asyncio.Lock, "browser": Browser|None, "ctx": Playwright|None}
-    """
-    loop = asyncio.get_running_loop()
-    state = _loop_state.get(loop)
-    if state is None:
-        state = {"lock": asyncio.Lock(), "browser": None, "ctx": None}
-        _loop_state[loop] = state
-    return state
+# Параметры пула (настраиваются через ENV)
+_POOL_MAX_PAGES = int(os.getenv("IMAGE_BROWSER_MAX_PAGES", "60"))  # Перезапуск после N страниц
+_POOL_MAX_AGE_SEC = int(os.getenv("IMAGE_BROWSER_MAX_AGE_SEC", "900"))  # …или после T секунд
+_POOL_HEADLESS_ARGS = [
+    '--headless=new',
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--disable-web-security',
+    '--disable-features=VizDisplayCompositor',
+    '--no-zygote',
+    '--disable-extensions',
+    '--disable-background-networking',
+]
 
 
 def _time_to_minutes(t: str) -> int:
@@ -117,7 +127,7 @@ async def generate_schedule_image(
     try:
         # --- ШАГ 1: Рендеринг HTML по шаблону ---
         print_progress_bar(1, 5, f"Генерация {group}", "Подготовка шаблона")
-        
+
         global _template_cache, _bg_images_cache, _template_mtime
         project_root = Path(__file__).resolve().parent.parent
         templates_dir = project_root / "templates"
@@ -128,21 +138,27 @@ async def generate_schedule_image(
             current_mtime = None
 
         # Перезагружаем шаблон, если он не загружен или изменился на диске
-        if _template_cache is None or (_template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime):
+        if _template_cache is None or (
+            _template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime
+        ):
             env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
             _template_cache = env.get_template("schedule_template.html")
             _template_mtime = current_mtime
+
         week_slug = 'odd' if 'Неч' in week_type else 'even'
         if not _bg_images_cache:
             from base64 import b64encode
             try:
                 orange_path = project_root / "assets" / "orange_background.png"
                 _bg_images_cache['orange'] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
-            except Exception: _bg_images_cache['orange'] = ""
+            except Exception:
+                _bg_images_cache['orange'] = ""
             try:
                 purple_path = project_root / "assets" / "purple_background.png"
                 _bg_images_cache['purple'] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
-            except Exception: _bg_images_cache['purple'] = ""
+            except Exception:
+                _bg_images_cache['purple'] = ""
+
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
@@ -156,66 +172,116 @@ async def generate_schedule_image(
         if async_playwright is None:
             logging.error("Playwright не инициализирован")
             return False
-
-        # --- ШАГ 2: Запуск браузера и создание скриншота по новой логике ---
+        # --- ШАГ 2: Получаем/держим persistent-браузер для текущего event loop ---
         print_progress_bar(2, 5, f"Генерация {group}", "Запуск браузера")
-        
-        # Лок и браузер привязаны к текущему event loop
-        state = _get_loop_state()
-        async with state["lock"]:
-            if state["browser"] is None or not state["browser"].is_connected():
-                # Инициализируем и сохраняем контекст, чтобы корректно закрыть при завершении
-                state["ctx"] = await async_playwright().__aenter__()
-                state["browser"] = await state["ctx"].chromium.launch(
-                    args=[
-                        '--no-sandbox', 
-                        '--disable-dev-shm-usage',
-                        '--disable-gpu',
-                        '--disable-web-security',
-                        '--disable-features=VizDisplayCompositor'
-                    ]
-                )
 
-            page = await state["browser"].new_page()
-            
-            # Устанавливаем увеличенные таймауты
-            page.set_default_timeout(120000)  # 2 минуты вместо 30 секунд
+        # Состояние пула привязано к текущему event loop
+        loop = asyncio.get_running_loop()
+
+        @dataclass
+        class _PoolState:
+            lock: asyncio.Lock
+            ctx: any
+            browser: any
+            created_at: float
+            pages_made: int
+
+        if not hasattr(loop, "__img_pool_state__"):
+            setattr(loop, "__img_pool_state__", None)
+
+        async def _ensure_browser() -> _PoolState:
+            state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
+            if state is None:
+                # Первичная инициализация
+                ctx = await async_playwright().__aenter__()
+                browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                setattr(loop, "__img_pool_state__", state)
+                return state
+            # Health-check: браузер жив?
+            try:
+                _ = await state.browser.new_context()
+                await _.close()
+            except Exception:
+                # Перезапустим пул
+                try:
+                    try:
+                        await state.browser.close()
+                    except Exception:
+                        pass
+                    try:
+                        await state.ctx.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                finally:
+                    ctx = await async_playwright().__aenter__()
+                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                    setattr(loop, "__img_pool_state__", state)
+            # Ротация по возрасту/количеству страниц
+            if (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES:
+                try:
+                    try:
+                        await state.browser.close()
+                    except Exception:
+                        pass
+                    try:
+                        await state.ctx.__aexit__(None, None, None)
+                    except Exception:
+                        pass
+                finally:
+                    ctx = await async_playwright().__aenter__()
+                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                    setattr(loop, "__img_pool_state__", state)
+            return state
+
+        state = await _ensure_browser()
+
+        async with state.lock:
+            page = await state.browser.new_page()
+            page.set_default_timeout(120000)
             page.set_default_navigation_timeout(120000)
 
+            attempt = 0
+            last_error: Exception | None = None
+            max_attempts = 5
+
             try:
-                attempt = 0
-                last_error = None
-                while attempt < 5:  # Increased from 3 to 5
+                while attempt < max_attempts:
                     attempt += 1
                     try:
-                        # --- УСТАНАВЛИВАЕМ ОПТИМИЗИРОВАННЫЙ VIEWPORT ---
-                        # Всегда фиксированный широкий viewport 3000x2250
-                        initial_width = 3000
-                        initial_height = 2250
-                        
+                        # --- УСТАНАВЛИВАЕМ VIEWPORT (ширина не меняется) ---
+                        default_width = 3000
+                        default_height = 2250
+                        initial_width = (
+                            (viewport_size or {}).get('width', default_width)
+                            if isinstance(viewport_size, dict) else default_width
+                        )
+                        initial_height = (
+                            (viewport_size or {}).get('height', default_height)
+                            if isinstance(viewport_size, dict) else default_height
+                        )
+
                         await page.set_viewport_size({"width": initial_width, "height": initial_height})
-                        
+
                         print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
-                        
-                        await page.set_content(html, timeout=120000)  # Increased timeout
-                        
-                        # Ждем полной загрузки (увеличенный таймаут)
+
+                        await page.set_content(html, timeout=120000)
                         await page.wait_for_load_state("networkidle", timeout=120000)
-                        
+
                         # --- ИЗМЕРЯЕМ РЕАЛЬНУЮ ВЫСОТУ КОНТЕНТА ---
-                        content_height = await page.evaluate("""
+                        content_height = await page.evaluate(
+                            """
                             () => {
-                                // Пробуем найти основной контейнер по разным селекторам
                                 const selectors = ['.content-wrapper', '.days-grid', 'body'];
                                 for (const selector of selectors) {
                                     const container = document.querySelector(selector);
                                     if (container) {
                                         const rect = container.getBoundingClientRect();
-                                        console.log(`Found ${selector}: height=${rect.height}`);
                                         return rect.height;
                                     }
                                 }
-                                // Fallback: измеряем всю страницу
                                 const bodyHeight = Math.max(
                                     document.body.scrollHeight,
                                     document.body.offsetHeight,
@@ -223,24 +289,21 @@ async def generate_schedule_image(
                                     document.documentElement.scrollHeight,
                                     document.documentElement.offsetHeight
                                 );
-                                console.log(`Fallback body height: ${bodyHeight}`);
                                 return bodyHeight;
                             }
-                        """)
-                        
+                            """
+                        )
+
                         if content_height == 0:
                             raise ValueError("Не удалось измерить высоту контента - все селекторы вернули 0")
-                        
-                        # Подгоняем высоту viewport под контент + отступы
-                        final_height = int(content_height + 100)  # 100px запас
-                        
+
+                        final_height = int(content_height + 100)
                         await page.set_viewport_size({"width": initial_width, "height": final_height})
-                        
-                        # Дополнительная задержка для стабилизации после изменения viewport
                         await asyncio.sleep(1.0)
-                        
-                        # Проверяем, что элементы действительно загрузились
-                        elements_loaded = await page.evaluate("""
+
+                        # Небольшая проверка загрузки элементов
+                        elements_loaded = await page.evaluate(
+                            """
                             () => {
                                 const wrapper = document.querySelector('.content-wrapper');
                                 const grid = document.querySelector('.days-grid');
@@ -251,60 +314,74 @@ async def generate_schedule_image(
                                     lessons: lessons.length
                                 };
                             }
-                        """)
-                        
+                            """
+                        )
                         logging.info(f"Elements loaded: {elements_loaded}")
-                        
+
                         print_progress_bar(4, 5, f"Генерация {group}", "Скриншот")
-                        
                         await page.screenshot(
                             path=output_path,
                             full_page=False,
                             type="png",
-                            timeout=120000
+                            timeout=120000,
                         )
-                        
+
                         print_progress_bar(5, 5, f"Генерация {group}", "Готово")
-                        
+                        state.pages_made += 1
                         return True
-                        
+
                     except Exception as inner_e:
                         last_error = inner_e
-                        logging.warning(f"Попытка {attempt}/5 провалилась: {inner_e}")
-                        await asyncio.sleep(1)  # Small delay before retry
-                
+                        logging.warning(f"Попытка {attempt}/{max_attempts} провалилась: {inner_e}")
+                        await asyncio.sleep(1)
+                        # Если целевой краш — перезапустим пул и повторим
+                        if attempt < max_attempts:
+                            try:
+                                # Жёсткий перезапуск только браузера; контекст переоткроется при ensure
+                                try:
+                                    await state.browser.close()
+                                except Exception:
+                                    pass
+                                try:
+                                    await state.ctx.__aexit__(None, None, None)
+                                except Exception:
+                                    pass
+                            finally:
+                                state = await _ensure_browser()
+                                page = await state.browser.new_page()
+                                page.set_default_timeout(120000)
+                                page.set_default_navigation_timeout(120000)
+
+                if last_error is not None:
+                    logging.error(f"Генерация для {group} не удалась: {last_error}")
+                return False
             finally:
-                # Всегда закрываем страницу
                 try:
                     await page.close()
-                except:
+                except Exception:
                     pass
-        
-            
-        return True
+
     except Exception as e:
-        print(f"Ошибка при генерации изображения: {e}")
+        logging.error(f"Ошибка при генерации изображения: {e}")
         return False
 
 
 async def shutdown_image_generator():
-    """Корректно закрывает ресурсы Playwright/Chromium для предотвращения утечек."""
+    """Закрывает persistent-браузер текущего event loop (если есть)."""
     try:
-        state = _get_loop_state()
-        async with state["lock"]:
-            browser = state.get("browser")
-            ctx = state.get("ctx")
-            if browser is not None:
+        loop = asyncio.get_running_loop()
+        state = getattr(loop, "__img_pool_state__", None)
+        if state is not None:
+            try:
                 try:
-                    if browser.is_connected():
-                        await browser.close()
-                finally:
-                    state["browser"] = None
-            if ctx is not None:
+                    await state.browser.close()
+                except Exception:
+                    pass
                 try:
-                    await ctx.__aexit__(None, None, None)
-                finally:
-                    state["ctx"] = None
+                    await state.ctx.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            finally:
+                setattr(loop, "__img_pool_state__", None)
     except Exception:
-        # Не бросаем исключение при остановке
         pass

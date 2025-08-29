@@ -15,7 +15,8 @@ from bot.text_formatters import (
 )
 from core.config import (
     CHECK_INTERVAL_MINUTES, MOSCOW_TZ, OPENWEATHERMAP_API_KEY,
-    OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS, REDIS_SCHEDULE_HASH_KEY
+    OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS, REDIS_SCHEDULE_HASH_KEY,
+    REDIS_SCHEDULE_CACHE_KEY,
 )
 from core.manager import TimetableManager
 from core.metrics import SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL, LAST_SCHEDULE_UPDATE_TS, ERRORS_TOTAL
@@ -254,6 +255,11 @@ async def plan_reminders_for_user(scheduler: AsyncIOScheduler, user_data_manager
         logger.warning(f"plan_reminders_for_user failed for {user_id}: {e}")
 
 async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_manager: TimetableManager, redis_client: Redis):
+    """Тёплый прогрев картинок топ-групп через Dramatiq-воркеры (не блокируем основной процесс бота).
+
+    Раньше генерация выполнялась прямо тут, что при сбоях Playwright могла подвесить event loop бота.
+    Теперь только отправляем задачи в очередь, а сами изображения генерятся в worker-процессах.
+    """
     try:
         cache = ImageCacheManager(redis_client, cache_ttl_hours=192)
         # Топ-10 групп по пользователям
@@ -272,9 +278,9 @@ async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_m
         if not week_key_name:
             return
         week_key, week_name = week_key_name
-        
-        # Подготавливаем список групп для генерации
-        groups_to_generate = []
+
+        # Собираем список задач к отправке
+        to_enqueue: list[tuple[str, dict, str, str]] = []
         for group in top_groups:
             cache_key = f"{group}_{week_key}"
             if await cache.is_cached(cache_key):
@@ -283,40 +289,42 @@ async def warm_top_groups_images(user_data_manager: UserDataManager, timetable_m
             gen_lock_key = f"image_gen_lock:warm:{cache_key}"
             lock_acquired = False
             try:
-                lock_acquired = await redis_client.set(gen_lock_key, "1", nx=True, ex=120)
+                lock_acquired = await redis_client.set(gen_lock_key, "1", nx=True, ex=180)
             except Exception:
                 pass
             if not lock_acquired:
                 continue
             full_schedule = timetable_manager._schedules.get(group.upper(), {})
             week_schedule = full_schedule.get(week_key, {})
-            # Путь для временного файла
-            from core.config import MEDIA_PATH
-            output_dir = MEDIA_PATH / "generated"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_path = output_dir / f"{cache_key}.png"
-            groups_to_generate.append((cache_key, week_schedule, week_name, group, redis_client))
-        
-        if not groups_to_generate:
+            if not week_schedule:
+                continue
+            to_enqueue.append((cache_key, week_schedule, week_name, group))
+
+        if not to_enqueue:
             logger.info("Все изображения уже в кэше, генерация не требуется")
             return
-        
-        total_groups = len(groups_to_generate)
-        logger.info(f"Начинаю генерацию изображений для {total_groups} групп")
-        print_progress_bar(0, total_groups, "Генерация изображений", f"0/{total_groups} групп")
-        
-        # Генерируем изображения с прогресс-баром
-        completed = 0
-        for i, (cache_key, week_schedule, week_name, group, redis_client) in enumerate(groups_to_generate):
+
+        # Отправляем задачи в Dramatiq
+        from bot.tasks import generate_week_image_task
+        total = len(to_enqueue)
+        sent = 0
+        for cache_key, week_schedule, week_name, group in to_enqueue:
             try:
-                await generate_and_cache(cache_key, week_schedule, week_name, group, redis_client)
-                completed += 1
-                print_progress_bar(completed, total_groups, "Генерация изображений", f"{completed}/{total_groups} групп")
+                generate_week_image_task.send(
+                    cache_key=cache_key,
+                    week_schedule=week_schedule,
+                    week_name=week_name,
+                    group=group,
+                    user_id=None,
+                    placeholder_msg_id=None,
+                    final_caption=None,
+                )
+                sent += 1
+                print_progress_bar(sent, total, "Прогрев изображений", f"{sent}/{total} задач отправлено")
             except Exception as e:
-                logger.warning(f"Ошибка генерации для группы {group}: {e}")
-                print_progress_bar(completed, total_groups, "Генерация изображений", f"{completed}/{total_groups} групп (ошибка)")
-        
-        logger.info(f"Генерация изображений завершена: {completed}/{total_groups} групп")
+                logger.warning(f"Не удалось отправить задачу прогрева для {cache_key}: {e}")
+
+        logger.info(f"Прогрев изображений отправлен в очередь: {sent}/{total} задач")
     except Exception as e:
         logger.warning(f"warm_top_groups_images failed: {e}")
 

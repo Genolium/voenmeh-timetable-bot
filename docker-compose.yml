@@ -18,6 +18,7 @@ services:
   bot:
     <<: *base-app-service
     container_name: voenmeh_bot
+    shm_size: 1gb
     ports:
       - "8000:8000"
     depends_on:
@@ -34,11 +35,13 @@ services:
   worker:
     <<: *base-app-service
     container_name: voenmeh_worker
+    shm_size: 1gb
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-2} --threads ${DRAMATIQ_THREADS:-4} bot.tasks
+    # Safer defaults to avoid RAM spikes; override via .env if needed
+    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-1} --threads ${DRAMATIQ_THREADS:-2} bot.tasks
 
   rabbitmq_monitor:
     <<: *base-app-service
