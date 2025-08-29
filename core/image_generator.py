@@ -252,8 +252,9 @@ async def generate_schedule_image(
                     attempt += 1
                     try:
                         # --- УСТАНАВЛИВАЕМ VIEWPORT (ширина не меняется) ---
-                        default_width = 3000
-                        default_height = 2250
+                        from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
+                        default_width = VIEWPORT_WIDTH
+                        default_height = VIEWPORT_HEIGHT
                         initial_width = (
                             (viewport_size or {}).get('width', default_width)
                             if isinstance(viewport_size, dict) else default_width

@@ -148,7 +148,9 @@ class ImageService:
                 try:
                     # Измеряем время генерации для метрик
                     with SCHEDULE_GENERATION_TIME.labels(schedule_type="week").time():
-                        highres_vp = {"width":1500, "height": 1125}
+                        # Сохраняем исходную компоновку — жестко фиксированный холст
+                        from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
+                        highres_vp = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
                         success = await generate_schedule_image(
                             schedule_data=schedule_data,
