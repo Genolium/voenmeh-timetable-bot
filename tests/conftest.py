@@ -1,5 +1,6 @@
 import sys
 import os
+import asyncio
 import pytest
 from unittest.mock import MagicMock, AsyncMock
 
@@ -11,6 +12,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 os.environ.setdefault('BOT_TOKEN', '1234567890:ABCdefGHIjklMNOpqrsTUVwxyz')
 os.environ.setdefault('REDIS_URL', 'redis://localhost:6379/0')
 os.environ.setdefault('DATABASE_URL', 'postgresql://test:test@localhost:5432/test_db')
+
+# Fix asyncio transport warnings on Windows by using selector event loop policy
+if sys.platform.startswith('win'):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 
 @pytest.fixture
 def mock_dialog_manager():

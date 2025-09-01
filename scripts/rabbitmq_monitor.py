@@ -28,15 +28,29 @@ class RabbitMQMonitor:
         self.max_failures = 5
         self.failure_count = 0
         
+    def _extract_credentials(self):
+        """Extract management credentials from DRAMATIQ_BROKER_URL or env overrides."""
+        # Allow explicit overrides
+        username = os.getenv("RABBITMQ_MANAGEMENT_USER")
+        password = os.getenv("RABBITMQ_MANAGEMENT_PASSWORD")
+        if username and password:
+            return username, password
+
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.rabbitmq_url)
+            if parsed.username and parsed.password:
+                return parsed.username, parsed.password
+        except Exception:
+            pass
+
+        # Fallback to defaults
+        return os.getenv("RABBITMQ_USER", "guest"), os.getenv("RABBITMQ_PASSWORD", "guest")
+
     async def check_rabbitmq_health(self) -> bool:
         """Проверяет состояние RabbitMQ через Management API"""
         try:
-            # Извлекаем credentials из URL
-            if '@' in self.rabbitmq_url:
-                auth_part = self.rabbitmq_url.split('@')[0].replace('amqp://', '')
-                username, password = auth_part.split(':')
-            else:
-                username, password = 'guest', 'guest'
+            username, password = self._extract_credentials()
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(
@@ -103,11 +117,7 @@ class RabbitMQMonitor:
         """Проверяет состояние dramatiq worker"""
         try:
             # Проверяем количество активных соединений
-            if '@' in self.rabbitmq_url:
-                auth_part = self.rabbitmq_url.split('@')[0].replace('amqp://', '')
-                username, password = auth_part.split(':')
-            else:
-                username, password = 'guest', 'guest'
+            username, password = self._extract_credentials()
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(

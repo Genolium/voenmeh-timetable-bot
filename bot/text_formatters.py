@@ -202,7 +202,18 @@ def format_teacher_schedule_text(schedule_info: dict) -> str:
     for lesson in lessons:
         time_str = lesson.get('time', 'Время не указано')
         subject_str = lesson.get('subject', 'Предмет не указан')
-        group_str = f" ({', '.join(lesson.get('groups', []))})"
+        groups_list = lesson.get('groups', []) or []
+        if groups_list:
+            # Удаляем дубликаты групп, сохраняя порядок
+            seen_groups = set()
+            dedup_groups = []
+            for group in groups_list:
+                if group not in seen_groups:
+                    seen_groups.add(group)
+                    dedup_groups.append(group)
+            group_str = f" ({', '.join(dedup_groups)})"
+        else:
+            group_str = ""
 
         lesson_header = f"<b>{time_str}</b>\n{subject_str}{group_str}"
         
@@ -236,7 +247,18 @@ def format_classroom_schedule_text(schedule_info: dict) -> str:
     for lesson in lessons:
         time_str = lesson.get('time', 'Время не указано')
         subject_str = lesson.get('subject', 'Предмет не указан')
-        group_str = f" ({', '.join(lesson.get('groups', []))})"
+        groups_list = lesson.get('groups', []) or []
+        if groups_list:
+            # Удаляем дубликаты групп, сохраняя порядок
+            seen_groups = set()
+            dedup_groups = []
+            for group in groups_list:
+                if group not in seen_groups:
+                    seen_groups.add(group)
+                    dedup_groups.append(group)
+            group_str = f" ({', '.join(dedup_groups)})"
+        else:
+            group_str = ""
         
         lesson_header = f"<b>{time_str}</b>\n{subject_str}{group_str}"
         
@@ -389,11 +411,6 @@ CLOTHING_ADVICES = {
     "warm": ["Завтра обещают тепло, можно одеться полегче.", "Отличная погода для прогулки после учебы."],
     "hot": ["Завтра будет жарко! Пейте больше воды.", "Настоящее лето! Идеально для легкой одежды."]
 }
-EVENING_ENGAGEMENT_BLOCKS = {
-    "prep_tip": ["💡 Совет: Соберите рюкзак с вечера, чтобы утром было меньше суеты.", "💡 Совет: Хороший сон — залог продуктивного дня."],
-    "planning_question": ["🤔 Вопрос: Какая пара завтра кажется самой сложной?", "🤔 Вопрос: Какие цели ставите на завтра?"],
-    "quote": ["📖 Цитата: «Успех — это успеть».", "📖 Цитата: «Планы — ничто, планирование — всё»."]
-}
 
 def generate_evening_intro(weather_forecast: Dict[str, Any] | None, target_date: datetime) -> str:
     weekday = target_date.weekday()
@@ -404,16 +421,17 @@ def generate_evening_intro(weather_forecast: Dict[str, Any] | None, target_date:
         temp = int(weather_forecast['temperature'])
         description = weather_forecast.get('description', '').lower()
         advice_line = ""
-        if temp <= 0: advice_line = random.choice(CLOTHING_ADVICES["cold"])
-        elif 0 < temp <= 12: advice_line = random.choice(CLOTHING_ADVICES["cool"])
-        elif 12 < temp <= 20: advice_line = random.choice(CLOTHING_ADVICES["warm"])
-        else: advice_line = random.choice(CLOTHING_ADVICES["hot"])
+        if temp <= 0:
+            advice_line = random.choice(CLOTHING_ADVICES["cold"]) 
+        elif 0 < temp <= 12:
+            advice_line = random.choice(CLOTHING_ADVICES["cool"]) 
+        elif 12 < temp <= 20:
+            advice_line = random.choice(CLOTHING_ADVICES["warm"]) 
+        else:
+            advice_line = random.choice(CLOTHING_ADVICES["hot"]) 
         weather_block = f"{weather_forecast.get('emoji', '')} Прогноз на завтра: {description.capitalize()}, {temp}°C.\n<i>{advice_line}</i>"
-    engagement_type = random.choice(list(EVENING_ENGAGEMENT_BLOCKS.keys()))
-    engagement_line = random.choice(EVENING_ENGAGEMENT_BLOCKS[engagement_type])
-    parts = [day_context_line, weather_block, engagement_line]
-    random.shuffle(parts)
-    return "\n\n".join(filter(None, [greeting_line] + parts)) + "\n\n"
+    parts = [day_context_line, weather_block]
+    return "\n\n".join(filter(None, parts)) + "\n\n"
 
 def generate_morning_intro(weather_forecast: Dict[str, Any] | None) -> str:
     greeting_line = random.choice(MORNING_GREETINGS)

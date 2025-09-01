@@ -124,8 +124,10 @@ try:
     _q = dict(parse_qsl(_parsed.query, keep_blank_values=True))
     _q.setdefault("heartbeat", "30")
     _q.setdefault("blocked_connection_timeout", "300")
-    _q.setdefault("connection_attempts", "5")
+    _q.setdefault("connection_attempts", "10")
     _q.setdefault("retry_delay", "5")
+    # Ensure socket-level timeout to avoid lingering dead connections
+    _q.setdefault("socket_timeout", "20")
     if _q != dict(parse_qsl(_parsed.query, keep_blank_values=True)):
         _new = _parsed._replace(query=urlencode(_q))
         broker_url = urlunparse(_new)

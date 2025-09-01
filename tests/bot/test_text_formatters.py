@@ -127,6 +127,23 @@ class TestTeacherFormatter:
         text = format_teacher_schedule_text(info)
         assert "📍 101" in text
 
+    def test_teacher_groups_deduplicated(self):
+        info = {
+            'teacher': 'Готин',
+            'date': date(2025, 9, 1),
+            'day_name': 'Понедельник',
+            'lessons': [
+                {
+                    'time': '12:40-14:10',
+                    'subject': 'ПРЕДСТ.ЗНАН.В ИС',
+                    'groups': ['О734Б', 'О735Б', 'О735Б', 'О736Б', 'О736Б']
+                }
+            ],
+        }
+        text = format_teacher_schedule_text(info)
+        assert text.count('О735Б') == 1
+        assert text.count('О736Б') == 1
+
 class TestClassroomFormatter:
     def test_classroom_error_branch(self):
         assert "Ошибка" in format_classroom_schedule_text({'error': 'Нет данных'})
@@ -159,6 +176,25 @@ class TestClassroomFormatter:
         }
         text = format_classroom_schedule_text(info)
         assert "Физика" in text
+
+    def test_classroom_groups_deduplicated(self):
+        info = {
+            'classroom': '315',
+            'date': date(2025, 9, 1),
+            'day_name': 'Понедельник',
+            'lessons': [
+                {
+                    'time': '10:50-12:20',
+                    'subject': 'ЭД И РАСП.Р-ВОЛН',
+                    'groups': ['И431С', 'И432С', 'И432С', 'И437С', 'И437С', 'И438С', 'И438С', 'КВ32', 'КВ32']
+                }
+            ],
+        }
+        text = format_classroom_schedule_text(info)
+        assert text.count('И432С') == 1
+        assert text.count('И437С') == 1
+        assert text.count('И438С') == 1
+        assert text.count('КВ32') == 1
 
 class TestFullWeekFormatter:
     def test_week_with_no_lessons(self):
@@ -229,33 +265,34 @@ def test_generate_dynamic_header_with_malformed_time(mocker):
 class TestNotificationFormatters:
     def test_generate_evening_intro(self, mocker):
         mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
-        mocker.patch('bot.text_formatters.random.shuffle', lambda x: None)
         
         weather_forecast = {'temperature': -5, 'description': 'снег', 'emoji': '❄️'}
         target_date = datetime(2025, 7, 28)
         
         text = generate_evening_intro(weather_forecast, target_date)
         
-        assert "Добрый вечер! 👋" in text
         assert "Завтра понедельник — начинаем неделю с чистого листа!" in text
         assert "Прогноз на завтра: Снег, -5°C" in text
         assert "не забудьте шапку и перчатки" in text
-        assert "💡 Совет: Соберите рюкзак с вечера" in text
+        assert "Совет:" not in text
+        assert "Цитата:" not in text
+        assert "Вопрос:" not in text
+        assert "Добрый вечер" not in text
 
     def test_generate_evening_intro_no_weather(self, mocker):
         mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
-        mocker.patch('bot.text_formatters.random.shuffle', lambda x: None)
         
         target_date = datetime(2025, 7, 28)  # понедельник
         text = generate_evening_intro(None, target_date)
         
-        assert "Добрый вечер! 👋" in text
         assert "Завтра понедельник" in text
         assert "Прогноз на завтра" not in text
+        assert "Совет:" not in text
+        assert "Цитата:" not in text
+        assert "Вопрос:" not in text
 
     def test_generate_evening_intro_different_weekdays(self, mocker):
         mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
-        mocker.patch('bot.text_formatters.random.shuffle', lambda x: None)
         
         # Тестируем разные дни недели
         test_cases = [
@@ -273,7 +310,6 @@ class TestNotificationFormatters:
 
     def test_generate_evening_intro_temperature_ranges(self, mocker):
         mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
-        mocker.patch('bot.text_formatters.random.shuffle', lambda x: None)
         
         target_date = datetime(2025, 7, 28)
         
