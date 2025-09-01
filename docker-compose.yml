@@ -59,6 +59,9 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     env_file: [ .env ]
+    environment:
+      - TZ=${TZ:-Europe/Moscow}
+    command: [ "postgres", "-c", "timezone=${DB_TIMEZONE:-Europe/Moscow}", "-c", "log_timezone=${DB_TIMEZONE:-Europe/Moscow}" ]
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]

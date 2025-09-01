@@ -2,8 +2,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, Tuple
 
-from sqlalchemy import select, update, func, or_, case
+from sqlalchemy import select, update, func, or_, case, event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from core.config import MOSCOW_TZ
 
 from core.db import User
 
@@ -12,7 +13,37 @@ class UserDataManager:
     Класс для управления данными пользователей через SQLAlchemy.
     """
     def __init__(self, db_url: str):
-        self.engine = create_async_engine(db_url)
+        tz_name = str(MOSCOW_TZ)
+
+        # Настраиваем часовой пояс на уровне соединения с PostgreSQL
+        engine_kwargs = {}
+        try:
+            if db_url.startswith("postgresql") and "+asyncpg" in db_url:
+                # Для asyncpg используем server_settings
+                engine_kwargs["connect_args"] = {
+                    "server_settings": {"TimeZone": tz_name}
+                }
+        except Exception:
+            # На всякий случай не блокируем инициализацию
+            engine_kwargs = {}
+
+        self.engine = create_async_engine(db_url, **engine_kwargs)
+
+        # Для sync-адаптеров (psycopg2) или если server_settings недоступно
+        try:
+            if db_url.startswith("postgresql") and "+asyncpg" not in db_url:
+                @event.listens_for(self.engine.sync_engine, "connect")
+                def _set_timezone(dbapi_connection, connection_record):
+                    try:
+                        cursor = dbapi_connection.cursor()
+                        cursor.execute(f"SET TIME ZONE '{tz_name}'")
+                        cursor.close()
+                    except Exception:
+                        # Не прерываем подключение, если установка TZ не удалась
+                        pass
+        except Exception:
+            pass
+
         self.async_session_maker = async_sessionmaker(self.engine, expire_on_commit=False)
 
     async def register_user(self, user_id: int, username: Optional[str]):
