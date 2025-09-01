@@ -448,9 +448,14 @@ async def test_monitor_schedule_changes_with_changes(mock_user_data_manager, moc
     mock_manager.save_to_cache = AsyncMock()
     monkeypatch.setattr('bot.scheduler.TimetableManager', lambda *args: mock_manager)
     
-    # Мокаем send_message_task
-    mock_send_task = MagicMock()
-    monkeypatch.setattr('bot.scheduler.send_message_task', mock_send_task)
+    # Добавляем mock для global_timetable_manager_instance в модуль
+    mock_global_manager = MagicMock()
+    import bot.scheduler
+    bot.scheduler.global_timetable_manager_instance = mock_global_manager
+    
+    # Мокаем send_schedule_diff_notifications
+    mock_diff_notifications = AsyncMock()
+    monkeypatch.setattr('bot.scheduler.send_schedule_diff_notifications', mock_diff_notifications)
     
     # Мокаем TASKS_SENT_TO_QUEUE
     mock_metrics = MagicMock()
@@ -465,8 +470,8 @@ async def test_monitor_schedule_changes_with_changes(mock_user_data_manager, moc
     # Проверяем, что хеш обновлен (используем правильный ключ)
     mock_redis.set.assert_called_with('timetable:schedule_hash', 'new_hash_value')
     
-    # Проверяем, что сообщения отправлены
-    assert mock_send_task.send.call_count > 0
+    # Проверяем, что функция дифф-уведомлений была вызвана
+    mock_diff_notifications.assert_called_once()
 
 
 @pytest.mark.asyncio

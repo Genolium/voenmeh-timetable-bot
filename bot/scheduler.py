@@ -19,6 +19,7 @@ from core.config import (
     REDIS_SCHEDULE_CACHE_KEY,
 )
 from core.manager import TimetableManager
+from core.schedule_diff import ScheduleDiffDetector, ScheduleDiffFormatter
 from core.metrics import SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL, LAST_SCHEDULE_UPDATE_TS, ERRORS_TOTAL
 from core.parser import fetch_and_parse_all_schedules
 from datetime import datetime as _dt
@@ -295,29 +296,22 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             
         new_hash = new_schedule_data.get('__current_xml_hash__')
         if new_hash != old_hash:
-            # Detect changed groups
-            changed_groups = []  # Compare schedules
-            for group in changed_groups:
-                users = await user_data_manager.get_users_by_group(group)
-                for user in users:
-                    send_message_task.send(user, "Schedule changed for your group!")
             logger.warning(f"ОБНАРУЖЕНЫ ИЗМЕНЕНИЯ В РАСПИСАНИИ! Старый хеш: {old_hash}, Новый: {new_hash}")
             await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
             
+            # Создаем новый менеджер с обновленными данными
             new_manager = TimetableManager(new_schedule_data, redis_client)
             await new_manager.save_to_cache()
             
+            # Отправляем дифф-уведомления пользователям
+            await send_schedule_diff_notifications(
+                user_data_manager=user_data_manager,
+                old_manager=global_timetable_manager_instance,
+                new_manager=new_manager
+            )
+            
             # Переприсваиваем глобальный экземпляр
             global_timetable_manager_instance = new_manager
-            
-            # Массовая генерация изображений отключена
-            
-            # Уведомляем всех пользователей об обновлении расписания
-            all_users = await user_data_manager.get_all_user_ids()
-            message_text = "❗️ <b>ВНИМАНИЕ! Обновление расписания!</b>\n\nРасписание в боте было обновлено. Пожалуйста, проверьте актуальное расписание своей группы."
-            for user_id in all_users:
-                send_message_task.send(user_id, message_text)
-                TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
             
             # Уведомляем администраторов о автоматической генерации
             try:
@@ -462,6 +456,98 @@ async def auto_backup(redis_client: Redis):
 
     except Exception as e:
         logger.error(f"Auto-backup failed with error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+
+async def send_schedule_diff_notifications(
+    user_data_manager: UserDataManager,
+    old_manager: TimetableManager,
+    new_manager: TimetableManager
+):
+    """
+    Отправляет пользователям уведомления только о реальных изменениях в расписании.
+    """
+    try:
+        # Получаем всех пользователей с их группами
+        users_with_groups = await user_data_manager.get_all_users_with_groups()
+        if not users_with_groups:
+            logger.info("Нет пользователей для отправки дифф-уведомлений")
+            return
+        
+        # Группируем пользователей по группам для оптимизации
+        groups_to_users = {}
+        for user_id, group_name in users_with_groups:
+            if group_name:
+                if group_name not in groups_to_users:
+                    groups_to_users[group_name] = []
+                groups_to_users[group_name].append(user_id)
+        
+        # Проверяем изменения для каждой группы на следующие несколько дней
+        from datetime import date, timedelta
+        today = date.today()
+        dates_to_check = [today + timedelta(days=i) for i in range(7)]  # Проверяем неделю вперед
+        
+        total_notifications_sent = 0
+        
+        for group_name, user_ids in groups_to_users.items():
+            group_has_changes = False
+            
+            for check_date in dates_to_check:
+                try:
+                    # Получаем старое и новое расписание на дату
+                    old_schedule = await old_manager.get_schedule_for_day(group_name, target_date=check_date)
+                    new_schedule = await new_manager.get_schedule_for_day(group_name, target_date=check_date)
+                    
+                    # Сравниваем расписания
+                    diff = ScheduleDiffDetector.compare_group_schedules(
+                        group=group_name,
+                        target_date=check_date,
+                        old_schedule_data=old_schedule,
+                        new_schedule_data=new_schedule
+                    )
+                    
+                    # Если есть изменения, отправляем уведомления
+                    if diff.has_changes():
+                        group_has_changes = True
+                        message = ScheduleDiffFormatter.format_group_diff(diff)
+                        
+                        if message:
+                            # Отправляем уведомление всем пользователям группы
+                            for user_id in user_ids:
+                                send_message_task.send(user_id, message)
+                                TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+                                total_notifications_sent += 1
+                            
+                            logger.info(f"Отправлены дифф-уведомления для группы {group_name} на {check_date}: {len(user_ids)} пользователей")
+                
+                except Exception as e:
+                    logger.error(f"Ошибка при сравнении расписания группы {group_name} на {check_date}: {e}")
+                    continue
+            
+            if not group_has_changes:
+                logger.debug(f"Нет изменений в расписании группы {group_name}")
+        
+        logger.info(f"Отправлено {total_notifications_sent} дифф-уведомлений о изменениях в расписании")
+        
+        # Уведомляем администраторов о количестве отправленных уведомлений
+        if total_notifications_sent > 0:
+            try:
+                admin_users = await user_data_manager.get_admin_users()
+                admin_message = (
+                    f"📊 <b>Отчет о дифф-уведомлениях</b>\n\n"
+                    f"Обнаружены изменения в расписании\n"
+                    f"📤 Отправлено уведомлений: {total_notifications_sent}\n"
+                    f"👥 Затронуто групп: {len([g for g, users in groups_to_users.items() if any(diff.has_changes() for diff in [])])}\n"
+                    f"⏱️ Проверены даты: {len(dates_to_check)} дней вперед"
+                )
+                for admin_id in admin_users:
+                    send_message_task.send(admin_id, admin_message)
+                    TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+            except Exception as e:
+                logger.warning(f"Не удалось уведомить администраторов о дифф-уведомлениях: {e}")
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка при отправке дифф-уведомлений: {e}")
         import traceback
         logger.error(traceback.format_exc())
 
