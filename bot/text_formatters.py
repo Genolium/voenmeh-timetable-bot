@@ -430,7 +430,7 @@ def generate_evening_intro(weather_forecast: Dict[str, Any] | None, target_date:
         else:
             advice_line = random.choice(CLOTHING_ADVICES["hot"]) 
         weather_block = f"{weather_forecast.get('emoji', '')} Прогноз на завтра: {description.capitalize()}, {temp}°C.\n<i>{advice_line}</i>"
-    parts = [day_context_line, weather_block]
+    parts = [greeting_line, day_context_line, weather_block]
     return "\n\n".join(filter(None, parts)) + "\n\n"
 
 def generate_morning_intro(weather_forecast: Dict[str, Any] | None) -> str:

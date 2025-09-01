@@ -271,13 +271,13 @@ class TestNotificationFormatters:
         
         text = generate_evening_intro(weather_forecast, target_date)
         
+        assert "Добрый вечер!" in text
         assert "Завтра понедельник — начинаем неделю с чистого листа!" in text
         assert "Прогноз на завтра: Снег, -5°C" in text
         assert "не забудьте шапку и перчатки" in text
         assert "Совет:" not in text
         assert "Цитата:" not in text
         assert "Вопрос:" not in text
-        assert "Добрый вечер" not in text
 
     def test_generate_evening_intro_no_weather(self, mocker):
         mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
@@ -285,6 +285,7 @@ class TestNotificationFormatters:
         target_date = datetime(2025, 7, 28)  # понедельник
         text = generate_evening_intro(None, target_date)
         
+        assert "Добрый вечер!" in text
         assert "Завтра понедельник" in text
         assert "Прогноз на завтра" not in text
         assert "Совет:" not in text
