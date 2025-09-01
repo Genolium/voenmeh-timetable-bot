@@ -18,13 +18,10 @@ depends_on = None
 def upgrade():
     # Устанавливаем таймзону БД на уровне БД (персистентно для новых подключений)
     op.execute("ALTER DATABASE \"%s\" SET timezone TO 'Europe/Moscow';" % op.get_bind().engine.url.database)
-    # Логирование таймзоны в журнале тоже в Moscow
-    op.execute("ALTER DATABASE \"%s\" SET log_timezone TO 'Europe/Moscow';" % op.get_bind().engine.url.database)
 
 
 def downgrade():
     # Возвращаем к настройкам по умолчанию (UTC) — опционально
     op.execute("ALTER DATABASE \"%s\" RESET timezone;" % op.get_bind().engine.url.database)
-    op.execute("ALTER DATABASE \"%s\" RESET log_timezone;" % op.get_bind().engine.url.database)
 
 
