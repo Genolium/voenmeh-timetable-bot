@@ -303,12 +303,12 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             new_manager = TimetableManager(new_schedule_data, redis_client)
             await new_manager.save_to_cache()
             
-            # Отправляем дифф-уведомления пользователям
-            await send_schedule_diff_notifications(
-                user_data_manager=user_data_manager,
-                old_manager=global_timetable_manager_instance,
-                new_manager=new_manager
-            )
+            # Отправляем дифф-уведомления пользователям (ОТКЛЮЧЕНО)
+            # await send_schedule_diff_notifications(
+            #     user_data_manager=user_data_manager,
+            #     old_manager=global_timetable_manager_instance,
+            #     new_manager=new_manager
+            # )
             
             # Переприсваиваем глобальный экземпляр
             global_timetable_manager_instance = new_manager
@@ -374,7 +374,7 @@ async def auto_backup(redis_client: Redis):
         # Backup DB using Docker (safer approach)
         db_url = os.getenv("DATABASE_URL")
         if db_url:
-            backup_file = f"db_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+            backup_file = f"db_backup_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.sql"
             backup_path = f"/app/data/{backup_file}"
             
             # Extract connection details from DATABASE_URL
@@ -437,7 +437,7 @@ async def auto_backup(redis_client: Redis):
                         logger.warning("Successfully parsed schedule data with error replacement")
 
                 # Write the decompressed data as readable JSON
-                backup_file = f"schedules_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                backup_file = f"schedules_backup_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.json"
                 with open(backup_file, "w", encoding='utf-8') as f:
                     json.dump(schedule_data, f, ensure_ascii=False, indent=2)
                 logger.info(f"Schedule backup created: {backup_file}")
@@ -445,7 +445,7 @@ async def auto_backup(redis_client: Redis):
             except Exception as e:
                 logger.error(f"Failed to process schedule data for backup: {e}")
                 # Fallback: save raw data as binary
-                backup_file = f"schedules_backup_raw_{datetime.now().strftime('%Y%m%d_%H%M%S')}.bin"
+                backup_file = f"schedules_backup_raw_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.bin"
                 with open(backup_file, "wb") as f:
                     f.write(schedules)
                 logger.info(f"Raw schedule backup created: {backup_file}")
@@ -488,6 +488,7 @@ async def send_schedule_diff_notifications(
         dates_to_check = [today + timedelta(days=i) for i in range(7)]  # Проверяем неделю вперед
         
         total_notifications_sent = 0
+        groups_with_changes = set()  # Отслеживаем группы с изменениями
         
         for group_name, user_ids in groups_to_users.items():
             group_has_changes = False
@@ -509,6 +510,7 @@ async def send_schedule_diff_notifications(
                     # Если есть изменения, отправляем уведомления
                     if diff.has_changes():
                         group_has_changes = True
+                        groups_with_changes.add(group_name)  # Добавляем группу в список с изменениями
                         message = ScheduleDiffFormatter.format_group_diff(diff)
                         
                         if message:
@@ -537,7 +539,7 @@ async def send_schedule_diff_notifications(
                     f"📊 <b>Отчет о дифф-уведомлениях</b>\n\n"
                     f"Обнаружены изменения в расписании\n"
                     f"📤 Отправлено уведомлений: {total_notifications_sent}\n"
-                    f"👥 Затронуто групп: {len([g for g, users in groups_to_users.items() if any(diff.has_changes() for diff in [])])}\n"
+                    f"👥 Затронуто групп: {len(groups_with_changes)}\n"
                     f"⏱️ Проверены даты: {len(dates_to_check)} дней вперед"
                 )
                 for admin_id in admin_users:

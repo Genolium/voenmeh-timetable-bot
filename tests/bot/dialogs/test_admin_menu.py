@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date, timedelta
-from aiogram.types import CallbackQuery, Message, User
+from aiogram.types import CallbackQuery, Message, User, ContentType
 from aiogram_dialog import DialogManager
 from aiogram_dialog.widgets.kbd import Button
 
@@ -52,6 +52,10 @@ def mock_message():
     message.from_user = AsyncMock(spec=User)
     message.from_user.id = 123456789
     message.answer = AsyncMock()
+    message.chat = AsyncMock()
+    message.chat.id = -123456789
+    message.message_id = 1
+    message.content_type = "text"
     return message
 
 class TestAdminMenuHelpers:

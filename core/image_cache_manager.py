@@ -8,7 +8,7 @@ from redis.asyncio.client import Redis
 from PIL import Image
 import io
 
-from core.config import MEDIA_PATH
+from core.config import MEDIA_PATH, MOSCOW_TZ
 from core.metrics import IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, IMAGE_CACHE_SIZE, IMAGE_CACHE_OPERATIONS
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class ImageCacheManager:
                 meta_key = f"{self.cache_metadata_prefix}{cache_key}"
                 meta_data = {
                     **(metadata or {}),
-                    "cached_at": datetime.now().isoformat(),
+                    "cached_at": datetime.now(MOSCOW_TZ).isoformat(),
                     "size_bytes": len(image_bytes),
                     "ttl_hours": self.cache_ttl_hours
                 }
@@ -291,7 +291,7 @@ class ImageCacheManager:
         """
         try:
             removed_count = 0
-            cutoff_time = datetime.now() - timedelta(hours=self.cache_ttl_hours)
+            cutoff_time = datetime.now(MOSCOW_TZ) - timedelta(hours=self.cache_ttl_hours)
             
             for file_path in self.cache_dir.glob("*.png"):
                 try:

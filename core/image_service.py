@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFil
 
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
-from core.config import MEDIA_PATH
+from core.config import MEDIA_PATH, MOSCOW_TZ
 from core.metrics import SCHEDULE_GENERATION_TIME
 from bot.utils.image_compression import get_telegram_safe_image_path
 
@@ -116,7 +116,7 @@ class ImageService:
         Returns:
             Tuple[success, file_path]
         """
-        start_time = datetime.now()
+        start_time = datetime.now(MOSCOW_TZ)
 
         # Ограничение на количество одновременных генераций
         with _generation_semaphore:
@@ -181,7 +181,7 @@ class ImageService:
                         await self.cache_manager.cache_image(cache_key, image_bytes, metadata={
                             "group": group,
                             "week_key": week_type,
-                            "generated_at": datetime.now().isoformat(),
+                            "generated_at": datetime.now(MOSCOW_TZ).isoformat(),
                             "file_size": len(image_bytes),
                             "generated_by": generated_by,
                             **({"schedule_hash": schedule_hash} if schedule_hash else {}),
@@ -198,7 +198,7 @@ class ImageService:
                         # Не возвращаем False, так как файл все равно создан
 
                     # Обновляем метрики времени генерации
-                    generation_time = (datetime.now() - start_time).total_seconds()
+                    generation_time = (datetime.now(MOSCOW_TZ) - start_time).total_seconds()
                     SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
 
                     logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")

@@ -3,6 +3,7 @@ import asyncio
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
+from core.config import MOSCOW_TZ
 
 class AlertSender:
     """Мульти-канальный отправитель алертов (Slack/Discord/Telegram/HTTP)."""
@@ -69,7 +70,7 @@ class AlertSender:
             if alert_data.get("tags"):
                 tags = "\n".join([f"• {k}: {v}" for k, v in alert_data["tags"].items()])
                 blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"}})
-            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"{datetime.now().isoformat()}"}]})
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"{datetime.now(MOSCOW_TZ).isoformat()}"}]})
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
             cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
             async with cm as r:
@@ -84,7 +85,7 @@ class AlertSender:
                 "title": alert_data.get("title", "Alert"),
                 "description": alert_data.get("message", ""),
                 "color": color,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(MOSCOW_TZ).isoformat(),
             }
             if alert_data.get("tags"):
                 embed["fields"] = [{"name": k, "value": str(v), "inline": True} for k, v in alert_data["tags"].items()]

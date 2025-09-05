@@ -470,8 +470,8 @@ async def test_monitor_schedule_changes_with_changes(mock_user_data_manager, moc
     # Проверяем, что хеш обновлен (используем правильный ключ)
     mock_redis.set.assert_called_with('timetable:schedule_hash', 'new_hash_value')
     
-    # Проверяем, что функция дифф-уведомлений была вызвана
-    mock_diff_notifications.assert_called_once()
+    # Проверяем, что функция дифф-уведомлений НЕ была вызвана (отключена)
+    mock_diff_notifications.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,7 @@ from core.metrics import (
     SCHEDULE_GENERATION_TIME, NOTIFICATION_DELIVERY
 )
 from core.alert_sender import AlertSender
+from core.config import MOSCOW_TZ
 
 class AlertSeverity(Enum):
     INFO = "info"
@@ -77,7 +78,7 @@ class BusinessMetricsMonitor:
 
     async def _send_alert(self, title: str, message: str, severity: AlertSeverity, metric_name: str, additional_data: Dict[str, Any]):
         alert_key = f"{metric_name}_{severity.value}"
-        now = datetime.now()
+        now = datetime.now(MOSCOW_TZ)
         last = self.alert_cooldown.get(alert_key)
         if last and (now - last) < timedelta(minutes=self.cooldown_minutes):
             return

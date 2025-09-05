@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from core.business_alerts import (
     BusinessMetricsMonitor, AlertSeverity, BusinessAlert
 )
+from core.config import MOSCOW_TZ
 
 @pytest.fixture
 def mock_settings():
@@ -25,7 +26,7 @@ def sample_alert():
         metric_name="test_metric",
         current_value=0.1,
         threshold=0.5,
-        timestamp=datetime.now(),
+        timestamp=datetime.now(MOSCOW_TZ),
         tags={"source": "test"}
     )
 
@@ -158,7 +159,7 @@ class TestBusinessMetricsMonitor:
             
             # Устанавливаем недавний алерт
             alert_key = "test_metric_critical"
-            monitor.alert_cooldown[alert_key] = datetime.now()
+            monitor.alert_cooldown[alert_key] = datetime.now(MOSCOW_TZ)
             
             with patch('core.business_alerts.AlertSender') as mock_alert_sender:
                 mock_sender = AsyncMock()
@@ -185,7 +186,7 @@ class TestBusinessMetricsMonitor:
             
             # Устанавливаем старый алерт (больше 30 минут назад)
             alert_key = "test_metric_critical"
-            monitor.alert_cooldown[alert_key] = datetime.now() - timedelta(minutes=35)
+            monitor.alert_cooldown[alert_key] = datetime.now(MOSCOW_TZ) - timedelta(minutes=35)
             
             with patch('core.business_alerts.AlertSender') as mock_alert_sender:
                 mock_sender = AsyncMock()

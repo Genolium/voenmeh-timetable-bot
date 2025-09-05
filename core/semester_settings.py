@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select, update
 
 from core.db.models import SemesterSettings
+from core.config import MOSCOW_TZ
 
 
 class SemesterSettingsManager:
@@ -66,7 +67,7 @@ class SemesterSettingsManager:
                         .values(
                             fall_semester_start=fall_semester_start,
                             spring_semester_start=spring_semester_start,
-                            updated_at=datetime.now(),
+                            updated_at=datetime.now(MOSCOW_TZ),
                             updated_by=updated_by
                         )
                     )

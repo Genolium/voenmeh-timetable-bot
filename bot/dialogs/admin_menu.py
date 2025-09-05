@@ -950,11 +950,10 @@ async def build_segment_users(user_data_manager: UserDataManager, group_prefix: 
     group_prefix_up = (group_prefix or "").upper().strip()
     all_ids = await user_data_manager.get_all_user_ids()
     selected_ids: list[int] = []
-    from datetime import timezone
     from datetime import datetime as dt
     threshold = None
     if days_active and days_active > 0:
-        threshold = dt.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days_active)
+        threshold = dt.now(MOSCOW_TZ).replace(tzinfo=None) - timedelta(days=days_active)
     for uid in all_ids:
         info = await user_data_manager.get_full_user_info(uid)
         if not info:
@@ -997,7 +996,19 @@ async def on_segment_criteria_input(message: Message, widget: TextInput, manager
     await manager.switch_to(Admin.template_input)
 
 async def on_template_input_message(message: Message, message_input: MessageInput, manager: DialogManager):
-    manager.dialog_data['segment_template'] = message.text or ""
+    if message.content_type == ContentType.TEXT:
+        manager.dialog_data['segment_template'] = message.text or ""
+        manager.dialog_data['segment_message_type'] = 'text'
+        # Очищаем данные медиа если они были
+        manager.dialog_data.pop('segment_message_chat_id', None)
+        manager.dialog_data.pop('segment_message_id', None)
+    else:
+        # Для медиа сообщений сохраняем информацию для копирования
+        manager.dialog_data['segment_message_type'] = 'media'
+        manager.dialog_data['segment_message_chat_id'] = message.chat.id
+        manager.dialog_data['segment_message_id'] = message.message_id
+        # Очищаем текстовый шаблон если он был
+        manager.dialog_data.pop('segment_template', None)
     await manager.switch_to(Admin.preview)
 
 async def get_preview_data(dialog_manager: DialogManager, **kwargs):
@@ -1005,11 +1016,16 @@ async def get_preview_data(dialog_manager: DialogManager, **kwargs):
     prefix = dialog_manager.dialog_data.get('segment_group_prefix')
     days_active = dialog_manager.dialog_data.get('segment_days_active')
     template = dialog_manager.dialog_data.get('segment_template', "")
+    message_type = dialog_manager.dialog_data.get('segment_message_type', 'text')
     users = await build_segment_users(user_data_manager, prefix, days_active)
+    
     preview_text = ""
-    if users:
+    if users and message_type == 'text':
         info = await user_data_manager.get_full_user_info(users[0])
         preview_text = render_template(template, info)
+    elif message_type == 'media':
+        preview_text = "📎 Медиа сообщение будет скопировано всем пользователям сегмента"
+    
     dialog_manager.dialog_data['segment_selected_ids'] = users
     return {
         "preview_text": preview_text or "(не удалось сформировать превью)",
@@ -1020,19 +1036,32 @@ async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manag
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
     udm: UserDataManager = manager.middleware_data.get("user_data_manager")
-    template = manager.dialog_data.get('segment_template', "")
+    message_type = manager.dialog_data.get('segment_message_type', 'text')
     user_ids = manager.dialog_data.get('segment_selected_ids', [])
     await callback.answer("🚀 Рассылка по сегменту поставлена в очередь...")
     count = 0
-    for uid in user_ids:
-        info = await udm.get_full_user_info(uid)
-        if not info:
-            continue
-        text = render_template(template, info)
-        send_message_task.send(uid, text)
-        TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
-        count += 1
-    await bot.send_message(admin_id, f"✅ Отправка по сегменту запущена. Поставлено задач: {count}")
+    
+    if message_type == 'text':
+        template = manager.dialog_data.get('segment_template', "")
+        for uid in user_ids:
+            info = await udm.get_full_user_info(uid)
+            if not info:
+                continue
+            text = render_template(template, info)
+            send_message_task.send(uid, text)
+            TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+            count += 1
+    else:  # media
+        from_chat_id = manager.dialog_data.get('segment_message_chat_id')
+        message_id = manager.dialog_data.get('segment_message_id')
+        if from_chat_id and message_id:
+            for uid in user_ids:
+                copy_message_task.send(uid, from_chat_id, message_id)
+                TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc()
+                count += 1
+    
+    message_type_text = "текстовых" if message_type == 'text' else "медиа"
+    await bot.send_message(admin_id, f"✅ Отправка {message_type_text} сообщений по сегменту запущена. Поставлено задач: {count}")
     await manager.switch_to(Admin.menu)
 
 async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
