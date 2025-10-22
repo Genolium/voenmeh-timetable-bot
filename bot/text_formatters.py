@@ -395,7 +395,9 @@ def get_footer_with_promo() -> str:
     return UNSUBSCRIBE_FOOTER
 
 EVENING_GREETINGS = ["Добрый вечер! 👋", "Привет! Готовимся к завтрашнему дню.", "Вечерняя сводка на подходе."]
+EVENING_GREETINGS_TEACHER = ["Добрый вечер!", "Информируем Вас о расписании на завтра.", "Здравствуйте!"]
 MORNING_GREETINGS = ["Доброе утро! ☀️", "Утро доброе! Учеба ждет.", "Утренняя сводка готова!"]
+MORNING_GREETINGS_TEACHER = ["Доброе утро!", "Ваше расписание на сегодня.", "Здравствуйте!"]
 DAY_OF_WEEK_CONTEXT = {
     0: ["Завтра понедельник — начинаем неделю с чистого листа!", "Готовимся к началу новой недели."],
     1: ["Завтра вторник, втягиваемся в ритм.", "Планируем продуктивный вторник."],
@@ -405,6 +407,15 @@ DAY_OF_WEEK_CONTEXT = {
     5: ["Завтра учебная суббота — для самых стойких.", "Еще один день знаний, а потом отдых."],
     6: ["Завтра воскресенье — можно выспаться!", "Впереди выходной, но не забудьте про домашку 😉"]
 }
+DAY_OF_WEEK_CONTEXT_TEACHER = {
+    0: ["Завтра понедельник — начало новой рабочей недели.", "Планируем продуктивную неделю."],
+    1: ["Завтра вторник.", "Продолжаем рабочую неделю."],
+    2: ["Завтра среда — середина недели.", "Желаем продуктивного дня."],
+    3: ["Завтра четверг.", "Приближается конец рабочей недели."],
+    4: ["Завтра пятница — завершение рабочей недели.", "Желаем продуктивного завершения недели."],
+    5: ["Завтра суббота — рабочий день.", "Желаем продуктивного дня."],
+    6: ["Завтра воскресенье.", "Желаем хорошего выходного дня."]
+}
 CLOTHING_ADVICES = {
     "cold": ["Завтра будет морозно, не забудьте шапку и перчатки!", "Советуем одеться потеплее."],
     "cool": ["Завтра утром будет прохладно, легкая куртка или свитер будут в самый раз.", "Осенняя прохлада требует уюта."],
@@ -412,34 +423,58 @@ CLOTHING_ADVICES = {
     "hot": ["Завтра будет жарко! Пейте больше воды.", "Настоящее лето! Идеально для легкой одежды."]
 }
 
-def generate_evening_intro(weather_forecast: Dict[str, Any] | None, target_date: datetime) -> str:
+def generate_evening_intro(weather_forecast: Dict[str, Any] | None, target_date: datetime, user_type: str = 'student') -> str:
     weekday = target_date.weekday()
-    greeting_line = random.choice(EVENING_GREETINGS)
-    day_context_line = random.choice(DAY_OF_WEEK_CONTEXT.get(weekday, [""]))
+    
+    # Выбираем приветствие и контекст в зависимости от типа пользователя
+    if user_type == 'teacher':
+        greeting_line = random.choice(EVENING_GREETINGS_TEACHER)
+        day_context_line = random.choice(DAY_OF_WEEK_CONTEXT_TEACHER.get(weekday, [""]))
+    else:
+        greeting_line = random.choice(EVENING_GREETINGS)
+        day_context_line = random.choice(DAY_OF_WEEK_CONTEXT.get(weekday, [""]))
+    
     weather_block = ""
     if weather_forecast:
         temp = int(weather_forecast['temperature'])
         description = weather_forecast.get('description', '').lower()
-        advice_line = ""
-        if temp <= 0:
-            advice_line = random.choice(CLOTHING_ADVICES["cold"]) 
-        elif 0 < temp <= 12:
-            advice_line = random.choice(CLOTHING_ADVICES["cool"]) 
-        elif 12 < temp <= 20:
-            advice_line = random.choice(CLOTHING_ADVICES["warm"]) 
+        
+        # Для преподавателей используем более формальный стиль
+        if user_type == 'teacher':
+            weather_block = f"{weather_forecast.get('emoji', '')} Прогноз погоды на завтра: {description.capitalize()}, {temp}°C."
         else:
-            advice_line = random.choice(CLOTHING_ADVICES["hot"]) 
-        weather_block = f"{weather_forecast.get('emoji', '')} Прогноз на завтра: {description.capitalize()}, {temp}°C.\n<i>{advice_line}</i>"
+            advice_line = ""
+            if temp <= 0:
+                advice_line = random.choice(CLOTHING_ADVICES["cold"]) 
+            elif 0 < temp <= 12:
+                advice_line = random.choice(CLOTHING_ADVICES["cool"]) 
+            elif 12 < temp <= 20:
+                advice_line = random.choice(CLOTHING_ADVICES["warm"]) 
+            else:
+                advice_line = random.choice(CLOTHING_ADVICES["hot"]) 
+            weather_block = f"{weather_forecast.get('emoji', '')} Прогноз на завтра: {description.capitalize()}, {temp}°C.\n<i>{advice_line}</i>"
+    
     parts = [greeting_line, day_context_line, weather_block]
     return "\n\n".join(filter(None, parts)) + "\n\n"
 
-def generate_morning_intro(weather_forecast: Dict[str, Any] | None) -> str:
-    greeting_line = random.choice(MORNING_GREETINGS)
+def generate_morning_intro(weather_forecast: Dict[str, Any] | None, user_type: str = 'student') -> str:
+    # Выбираем приветствие в зависимости от типа пользователя
+    if user_type == 'teacher':
+        greeting_line = random.choice(MORNING_GREETINGS_TEACHER)
+    else:
+        greeting_line = random.choice(MORNING_GREETINGS)
+    
     weather_block = ""
     if weather_forecast:
         temp = int(weather_forecast['temperature'])
         description = weather_forecast.get('description', '').lower()
-        weather_block = f"За окном сейчас {description.capitalize()}, {temp}°C."
+        
+        # Для преподавателей используем более формальный стиль
+        if user_type == 'teacher':
+            weather_block = f"Текущая погода: {description.capitalize()}, {temp}°C."
+        else:
+            weather_block = f"За окном сейчас {description.capitalize()}, {temp}°C."
+    
     return f"{greeting_line}\n{weather_block}\n"
 
 def generate_reminder_text(lesson: Dict[str, Any] | None, reminder_type: str, break_duration: int | None, reminder_time_minutes: int | None = 20) -> str | None:

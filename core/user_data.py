@@ -11,6 +11,7 @@ from core.config import MOSCOW_TZ
 
 from core.db import User
 
+logger = logging.getLogger(__name__)
 T = TypeVar('T')
 
 def cached(ttl: int = 3600) -> Callable:

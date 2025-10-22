@@ -410,6 +410,64 @@ class TestNotificationFormatters:
         assert "📍" not in text
         assert "с " not in text
 
+    def test_generate_evening_intro_teacher(self, mocker):
+        """Тест вечернего приветствия для преподавателя"""
+        mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
+        
+        weather_forecast = {'temperature': 10, 'description': 'облачно', 'emoji': '☁️'}
+        target_date = datetime(2025, 7, 28)
+        
+        text = generate_evening_intro(weather_forecast, target_date, user_type='teacher')
+        
+        # Проверяем, что используется формальное приветствие
+        assert "Добрый вечер!" in text
+        # Проверяем, что используется формальный контекст
+        assert "понедельник" in text.lower()
+        # Проверяем, что погода отображается без советов по одежде
+        assert "Прогноз погоды на завтра: Облачно, 10°C" in text
+        assert "куртка" not in text.lower()
+        assert "свитер" not in text.lower()
+
+    def test_generate_evening_intro_student(self, mocker):
+        """Тест вечернего приветствия для студента (по умолчанию)"""
+        mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
+        
+        weather_forecast = {'temperature': 10, 'description': 'облачно', 'emoji': '☁️'}
+        target_date = datetime(2025, 7, 28)
+        
+        text = generate_evening_intro(weather_forecast, target_date, user_type='student')
+        
+        # Проверяем, что используется неформальное приветствие
+        assert "Добрый вечер!" in text
+        # Проверяем, что есть советы по одежде для студентов
+        assert "Прогноз на завтра: Облачно, 10°C" in text
+        assert ("куртка" in text.lower() or "свитер" in text.lower() or "прохладно" in text.lower())
+
+    def test_generate_morning_intro_teacher(self, mocker):
+        """Тест утреннего приветствия для преподавателя"""
+        mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
+        
+        weather_forecast = {'temperature': 15, 'description': 'солнечно', 'emoji': '☀️'}
+        text = generate_morning_intro(weather_forecast, user_type='teacher')
+        
+        # Проверяем формальное приветствие
+        assert "Доброе утро!" in text
+        # Проверяем формальный стиль погоды
+        assert "Текущая погода: Солнечно, 15°C" in text
+        assert "За окном" not in text
+
+    def test_generate_morning_intro_student(self, mocker):
+        """Тест утреннего приветствия для студента"""
+        mocker.patch('bot.text_formatters.random.choice', lambda x: x[0])
+        
+        weather_forecast = {'temperature': 15, 'description': 'солнечно', 'emoji': '☀️'}
+        text = generate_morning_intro(weather_forecast, user_type='student')
+        
+        # Проверяем неформальное приветствие
+        assert "Доброе утро! ☀️" in text
+        # Проверяем неформальный стиль погоды
+        assert "За окном сейчас Солнечно, 15°C" in text
+
 def test_format_schedule_text_edge_cases():
     # Пустой словарь
     text = format_schedule_text({})

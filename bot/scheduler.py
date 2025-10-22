@@ -11,7 +11,7 @@ from redis.asyncio.client import Redis
 
 from bot.tasks import send_lesson_reminder_task, send_message_task
 from bot.text_formatters import (
-    format_schedule_text, generate_evening_intro, generate_morning_intro, get_footer_with_promo
+    format_schedule_text, format_teacher_schedule_text, generate_evening_intro, generate_morning_intro, get_footer_with_promo
 )
 from core.config import (
     CHECK_INTERVAL_MINUTES, MOSCOW_TZ, OPENWEATHERMAP_API_KEY,
@@ -57,7 +57,6 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(tomorrow_9am)
-    intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow)
 
     users_to_notify = await user_data_manager.get_users_for_evening_notify()
     if not users_to_notify:
@@ -69,6 +68,9 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         user = await user_data_manager.get_full_user_info(user_id)
         user_type = getattr(user, 'user_type', 'student')
 
+        # Генерируем intro с учетом типа пользователя
+        intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow, user_type=user_type)
+
         # Получаем расписание в зависимости от типа пользователя
         if user_type == 'teacher':
             schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=tomorrow.date())
@@ -77,7 +79,20 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
 
         has_lessons = bool(schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'))
 
-        text_body = f"<b>Ваше расписание на завтра:</b>\n\n{format_schedule_text(schedule_info)}" if has_lessons else "🎉 <b>Завтра занятий нет!</b>"
+        # Форматируем расписание в зависимости от типа пользователя
+        if has_lessons:
+            if user_type == 'teacher':
+                schedule_text = format_teacher_schedule_text(schedule_info)
+                text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
+            else:
+                schedule_text = format_schedule_text(schedule_info)
+                text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
+        else:
+            if user_type == 'teacher':
+                text_body = "Завтра занятий не запланировано."
+            else:
+                text_body = "🎉 <b>Завтра занятий нет!</b>"
+        
         text = f"{intro_text}{text_body}{get_footer_with_promo()}"
 
         send_message_task.send(user_id, text)
@@ -90,7 +105,6 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(today_9am)
-    intro_text = generate_morning_intro(weather_forecast)
 
     users_to_notify = await user_data_manager.get_users_for_morning_summary()
     if not users_to_notify:
@@ -102,6 +116,9 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
         user = await user_data_manager.get_full_user_info(user_id)
         user_type = getattr(user, 'user_type', 'student')
 
+        # Генерируем intro с учетом типа пользователя
+        intro_text = generate_morning_intro(weather_forecast, user_type=user_type)
+
         # Получаем расписание в зависимости от типа пользователя
         if user_type == 'teacher':
             schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=today.date())
@@ -109,7 +126,13 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
             schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
 
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
-            text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{format_schedule_text(schedule_info)}{get_footer_with_promo()}"
+            # Форматируем расписание в зависимости от типа пользователя
+            if user_type == 'teacher':
+                schedule_text = format_teacher_schedule_text(schedule_info)
+            else:
+                schedule_text = format_schedule_text(schedule_info)
+            
+            text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{schedule_text}{get_footer_with_promo()}"
             send_message_task.send(user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
 
