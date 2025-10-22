@@ -27,6 +27,7 @@ from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
+from core.admin_reports import send_daily_reports, send_weekly_reports, send_monthly_reports
 from aiogram.types import CallbackQuery
 
 logger = logging.getLogger(__name__)
@@ -52,24 +53,33 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
 async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
     logger.info(f"Начинаю постановку задач на вечернюю рассылку для даты {tomorrow.date().isoformat()}")
-    
+
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(tomorrow_9am)
     intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow)
-    
+
     users_to_notify = await user_data_manager.get_users_for_evening_notify()
     if not users_to_notify:
         logger.info("Вечерняя рассылка: нет пользователей для уведомления.")
         return
 
     for user_id, group_name in users_to_notify:
-        schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=tomorrow.date())
+        # Получаем тип пользователя
+        user = await user_data_manager.get_full_user_info(user_id)
+        user_type = getattr(user, 'user_type', 'student')
+
+        # Получаем расписание в зависимости от типа пользователя
+        if user_type == 'teacher':
+            schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=tomorrow.date())
+        else:
+            schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=tomorrow.date())
+
         has_lessons = bool(schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'))
-        
+
         text_body = f"<b>Ваше расписание на завтра:</b>\n\n{format_schedule_text(schedule_info)}" if has_lessons else "🎉 <b>Завтра занятий нет!</b>"
         text = f"{intro_text}{text_body}{get_footer_with_promo()}"
-        
+
         send_message_task.send(user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
 
@@ -81,14 +91,23 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(today_9am)
     intro_text = generate_morning_intro(weather_forecast)
-    
+
     users_to_notify = await user_data_manager.get_users_for_morning_summary()
     if not users_to_notify:
         logger.info("Утренняя рассылка: нет пользователей для уведомления.")
         return
 
     for user_id, group_name in users_to_notify:
-        schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
+        # Получаем тип пользователя
+        user = await user_data_manager.get_full_user_info(user_id)
+        user_type = getattr(user, 'user_type', 'student')
+
+        # Получаем расписание в зависимости от типа пользователя
+        if user_type == 'teacher':
+            schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=today.date())
+        else:
+            schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
+
         if schedule_info and not schedule_info.get('error') and schedule_info.get('lessons'):
             text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{format_schedule_text(schedule_info)}{get_footer_with_promo()}"
             send_message_task.send(user_id, text)
@@ -664,10 +683,15 @@ def setup_scheduler(bot: Bot, manager: TimetableManager, user_data_manager: User
     scheduler.add_job(morning_summary_broadcast, 'cron', hour=8, minute=0, args=[user_data_manager, manager])
     scheduler.add_job(lesson_reminders_planner, 'cron', hour=6, minute=0, args=[scheduler, user_data_manager, manager])
     scheduler.add_job(monitor_schedule_changes, 'interval', minutes=CHECK_INTERVAL_MINUTES, args=[user_data_manager, redis_client, bot])
-    scheduler.add_job(collect_db_metrics, 'interval', minutes=1, args=[user_data_manager]) 
+    scheduler.add_job(collect_db_metrics, 'interval', minutes=1, args=[user_data_manager])
     scheduler.add_job(backup_current_schedule, 'cron', hour='*/6', args=[redis_client])
     scheduler.add_job(auto_backup, 'cron', hour=2, args=[redis_client])
-    scheduler.add_job(handle_graduated_groups, 'interval', minutes=10, args=[user_data_manager, manager, redis_client]) # Добавляем задачу для обработки выпустившихся групп
+    scheduler.add_job(handle_graduated_groups, 'interval', minutes=10, args=[user_data_manager, manager, redis_client])
+
+    # Задачи для отправки отчётов администраторам
+    scheduler.add_job(send_daily_reports, 'cron', hour=9, minute=0, args=[bot, user_data_manager])  # Ежедневно в 9:00
+    scheduler.add_job(send_weekly_reports, 'cron', hour=9, minute=0, day_of_week='mon', args=[bot, user_data_manager])  # Еженедельно по понедельникам в 9:00
+    scheduler.add_job(send_monthly_reports, 'cron', hour=9, minute=0, day=1, args=[bot, user_data_manager])  # Ежемесячно 1-го числа в 9:00
     
     # Дополнительные задания можно включать через флаг окружения (по умолчанию выключены для облегчения нагрузки и совместимости с тестами)
     if os.getenv('ENABLE_IMAGE_CACHE_JOBS', '0') in ('1', 'true', 'True'):

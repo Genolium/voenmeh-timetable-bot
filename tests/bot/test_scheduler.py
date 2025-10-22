@@ -963,3 +963,399 @@ async def test_handle_graduated_groups_exception_handling(mock_user_data_manager
         assert True
     except Exception:
         pytest.fail("handle_graduated_groups не должна падать при исключениях")
+
+
+# --- Дополнительные тесты для send_schedule_diff_notifications ---
+
+@pytest.mark.asyncio
+async def test_send_schedule_diff_notifications_no_users(mock_user_data_manager, mock_timetable_manager, mock_redis):
+    """Тест отправки дифф-уведомлений без пользователей."""
+    mock_user_data_manager.get_all_users_with_groups.return_value = []
+
+    # Мокаем TimetableManager для сравнения
+    old_manager = MagicMock()
+    new_manager = MagicMock()
+    mock_timetable_manager.get_schedule_for_day = AsyncMock()
+
+    await send_schedule_diff_notifications(mock_user_data_manager, old_manager, new_manager)
+
+    # Не должно вызывать ошибки
+    assert True
+
+
+@pytest.mark.asyncio
+async def test_send_schedule_diff_notifications_with_changes(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
+    """Тест отправки дифф-уведомлений с изменениями."""
+    # Настраиваем пользователей
+    mock_user_data_manager.get_all_users_with_groups.return_value = [(1, "О735Б")]
+
+    # Мокаем старое и новое расписание
+    old_schedule = {'lessons': [{'subject': 'Математика', 'time': '09:00-10:30'}]}
+    new_schedule = {'lessons': [{'subject': 'Математика (ИЗМЕНЕНО)', 'time': '09:00-10:30'}]}
+
+    old_manager = MagicMock()
+    new_manager = MagicMock()
+    old_manager.get_schedule_for_day = AsyncMock(return_value=old_schedule)
+    new_manager.get_schedule_for_day = AsyncMock(return_value=new_schedule)
+
+    # Мокаем ScheduleDiffDetector
+    mock_diff = MagicMock()
+    mock_diff.has_changes.return_value = True
+    monkeypatch.setattr('bot.scheduler.ScheduleDiffDetector.compare_group_schedules', lambda **kwargs: mock_diff)
+
+    # Мокаем ScheduleDiffFormatter
+    mock_formatter = MagicMock()
+    mock_formatter.format_group_diff.return_value = "Изменения в расписании"
+    monkeypatch.setattr('bot.scheduler.ScheduleDiffFormatter.format_group_diff', mock_formatter.format_group_diff)
+
+    # Мокаем send_message_task
+    mock_send_task = MagicMock()
+    monkeypatch.setattr('bot.scheduler.send_message_task', mock_send_task)
+
+    # Мокаем метрики
+    mock_metrics = MagicMock()
+    monkeypatch.setattr('bot.scheduler.TASKS_SENT_TO_QUEUE', mock_metrics)
+
+    await send_schedule_diff_notifications(mock_user_data_manager, old_manager, new_manager)
+
+    # Проверяем, что уведомления отправлены
+    mock_send_task.send.assert_called()
+    mock_metrics.labels.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_send_schedule_diff_notifications_no_changes(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
+    """Тест отправки дифф-уведомлений без изменений."""
+    # Настраиваем пользователей
+    mock_user_data_manager.get_all_users_with_groups.return_value = [(1, "О735Б")]
+
+    # Мокаем одинаковое расписание
+    same_schedule = {'lessons': [{'subject': 'Математика', 'time': '09:00-10:30'}]}
+
+    old_manager = MagicMock()
+    new_manager = MagicMock()
+    old_manager.get_schedule_for_day = AsyncMock(return_value=same_schedule)
+    new_manager.get_schedule_for_day = AsyncMock(return_value=same_schedule)
+
+    # Мокаем ScheduleDiffDetector без изменений
+    mock_diff = MagicMock()
+    mock_diff.has_changes.return_value = False
+    monkeypatch.setattr('bot.scheduler.ScheduleDiffDetector.compare_group_schedules', lambda **kwargs: mock_diff)
+
+    await send_schedule_diff_notifications(mock_user_data_manager, old_manager, new_manager)
+
+    # Не должно отправлять уведомления
+    assert True  # Просто проверяем, что не падает
+
+
+@pytest.mark.asyncio
+async def test_send_schedule_diff_notifications_exception_in_comparison(mock_user_data_manager, mock_timetable_manager, mock_redis, monkeypatch):
+    """Тест обработки исключений при сравнении расписаний."""
+    # Настраиваем пользователей
+    mock_user_data_manager.get_all_users_with_groups.return_value = [(1, "О735Б")]
+
+    # Мокаем старое и новое расписание с ошибкой
+    old_manager = MagicMock()
+    new_manager = MagicMock()
+    old_manager.get_schedule_for_day = AsyncMock(side_effect=Exception("DB Error"))
+    new_manager.get_schedule_for_day = AsyncMock()
+
+    await send_schedule_diff_notifications(mock_user_data_manager, old_manager, new_manager)
+
+    # Не должно падать при ошибках сравнения
+    assert True
+
+
+# --- Дополнительные тесты для auto_backup ---
+
+@pytest.mark.asyncio
+async def test_auto_backup_with_gzip_pickle_data(mock_redis, monkeypatch):
+    """Тест резервного копирования с gzip+pickle данными."""
+    import gzip
+    import pickle
+    from datetime import datetime as dt
+
+    # Создаем тестовые данные в формате gzip+pickle
+    test_data = {'groups': {'О735Б': {'odd': {'lessons': []}}}}
+    compressed_data = gzip.compress(pickle.dumps(test_data))
+
+    mock_redis.get.return_value = compressed_data
+
+    # Мокаем datetime
+    mock_dt_class = MagicMock()
+    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
+    monkeypatch.setattr('bot.scheduler._dt', mock_dt_class)
+
+    # Мокаем REDIS_SCHEDULE_CACHE_KEY
+    monkeypatch.setattr('core.config.REDIS_SCHEDULE_CACHE_KEY', 'schedule:cache')
+
+    await auto_backup(mock_redis)
+
+    # Проверяем, что резервная копия создана
+    mock_redis.set.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_backup_with_json_data(mock_redis, monkeypatch):
+    """Тест резервного копирования с JSON данными."""
+    import json
+    from datetime import datetime as dt
+
+    # Создаем тестовые JSON данные
+    test_data = {'groups': {'О735Б': {'odd': {'lessons': []}}}}
+    json_data = json.dumps(test_data).encode('utf-8')
+
+    mock_redis.get.return_value = json_data
+
+    # Мокаем datetime
+    mock_dt_class = MagicMock()
+    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
+    monkeypatch.setattr('bot.scheduler._dt', mock_dt_class)
+
+    # Мокаем REDIS_SCHEDULE_CACHE_KEY
+    monkeypatch.setattr('core.config.REDIS_SCHEDULE_CACHE_KEY', 'schedule:cache')
+
+    await auto_backup(mock_redis)
+
+    # Проверяем, что резервная копия создана
+    mock_redis.set.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_backup_database_success(mock_redis, monkeypatch):
+    """Тест успешного резервного копирования базы данных."""
+    import os
+    from datetime import datetime as dt
+
+    # Мокаем переменные окружения
+    monkeypatch.setattr('os.getenv', lambda key: 'postgresql://user:pass@localhost:5432/test_db')
+    monkeypatch.setattr('bot.scheduler.os', os)
+
+    # Мокаем subprocess
+    mock_process = MagicMock()
+    mock_process.returncode = 0
+    mock_process.stderr = ""
+
+    mock_subprocess = MagicMock()
+    mock_subprocess.run.return_value = mock_process
+    monkeypatch.setattr('bot.scheduler.subprocess', mock_subprocess)
+
+    # Мокаем datetime
+    mock_dt_class = MagicMock()
+    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
+    monkeypatch.setattr('bot.scheduler._dt', mock_dt_class)
+
+    await auto_backup(mock_redis)
+
+    # Проверяем, что pg_dump был вызван
+    mock_subprocess.run.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_auto_backup_database_timeout(mock_redis, monkeypatch):
+    """Тест таймаута при резервном копировании базы данных."""
+    import os
+    from datetime import datetime as dt
+
+    # Мокаем переменные окружения
+    monkeypatch.setattr('os.getenv', lambda key: 'postgresql://user:pass@localhost:5432/test_db')
+    monkeypatch.setattr('bot.scheduler.os', os)
+
+    # Мокаем subprocess с таймаутом
+    mock_subprocess = MagicMock()
+    mock_subprocess.run.side_effect = Exception("Timeout")
+    monkeypatch.setattr('bot.scheduler.subprocess', mock_subprocess)
+
+    # Мокаем datetime
+    mock_dt_class = MagicMock()
+    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
+    monkeypatch.setattr('bot.scheduler._dt', mock_dt_class)
+
+    # Не должно падать при таймауте
+    await auto_backup(mock_redis)
+
+
+# --- Тесты для render_template в admin_menu ---
+
+@pytest.mark.asyncio
+async def test_render_template_basic_substitution():
+    """Тест базовой подстановки в шаблоне."""
+    from bot.dialogs.admin_menu import render_template
+
+    # Создаем мок пользователя
+    mock_user = MagicMock()
+    mock_user.user_id = 123
+    mock_user.username = "testuser"
+    mock_user.group = "О735Б"
+    mock_user.last_active_date = datetime.now(MOSCOW_TZ).date()
+
+    template = "Привет, {username}! Ваш ID: {user_id}, группа: {group}"
+
+    result = render_template(template, mock_user)
+
+    assert "testuser" in result
+    assert "123" in result
+    assert "О735Б" in result
+
+
+@pytest.mark.asyncio
+async def test_render_template_missing_username():
+    """Тест шаблона с отсутствующим username."""
+    from bot.dialogs.admin_menu import render_template
+
+    # Создаем мок пользователя без username
+    mock_user = MagicMock()
+    mock_user.user_id = 123
+    mock_user.username = None
+    mock_user.group = "О735Б"
+    mock_user.last_active_date = datetime.now(MOSCOW_TZ).date()
+
+    template = "Привет, {username}! Ваш ID: {user_id}"
+
+    result = render_template(template, mock_user)
+
+    assert "N/A" in result
+    assert "123" in result
+
+
+@pytest.mark.asyncio
+async def test_render_template_missing_group():
+    """Тест шаблона с отсутствующей группой."""
+    from bot.dialogs.admin_menu import render_template
+
+    # Создаем мок пользователя без группы
+    mock_user = MagicMock()
+    mock_user.user_id = 123
+    mock_user.username = "testuser"
+    mock_user.group = None
+    mock_user.last_active_date = datetime.now(MOSCOW_TZ).date()
+
+    template = "Привет, {username}! Группа: {group}"
+
+    result = render_template(template, mock_user)
+
+    assert "testuser" in result
+    assert "N/A" in result
+
+
+@pytest.mark.asyncio
+async def test_render_template_missing_last_active():
+    """Тест шаблона с отсутствующей датой активности."""
+    from bot.dialogs.admin_menu import render_template
+
+    # Создаем мок пользователя без даты активности
+    mock_user = MagicMock()
+    mock_user.user_id = 123
+    mock_user.username = "testuser"
+    mock_user.group = "О735Б"
+    mock_user.last_active_date = None
+
+    template = "Последняя активность: {last_active}"
+
+    result = render_template(template, mock_user)
+
+    assert "N/A" in result
+
+
+# --- Тесты для отчётов администраторам ---
+
+@pytest.mark.asyncio
+async def test_send_daily_reports_success(mock_bot, mock_user_data_manager, monkeypatch):
+    """Тест успешной отправки ежедневных отчётов."""
+    from core.admin_reports import AdminReportsGenerator
+
+    # Мокаем AdminReportsGenerator
+    mock_generator = AsyncMock()
+    mock_generator.generate_daily_report.return_value = "📊 Daily Report"
+    monkeypatch.setattr('bot.scheduler.AdminReportsGenerator', lambda *args: mock_generator)
+
+    await send_daily_reports(mock_bot, mock_user_data_manager)
+
+    # Проверяем, что отчёт был сгенерирован
+    mock_generator.generate_daily_report.assert_called_once()
+
+    # Проверяем, что сообщения были отправлены администраторам
+    assert mock_bot.send_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_daily_reports_no_admins(mock_bot, mock_user_data_manager, monkeypatch):
+    """Тест отправки ежедневных отчётов без администраторов."""
+    from core.admin_reports import AdminReportsGenerator
+
+    # Мокаем отсутствие администраторов
+    mock_user_data_manager.get_admin_users.return_value = []
+
+    mock_generator = AsyncMock()
+    mock_generator.generate_daily_report.return_value = "📊 Daily Report"
+    monkeypatch.setattr('bot.scheduler.AdminReportsGenerator', lambda *args: mock_generator)
+
+    await send_daily_reports(mock_bot, mock_user_data_manager)
+
+    # Не должно отправлять сообщения
+    mock_bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_weekly_reports_success(mock_bot, mock_user_data_manager, monkeypatch):
+    """Тест успешной отправки еженедельных отчётов."""
+    from core.admin_reports import AdminReportsGenerator
+
+    # Мокаем AdminReportsGenerator
+    mock_generator = AsyncMock()
+    mock_generator.generate_weekly_report.return_value = "📊 Weekly Report"
+    monkeypatch.setattr('bot.scheduler.AdminReportsGenerator', lambda *args: mock_generator)
+
+    await send_weekly_reports(mock_bot, mock_user_data_manager)
+
+    # Проверяем, что отчёт был сгенерирован
+    mock_generator.generate_weekly_report.assert_called_once()
+
+    # Проверяем, что сообщения были отправлены администраторам
+    assert mock_bot.send_message.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_monthly_reports_success(mock_bot, mock_user_data_manager, monkeypatch):
+    """Тест успешной отправки ежемесячных отчётов."""
+    from core.admin_reports import AdminReportsGenerator
+
+    # Мокаем AdminReportsGenerator
+    mock_generator = AsyncMock()
+    mock_generator.generate_monthly_report.return_value = "📊 Monthly Report"
+    monkeypatch.setattr('bot.scheduler.AdminReportsGenerator', lambda *args: mock_generator)
+
+    await send_monthly_reports(mock_bot, mock_user_data_manager)
+
+    # Проверяем, что отчёт был сгенерирован
+    mock_generator.generate_monthly_report.assert_called_once()
+
+    # Проверяем, что сообщения были отправлены администраторам
+    assert mock_bot.send_message.call_count == 2
+
+
+def test_setup_scheduler_with_reports(mock_bot, mock_timetable_manager, mock_user_data_manager, mock_redis, monkeypatch):
+    """Тест настройки планировщика с задачами отчётов."""
+    # Мокаем AsyncIOScheduler
+    mock_scheduler_class = MagicMock()
+    mock_scheduler_instance = MagicMock()
+    mock_scheduler_class.return_value = mock_scheduler_instance
+    monkeypatch.setattr('bot.scheduler.AsyncIOScheduler', mock_scheduler_class)
+
+    # Мокаем os.getenv
+    monkeypatch.setattr('bot.scheduler.os.getenv', lambda key, default: '0')
+
+    scheduler = setup_scheduler(mock_bot, mock_timetable_manager, mock_user_data_manager, mock_redis)
+
+    # Проверяем, что планировщик создан
+    assert scheduler == mock_scheduler_instance
+
+    # Проверяем, что задачи отчётов добавлены
+    calls = mock_scheduler_instance.add_job.call_args_list
+
+    # Ищем вызовы для отчётов (daily, weekly, monthly)
+    report_jobs = [call for call in calls if 'send_daily_reports' in str(call) or
+                   'send_weekly_reports' in str(call) or
+                   'send_monthly_reports' in str(call)]
+
+    assert len(report_jobs) == 3  # Должно быть 3 задачи для отчётов

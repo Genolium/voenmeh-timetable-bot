@@ -21,3 +21,56 @@ scrape_configs:
         target_label: "logstream"
       - source_labels: ["__meta_docker_container_label_logging_jobname"]
         target_label: "job"
+
+  # Специальный конфиг для структурированных логов бота
+  - job_name: bot_activity_logs
+    static_configs:
+      - targets:
+        - localhost
+    pipeline_stages:
+      - match:
+          selector: '{container="voenmeh_bot"} |~ "json"'
+          stages:
+            - json:
+                expressions:
+                  timestamp: timestamp
+                  user_id: user_id
+                  username: username
+                  user_type: user_type
+                  user_group: user_group
+                  action: action
+                  feature: feature
+                  event_type: event_type
+                  hour_of_day: hour_of_day
+                  day_of_week: day_of_week
+                  message_text: message_text
+                  callback_data: callback_data
+                  chat_id: chat_id
+            - timestamp:
+                source: timestamp
+                format: RFC3339
+            - labels:
+                user_id: user_id
+                username: username
+                user_type: user_type
+                user_group: user_group
+                action: action
+                feature: feature
+                event_type: event_type
+                hour_of_day: hour_of_day
+                day_of_week: day_of_week
+                chat_id: chat_id
+
+  # Альтернативный конфиг для логов активности (если JSON парсинг не сработает)
+  - job_name: bot_activity_logs_fallback
+    static_configs:
+      - targets:
+        - localhost
+    pipeline_stages:
+      - match:
+          selector: '{container="voenmeh_bot"} |~ "User activity"'
+          stages:
+            - regex:
+                expression: '.*'
+            - labels:
+                job: bot_activity_logs_fallback

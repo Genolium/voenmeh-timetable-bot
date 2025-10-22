@@ -66,3 +66,26 @@ class Event(Base):
         Index('idx_events_start', 'start_at'),
         Index('idx_events_published', 'is_published'),
     )
+
+
+class Feedback(Base):
+    __tablename__ = 'feedback'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)  # ID пользователя, отправившего фидбек
+    username: Mapped[str] = mapped_column(String(255), nullable=True)  # Username пользователя
+    user_full_name: Mapped[str] = mapped_column(String(255), nullable=True)  # Полное имя пользователя
+    message_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # Текст сообщения
+    message_type: Mapped[str] = mapped_column(String(50), nullable=False, default='text')  # text, photo, video, document, etc.
+    file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)  # Telegram file_id для медиафайлов
+    is_answered: Mapped[bool] = mapped_column(Boolean, default=False, server_default='f', nullable=False)  # Отвечен ли фидбек
+    admin_response: Mapped[str | None] = mapped_column(Text, nullable=True)  # Ответ администратора
+    admin_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # ID администратора, ответившего
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    answered_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
+
+    __table_args__ = (
+        Index('idx_feedback_user_id', 'user_id'),
+        Index('idx_feedback_is_answered', 'is_answered'),
+        Index('idx_feedback_created_at', 'created_at'),
+    )

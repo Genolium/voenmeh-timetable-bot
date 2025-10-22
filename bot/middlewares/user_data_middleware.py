@@ -34,7 +34,14 @@ class UserDataMiddleware(BaseMiddleware):
 
         if user_id:
             try:
+                # Регистрируем пользователя
                 await self.user_data_manager.register_user(user_id, username)
+
+                # Получаем информацию о пользователе для передачи в следующие middleware
+                user_info = await self.user_data_manager.get_full_user_info(user_id)
+                if user_info:
+                    data["user_info"] = user_info
+
             except Exception:
                 # Не блокируем обработку апдейта из-за сбоя БД
                 pass

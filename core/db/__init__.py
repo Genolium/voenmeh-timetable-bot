@@ -1,3 +1,3 @@
-from .models import Base, User, SemesterSettings, Event
+from .models import Base, User, SemesterSettings, Event, Feedback
 
-__all__ = ["Base", "User", "SemesterSettings", "Event"]
+__all__ = ["Base", "User", "SemesterSettings", "Event", "Feedback"]

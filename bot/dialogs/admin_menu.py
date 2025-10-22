@@ -20,6 +20,7 @@ from core.user_data import UserDataManager
 from core.semester_settings import SemesterSettingsManager
 from core.config import MOSCOW_TZ
 from core.events_manager import EventsManager
+from core.feedback_manager import FeedbackManager
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 
 from .states import Admin
@@ -773,6 +774,7 @@ async def on_cr_confirm(callback: CallbackQuery, button: Button, manager: Dialog
         location=location,
         description=description,
         link=link,
+        admin_id=callback.from_user.id,
     )
     await callback.answer("✅ Создано")
     await manager.switch_to(Admin.events_menu)
@@ -1321,7 +1323,37 @@ async def on_cancel_generation(callback: CallbackQuery):
         await callback.answer("❌ Нет активной генерации для отмены")
 
 
+# --- Функция отправки сообщения пользователю ---
+async def on_send_message_to_user(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Переход к вводу сообщения для отправки пользователю."""
+    await manager.switch_to(Admin.send_message_text)
 
+async def on_message_to_user_input(message: Message, message_input: MessageInput, manager: DialogManager):
+    """Обработчик ввода сообщения для отправки пользователю."""
+    bot: Bot = manager.middleware_data.get("bot")
+    user_id = manager.dialog_data.get('found_user_info', {}).get('user_id')
+
+    if not user_id:
+        await message.answer("❌ Ошибка: пользователь не найден")
+        await manager.switch_to(Admin.enter_user_id)
+        return
+
+    try:
+        # Отправляем сообщение пользователю
+        if message.content_type == ContentType.TEXT:
+            await bot.send_message(user_id, message.text)
+        else:
+            # Копируем медиа-сообщение
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=message.chat.id,
+                message_id=message.message_id
+            )
+        
+        await message.answer(f"✅ Сообщение отправлено пользователю {user_id}")
+        await manager.switch_to(Admin.user_manage)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при отправке: {str(e)}")
 
 
 admin_dialog = Dialog(
@@ -1340,7 +1372,9 @@ admin_dialog = Dialog(
             SwitchTo(Const("👤 Пользователи"), id="section_users", state=Admin.enter_user_id),
             SwitchTo(Const("🎉 Мероприятия"), id="section_events", state=Admin.events_menu),
         ),
-        SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
+        Row(
+            SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
+        ),
         state=Admin.menu
     ),
     # Раздел: Рассылки
@@ -1363,7 +1397,7 @@ admin_dialog = Dialog(
     ),
     # Раздел: Кэш и генерация
     Window(
-        Const("🧹 Раздел ‘Кэш и генерация’"),
+        Const("🧹 Раздел 'Кэш и генерация'"),
         Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache2", on_click=on_clear_cache),
         Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated2", on_click=on_check_graduated_groups),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_cache", state=Admin.menu),
@@ -1425,11 +1459,20 @@ admin_dialog = Dialog(
     ),
     Window(
         Format("{user_info_text}"),
-        SwitchTo(Const("🔄 Сменить группу"), id="change_group", state=Admin.change_group_confirm),
+        Row(
+            SwitchTo(Const("🔄 Сменить группу"), id="change_group", state=Admin.change_group_confirm),
+            Button(Const("✉️ Отправить сообщение"), id="send_msg", on_click=on_send_message_to_user),
+        ),
         SwitchTo(Const("◀️ Новый поиск"), id="back_to_user_search", state=Admin.enter_user_id),
         state=Admin.user_manage,
         getter=get_user_manage_data,
         parse_mode="HTML"
+    ),
+    Window(
+        Const("✉️ Введите сообщение для отправки пользователю (текст или медиа):"),
+        MessageInput(on_message_to_user_input, content_types=[ContentType.ANY]),
+        SwitchTo(Const("◀️ Назад"), id="send_msg_back", state=Admin.user_manage),
+        state=Admin.send_message_text
     ),
     Window(
         Const("Введите новый номер группы для пользователя:"),

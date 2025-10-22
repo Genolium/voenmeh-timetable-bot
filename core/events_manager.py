@@ -1,11 +1,13 @@
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
+import logging
 
 from sqlalchemy import select, update, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.db.models import Event
+from core.metrics import USER_ACTIONS, FEATURE_POPULARITY
 
 
 class EventsManager:
@@ -90,9 +92,11 @@ class EventsManager:
         location: Optional[str] = None,
         link: Optional[str] = None,
         image_file_id: Optional[str] = None,
-
+        admin_id: Optional[int] = None,
         is_published: bool = True,
     ) -> int:
+        logger = logging.getLogger(__name__)
+
         # Валидация данных
         if not title or not title.strip():
             raise ValueError("Заголовок не может быть пустым")
@@ -104,7 +108,7 @@ class EventsManager:
             raise ValueError("Ссылка слишком длинная (максимум 512 символов)")
         if image_file_id and len(image_file_id) > 512:
             raise ValueError("File ID изображения слишком длинный")
-            
+
         async with self.session_factory() as session:
             event = Event(
                 title=title.strip(),
@@ -119,6 +123,25 @@ class EventsManager:
             session.add(event)
             await session.commit()
             await session.refresh(event)
+
+            # Логируем создание события
+            logger.info("Event created", extra={
+                "event_id": event.id,
+                "title": title,
+                "is_published": is_published,
+                "has_image": bool(image_file_id),
+                "has_location": bool(location),
+                "has_link": bool(link),
+                "admin_id": str(admin_id) if admin_id else "unknown",
+                "action": "create_event",
+                "feature": "events"
+            })
+
+            # Обновляем метрики
+            user_type = "admin" if admin_id else "unknown"
+            FEATURE_POPULARITY.labels(feature_name="events", user_type=user_type, day_of_week=datetime.now().strftime('%A').lower()).inc()
+            USER_ACTIONS.labels(action="event_created", user_type=user_type, source="admin_panel").inc()
+
             return event.id
 
     async def update_event(self, event_id: int, **values) -> bool:

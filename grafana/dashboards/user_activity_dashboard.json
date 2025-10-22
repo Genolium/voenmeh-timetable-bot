@@ -1,0 +1,211 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }, "id": 100, "title": "Пользовательская активность", "type": "row" },
+
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "id": 1,
+      "title": "Активность по часам",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=~\".*\" [5m])",
+          "legendFormat": "Total activity"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"command\" [5m])",
+          "legendFormat": "Commands"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"button_click\" [5m])",
+          "legendFormat": "Button clicks"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "id": 2,
+      "title": "Активность по дням недели",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | day_of_week=\"monday\" [1d])",
+          "legendFormat": "Monday"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | day_of_week=\"tuesday\" [1d])",
+          "legendFormat": "Tuesday"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | day_of_week=\"wednesday\" [1d])",
+          "legendFormat": "Wednesday"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | day_of_week=\"thursday\" [1d])",
+          "legendFormat": "Thursday"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | day_of_week=\"friday\" [1d])",
+          "legendFormat": "Friday"
+        }
+      ]
+    },
+
+    {
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 9 },
+      "id": 3,
+      "title": "Популярные функции",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | feature=\"schedule_view\" [5m])",
+          "legendFormat": "Schedule View"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | feature=\"search\" [5m])",
+          "legendFormat": "Search"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | feature=\"settings\" [5m])",
+          "legendFormat": "Settings"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | feature=\"feedback\" [5m])",
+          "legendFormat": "Feedback"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | feature=\"events\" [5m])",
+          "legendFormat": "Events"
+        }
+      ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 17 }, "id": 200, "title": "Детальный анализ", "type": "row" },
+
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "id": 4,
+      "title": "Активность по типам пользователей",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | user_type=\"student\" [5m])",
+          "legendFormat": "Students"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | user_type=\"teacher\" [5m])",
+          "legendFormat": "Teachers"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | user_type=\"admin\" [5m])",
+          "legendFormat": "Admins"
+        }
+      ]
+    },
+    {
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "id": 5,
+      "title": "Команды бота",
+      "type": "timeseries",
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"command\" | message_text=~\"/start.*\" [5m])",
+          "legendFormat": "/start"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"command\" | message_text=~\"/help.*\" [5m])",
+          "legendFormat": "/help"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"command\" | message_text=~\"/feedback.*\" [5m])",
+          "legendFormat": "/feedback"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "count_over_time({job=\"bot_activity_logs\"} | json | action=\"command\" | message_text=~\"/admin.*\" [5m])",
+          "legendFormat": "/admin"
+        }
+      ]
+    },
+
+    { "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 }, "id": 300, "title": "Логи и отладка", "type": "row" },
+
+    {
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 27 },
+      "id": 6,
+      "title": "Последние действия пользователей",
+      "type": "logs",
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "showCommonLabels": false,
+        "wrapLogMessage": true,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki_voenmeh_bot" },
+          "expr": "{job=\"bot_activity_logs\"} | json | action=~\".*\"",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["voenmeh", "bot", "user-activity", "logs"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {"refresh_intervals": ["5s", "10s", "30s", "1m", "5m"]},
+  "timezone": "browser",
+  "title": "User Activity & Analytics",
+  "uid": "user-activity-dashboard",
+  "version": 1
+}

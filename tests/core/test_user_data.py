@@ -1,5 +1,6 @@
 import pytest
-from core.user_data import UserDataManager
+from unittest.mock import AsyncMock, MagicMock
+from core.user_data import UserDataManager, cached
 from core.db import Base, User
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy import text
@@ -11,7 +12,7 @@ async def user_data_manager():
     engine = create_async_engine(TEST_DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    manager = UserDataManager(TEST_DB_URL)
+    manager = UserDataManager(TEST_DB_URL, redis_url=None)
     manager.engine = engine
     manager.async_session_maker.configure(bind=engine)
     try:
@@ -26,7 +27,7 @@ async def manager_db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    manager = UserDataManager("sqlite+aiosqlite:///:memory:")
+    manager = UserDataManager("sqlite+aiosqlite:///:memory:", redis_url=None)
     manager.engine = engine
     manager.async_session_maker.configure(bind=engine)
     try:
@@ -41,7 +42,7 @@ async def manager_with_db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    user_data_manager = UserDataManager(db_url="sqlite+aiosqlite:///:memory:")
+    user_data_manager = UserDataManager(db_url="sqlite+aiosqlite:///:memory:", redis_url=None)
     user_data_manager.engine = engine
     user_data_manager.async_session_maker.configure(bind=engine)
     try:
@@ -214,3 +215,180 @@ class TestUserDataManagerWithSQLAlchemy:
         assert dist["1 студент"] == 1
         assert dist["2-5 студентов"] == 1
         assert dist["6-10 студентов"] == 1
+
+
+class TestUserDataManagerCaching:
+    """Тесты для кэширования в UserDataManager."""
+
+    @pytest.mark.asyncio
+    async def test_cached_decorator_basic(self, manager_with_db):
+        """Тест базовой работы декоратора кэширования."""
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None  # Кэш пустой
+        mock_redis.setex = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Создаем тестовую функцию с декоратором
+        @cached(ttl=60)
+        async def test_function(self, x: int) -> int:
+            return x * 2
+
+        # Вызываем функцию
+        result = await test_function(manager_with_db, 5)
+
+        # Проверяем, что функция выполнилась
+        assert result == 10
+
+        # Проверяем, что кэш был проверен и сохранен
+        mock_redis.get.assert_called_once()
+        mock_redis.setex.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cached_decorator_cache_hit(self, manager_with_db):
+        """Тест попадания в кэш."""
+        import json
+
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        cached_data = json.dumps([1, 2, 3]).encode('utf-8')
+        mock_redis.get.return_value = cached_data
+        mock_redis.setex = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Создаем тестовую функцию с декоратором
+        @cached(ttl=60)
+        async def test_function(self, x: int) -> list:
+            return [x, x+1, x+2]  # Эта строка не должна выполниться
+
+        # Вызываем функцию
+        result = await test_function(manager_with_db, 1)
+
+        # Проверяем, что результат взят из кэша
+        assert result == [1, 2, 3]
+
+        # Проверяем, что setex НЕ был вызван (не сохраняем в кэш)
+        mock_redis.setex.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_clear_user_cache(self, manager_with_db):
+        """Тест очистки кэша пользователей."""
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock()
+        mock_redis.delete = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Настраиваем scan для возврата ключей
+        mock_redis.scan.side_effect = [
+            (0, [b'cache:get_users_for_evening_notify:123', b'cache:get_users_for_morning_summary:456']),
+            (0, [])  # Конец сканирования
+        ]
+
+        # Вызываем очистку кэша
+        await manager_with_db.clear_user_cache()
+
+        # Проверяем, что ключи были удалены
+        mock_redis.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_clear_user_cache_no_redis(self, manager_with_db):
+        """Тест очистки кэша без Redis клиента."""
+        manager_with_db._redis_client = None
+
+        # Не должно падать
+        await manager_with_db.clear_user_cache()
+
+        # Ничего не должно быть вызвано
+        assert True
+
+    @pytest.mark.asyncio
+    async def test_get_redis_client_from_config(self, manager_with_db):
+        """Тест получения Redis клиента из конфигурации."""
+        # Убираем текущий Redis клиент
+        manager_with_db._redis_client = None
+        manager_with_db._redis_url = None
+
+        # Мокаем get_redis_client
+        with pytest.mock.patch('core.config.get_redis_client') as mock_get_redis:
+            mock_redis = AsyncMock()
+            mock_get_redis.return_value = mock_redis
+
+            result = await manager_with_db._get_redis_client()
+
+            assert result == mock_redis
+            mock_get_redis.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cache_invalidation_on_user_update(self, manager_with_db):
+        """Тест инвалидации кэша при обновлении данных пользователя."""
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock()
+        mock_redis.delete = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Настраиваем scan для возврата ключей
+        mock_redis.scan.side_effect = [
+            (0, [b'cache:get_users_for_evening_notify:123']),
+            (0, [])  # Конец сканирования
+        ]
+
+        # Регистрируем пользователя
+        await manager_with_db.register_user(123, "testuser")
+
+        # Проверяем, что кэш был очищен
+        mock_redis.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_invalidation_on_group_update(self, manager_with_db):
+        """Тест инвалидации кэша при обновлении группы пользователя."""
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock()
+        mock_redis.delete = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Настраиваем scan для возврата ключей
+        mock_redis.scan.side_effect = [
+            (0, [b'cache:get_users_for_morning_summary:456']),
+            (0, [])  # Конец сканирования
+        ]
+
+        # Регистрируем и устанавливаем группу
+        await manager_with_db.register_user(123, "testuser")
+        await manager_with_db.set_user_group(123, "О735Б")
+
+        # Проверяем, что кэш был очищен
+        mock_redis.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_invalidation_on_settings_update(self, manager_with_db):
+        """Тест инвалидации кэша при обновлении настроек пользователя."""
+        # Создаем мок Redis клиента
+        mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock()
+        mock_redis.delete = AsyncMock()
+        manager_with_db._redis_client = mock_redis
+
+        # Настраиваем scan для возврата ключей
+        mock_redis.scan.side_effect = [
+            (0, [b'cache:get_users_for_lesson_reminders:789']),
+            (0, [])  # Конец сканирования
+        ]
+
+        # Регистрируем пользователя и обновляем настройки
+        await manager_with_db.register_user(123, "testuser")
+        await manager_with_db.update_setting(123, "lesson_reminders", True)
+
+        # Проверяем, что кэш был очищен
+        mock_redis.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_cache_methods_with_redis_url(self):
+        """Тест создания UserDataManager с Redis URL."""
+        manager = UserDataManager("sqlite+aiosqlite:///:memory:", redis_url="redis://localhost:6379")
+
+        # Проверяем, что Redis URL сохранен
+        assert manager._redis_url == "redis://localhost:6379"
+        assert manager._redis_client is None  # Должен быть None до первого вызова

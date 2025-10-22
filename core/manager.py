@@ -48,6 +48,15 @@ class TimetableManager:
                 temp_instance = cls.__new__(cls)
                 temp_instance._use_compression = True
                 data = temp_instance._decompress_data(cached_data)
+
+                # Обновляем fallback файл актуальными данными из кэша
+                try:
+                    from core.parser import save_fallback_schedule
+                    save_fallback_schedule(data)
+                    print("Fallback schedule updated with cached data")
+                except Exception as e:
+                    print(f"Warning: Failed to update fallback schedule: {e}")
+
                 return cls(data, redis_client)
             else:
                 print("Кэш в Redis не найден. Загрузка с сервера...")
@@ -65,11 +74,40 @@ class TimetableManager:
                     if backup_data:
                         temp_instance = cls(backup_data, redis_client)
                         await temp_instance.save_to_cache()  # Восстанавливаем основной кэш
+
+                        # Обновляем fallback файл данными из резервной копии
+                        try:
+                            from core.parser import save_fallback_schedule
+                            save_fallback_schedule(backup_data)
+                            print("Fallback schedule updated with backup data")
+                        except Exception as e:
+                            print(f"Warning: Failed to update fallback schedule from backup: {e}")
+
                         print("Расписание восстановлено из резервной копии!")
                         return temp_instance
                     else:
-                        print("Критическая ошибка: нет доступных резервных копий расписания.")
-                        return None
+                        print("Критическая ошибка: нет доступных резервных копий расписания. Попытка загрузить fallback данные...")
+                        # Пытаемся загрузить fallback данные
+                        from core.parser import load_fallback_schedule
+                        fallback_data = load_fallback_schedule()
+                        if fallback_data:
+                            print("Используем fallback данные расписания.")
+                            temp_instance = cls(fallback_data, redis_client)
+                            await temp_instance.save_to_cache()
+
+                            # Обновляем fallback файл (на случай если данные были изменены)
+                            try:
+                                from core.parser import save_fallback_schedule
+                                save_fallback_schedule(fallback_data)
+                                print("Fallback schedule file verified and updated")
+                            except Exception as e:
+                                print(f"Warning: Failed to update fallback schedule file: {e}")
+
+                            print("Fallback расписание загружено и сохранено в кэш Redis.")
+                            return temp_instance
+                        else:
+                            print("Критическая ошибка: fallback данные недоступны.")
+                            return None
 
     @classmethod
     async def _restore_from_backup(cls, redis_client: Redis):

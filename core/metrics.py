@@ -98,11 +98,74 @@ SCHEDULE_GENERATION_TIME = Histogram(
 
 # ===== БИЗНЕС-МЕТРИКИ =====
 
-# Активность пользователей по дням
+# Активность пользователей по дням и часам
 USER_ACTIVITY_DAILY = Counter(
     'bot_user_activity_daily_total',
     'Daily user activity count',
-    ['action_type', 'user_group']  # view_schedule, search, settings, etc.
+    ['action_type', 'user_group', 'hour_of_day']  # view_schedule, search, settings, etc.
+)
+
+# Активность пользователей по часам (для анализа пиковых нагрузок)
+USER_ACTIVITY_HOURLY = Counter(
+    'bot_user_activity_hourly_total',
+    'Hourly user activity count',
+    ['action_type', 'hour_of_day']  # view_schedule, search, settings, etc.
+)
+
+# Детальные действия пользователей
+USER_ACTIONS = Counter(
+    'bot_user_actions_total',
+    'Total count of specific user actions',
+    ['action', 'user_type', 'source']  # menu_click, button_click, command, callback, etc.
+)
+
+# Время использования функций
+FUNCTION_USAGE_TIME = Histogram(
+    'bot_function_usage_duration_seconds',
+    'Time spent using specific bot functions',
+    ['function_name', 'user_type']
+)
+
+# Количество активных сессий
+ACTIVE_SESSIONS = Gauge(
+    'bot_active_sessions',
+    'Number of active user sessions',
+    ['user_type']
+)
+
+# Команды бота
+BOT_COMMANDS = Counter(
+    'bot_commands_total',
+    'Total count of bot commands used',
+    ['command', 'user_type']
+)
+
+# Использование диалогов
+DIALOG_USAGE = Counter(
+    'bot_dialog_usage_total',
+    'Total count of dialog interactions',
+    ['dialog_name', 'state', 'user_type']
+)
+
+# Количество новых пользователей по дням
+NEW_USERS_DAILY = Counter(
+    'bot_new_users_daily_total',
+    'Daily count of new users',
+    ['registration_source', 'user_type']
+)
+
+# Время между действиями пользователя (для анализа вовлеченности)
+USER_ACTION_INTERVAL = Histogram(
+    'bot_user_action_interval_seconds',
+    'Time between consecutive user actions',
+    ['user_type']
+)
+
+# Популярность функций
+FEATURE_POPULARITY = Counter(
+    'bot_feature_popularity_total',
+    'Feature usage popularity',
+    ['feature_name', 'user_type', 'day_of_week']
 )
 
 # Популярность групп

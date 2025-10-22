@@ -818,10 +818,319 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["user_data_manager"] = AsyncMock()
         mock_manager.middleware_data["manager"] = AsyncMock()
         mock_manager.middleware_data["redis_client"] = AsyncMock()
-        
+
         with patch('bot.scheduler.handle_graduated_groups') as mock_check:
             await on_check_graduated_groups(mock_callback, MagicMock(), mock_manager)
-            
+
             mock_callback.answer.assert_called_once_with("🔍 Запускаю проверку выпустившихся групп...")
             mock_manager.middleware_data["bot"].send_message.assert_called()
             mock_check.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_segment_users_empty(self, mock_manager):
+        """Тест построения сегмента пользователей с пустым результатом."""
+        from datetime import datetime
+        from bot.dialogs.admin_menu import build_segment_users
+
+        # Настраиваем моки
+        mock_user_data_manager = AsyncMock()
+        mock_user_data_manager.get_all_user_ids.return_value = []
+
+        # Тестируем
+        result = await build_segment_users(mock_user_data_manager, None, None)
+
+        assert result == []
+        mock_user_data_manager.get_all_user_ids.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_segment_users_with_group_prefix(self, mock_manager):
+        """Тест построения сегмента с префиксом группы."""
+        from datetime import datetime
+        from bot.dialogs.admin_menu import build_segment_users
+
+        # Настраиваем моки
+        mock_user_data_manager = AsyncMock()
+        mock_user_data_manager.get_all_user_ids.return_value = [1, 2, 3]
+
+        # Создаем мок пользователя, который соответствует префиксу
+        mock_user_info = MagicMock()
+        mock_user_info.group = "О735Б"
+        mock_user_info.last_active_date = datetime.now()
+        mock_user_data_manager.get_full_user_info.return_value = mock_user_info
+
+        # Тестируем с префиксом "О7"
+        result = await build_segment_users(mock_user_data_manager, "О7", None)
+
+        assert isinstance(result, list)
+        mock_user_data_manager.get_all_user_ids.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_build_segment_users_with_days_filter(self, mock_manager):
+        """Тест построения сегмента с фильтром по дням активности."""
+        from datetime import datetime, timedelta
+        from bot.dialogs.admin_menu import build_segment_users
+
+        # Настраиваем моки
+        mock_user_data_manager = AsyncMock()
+        mock_user_data_manager.get_all_user_ids.return_value = [1]
+
+        # Создаем мок пользователя, который НЕ активен последние 7 дней
+        mock_user_info = MagicMock()
+        mock_user_info.group = "О735Б"
+        mock_user_info.last_active_date = datetime.now() - timedelta(days=10)  # Слишком давно
+        mock_user_data_manager.get_full_user_info.return_value = mock_user_info
+
+        # Тестируем с фильтром 7 дней
+        result = await build_segment_users(mock_user_data_manager, None, 7)
+
+        assert result == []  # Пользователь не должен попасть в выборку
+
+    @pytest.mark.asyncio
+    async def test_get_preview_data_text_message(self, mock_manager):
+        """Тест получения данных предпросмотра для текстового сообщения."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.side_effect = lambda key: {
+            'segment_group_prefix': 'О7',
+            'segment_days_active': 7,
+            'segment_template': 'Привет {username}!',
+            'segment_message_type': 'text'
+        }.get(key)
+
+        mock_user_data_manager = AsyncMock()
+        mock_user_data_manager.get_all_user_ids.return_value = [1]
+
+        mock_user_info = MagicMock()
+        mock_user_info.user_id = 1
+        mock_user_info.username = "testuser"
+        mock_user_info.group = "О735Б"
+        mock_user_info.last_active_date = datetime.now()
+        mock_user_data_manager.get_full_user_info.return_value = mock_user_info
+
+        mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
+
+        # Мокаем build_segment_users
+        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[1]) as mock_build:
+            result = await get_preview_data(mock_manager)
+
+            assert "preview_text" in result
+            assert "selected_count" in result
+            assert result["selected_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_preview_data_media_message(self, mock_manager):
+        """Тест получения данных предпросмотра для медиа сообщения."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.side_effect = lambda key: {
+            'segment_group_prefix': None,
+            'segment_days_active': None,
+            'segment_template': '',
+            'segment_message_type': 'media',
+            'segment_message_chat_id': -123,
+            'segment_message_id': 456
+        }.get(key)
+
+        mock_user_data_manager = AsyncMock()
+        mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
+
+        # Мокаем build_segment_users
+        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[1, 2]) as mock_build:
+            result = await get_preview_data(mock_manager)
+
+            assert "preview_text" in result
+            assert "selected_count" in result
+            assert result["selected_count"] == 2
+            assert "медиа сообщение" in result["preview_text"]
+
+    @pytest.mark.asyncio
+    async def test_get_preview_data_no_users(self, mock_manager):
+        """Тест получения данных предпросмотра без пользователей."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.side_effect = lambda key: {
+            'segment_group_prefix': 'О7',
+            'segment_days_active': 7,
+            'segment_template': 'Привет {username}!',
+            'segment_message_type': 'text'
+        }.get(key)
+
+        mock_user_data_manager = AsyncMock()
+        mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
+
+        # Мокаем build_segment_users с пустым результатом
+        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[]) as mock_build:
+            result = await get_preview_data(mock_manager)
+
+            assert "preview_text" in result
+            assert "selected_count" in result
+            assert result["selected_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_on_period_selected_1_day(self, mock_callback, mock_manager):
+        """Тест выбора периода в 1 день."""
+        from aiogram_dialog.widgets.kbd import Select
+
+        # Создаем мок для dialog_data
+        mock_dialog_data = MagicMock()
+        mock_manager.dialog_data = mock_dialog_data
+
+        await on_period_selected(mock_callback, MagicMock(spec=Select), mock_manager, "1")
+
+        mock_dialog_data.__setitem__.assert_called_with('stats_period', 1)
+
+    @pytest.mark.asyncio
+    async def test_on_period_selected_30_days(self, mock_callback, mock_manager):
+        """Тест выбора периода в 30 дней."""
+        from aiogram_dialog.widgets.kbd import Select
+
+        # Создаем мок для dialog_data
+        mock_dialog_data = MagicMock()
+        mock_manager.dialog_data = mock_dialog_data
+
+        await on_period_selected(mock_callback, MagicMock(spec=Select), mock_manager, "30")
+
+        mock_dialog_data.__setitem__.assert_called_with('stats_period', 30)
+
+    @pytest.mark.asyncio
+    async def test_get_event_admin_details_found(self, mock_manager):
+        """Тест получения деталей мероприятия (найдено)."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.return_value = 1
+
+        mock_session_factory = AsyncMock()
+        mock_manager.middleware_data["session_factory"] = mock_session_factory
+
+        # Создаем мок мероприятия
+        mock_event = MagicMock()
+        mock_event.title = "Test Event"
+        mock_event.id = 1
+        mock_event.is_published = True
+        mock_event.start_at = None
+        mock_event.location = None
+        mock_event.link = None
+        mock_event.description = "Test Description"
+
+        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+            mock_instance = AsyncMock()
+            mock_events_manager.return_value = mock_instance
+            mock_instance.get_event.return_value = mock_event
+
+            result = await get_event_admin_details(mock_manager)
+
+            assert "event_text" in result
+            assert "Test Event" in result["event_text"]
+            assert "id=1" in result["event_text"]
+
+    @pytest.mark.asyncio
+    async def test_get_event_admin_details_not_found(self, mock_manager):
+        """Тест получения деталей мероприятия (не найдено)."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.return_value = 999
+
+        mock_session_factory = AsyncMock()
+        mock_manager.middleware_data["session_factory"] = mock_session_factory
+
+        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+            mock_instance = AsyncMock()
+            mock_events_manager.return_value = mock_instance
+            mock_instance.get_event.return_value = None
+
+            result = await get_event_admin_details(mock_manager)
+
+            assert result["event_text"] == "Событие не найдено"
+
+    @pytest.mark.asyncio
+    async def test_get_event_admin_details_with_date_time(self, mock_manager):
+        """Тест получения деталей мероприятия с датой и временем."""
+        # Настраиваем моки
+        mock_manager.dialog_data.get.return_value = 1
+
+        mock_session_factory = AsyncMock()
+        mock_manager.middleware_data["session_factory"] = mock_session_factory
+
+        # Создаем мок мероприятия с датой
+        mock_event = MagicMock()
+        mock_event.title = "Test Event"
+        mock_event.id = 1
+        mock_event.is_published = False
+        mock_event.start_at = datetime(2025, 1, 15, 14, 30)  # 15.01.2025 14:30
+        mock_event.location = "Test Location"
+        mock_event.link = "https://example.com"
+        mock_event.description = "Test Description"
+
+        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+            mock_instance = AsyncMock()
+            mock_events_manager.return_value = mock_instance
+            mock_instance.get_event.return_value = mock_event
+
+            result = await get_event_admin_details(mock_manager)
+
+            assert "event_text" in result
+            assert "15.01.2025 14:30" in result["event_text"]
+            assert "Test Location" in result["event_text"]
+            assert "https://example.com" in result["event_text"]
+
+    @pytest.mark.asyncio
+    async def test_on_events_prev_first_page(self, mock_callback, mock_manager):
+        """Тест перехода к предыдущей странице с первой страницы."""
+        mock_manager.dialog_data = {"events_page": 0}
+
+        await on_events_prev(mock_callback, MagicMock(), mock_manager)
+
+        # Должно остаться на странице 0
+        assert mock_manager.dialog_data["events_page"] == 0
+        mock_manager.switch_to.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_events_next_normal(self, mock_callback, mock_manager):
+        """Тест перехода к следующей странице."""
+        mock_manager.dialog_data = {"events_page": 2}
+
+        await on_events_next(mock_callback, MagicMock(), mock_manager)
+
+        assert mock_manager.dialog_data["events_page"] == 3
+        mock_manager.switch_to.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_events_set_filter_all(self, mock_callback, mock_manager):
+        """Тест установки фильтра 'все'."""
+        await on_events_set_filter(mock_callback, MagicMock(), mock_manager)
+
+        # Проверяем что фильтр был сброшен на 'all'
+        assert mock_manager.dialog_data["events_page"] == 0  # Сбрасывается пагинация
+        mock_manager.switch_to.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_events_list_with_search(self, mock_manager):
+        """Тест получения списка мероприятий с поиском."""
+        # Настраиваем dialog_data
+        def mock_get_side_effect(key, default=0):
+            if key == 'events_page':
+                return 0
+            elif key == 'events_pub_filter':
+                return 'all'
+            elif key == 'events_search':
+                return 'test search'
+            else:
+                return default
+
+        mock_manager.dialog_data.get.side_effect = mock_get_side_effect
+        mock_manager.dialog_data.__setitem__ = MagicMock()
+
+        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+            mock_instance = AsyncMock()
+            mock_events_manager.return_value = mock_instance
+
+            # Создаем мок мероприятия
+            mock_event = MagicMock()
+            mock_event.title = "Test Event with test search"
+            mock_event.description = "Description"
+            mock_event.location = "Location"
+            mock_event.id = 1
+            mock_event.is_published = True
+
+            mock_instance.list_events.return_value = ([mock_event], 1)
+
+            result = await get_events_list(mock_manager)
+
+            assert "events_text" in result
+            assert "total_events" in result
+            assert result["total_events"] == 1

@@ -74,6 +74,9 @@ class Admin(StatesGroup):
     event_delete_confirm = State()
     event_edit_image = State()
 
+    # New: send message to user
+    send_message_text = State()
+
 class Events(StatesGroup):
     list = State()
     details = State()

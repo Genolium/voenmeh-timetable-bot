@@ -29,13 +29,14 @@ from core.image_generator import shutdown_image_generator
 
 # --- Импорты бота ---
 from bot.handlers.inline_handlers import inline_query_handler
+from bot.handlers.feedback_reply_handler import feedback_reply_router
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
-from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware
+# from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
 from bot.scheduler import setup_scheduler
-from bot.utils.cleanup_bot import CleanupBot
+# from bot.utils.cleanup_bot import CleanupBot  # Автоочистка чатов отключена
 
 # --- Импорты диалогов ---
 from bot.dialogs.about_menu import about_dialog
@@ -227,7 +228,7 @@ async def main():
         logging.critical("Критическая ошибка: не удалось инициализировать TimetableManager. Запуск отменен.")
         return
     
-    user_data_manager = UserDataManager(db_url=db_url or "")
+    user_data_manager = UserDataManager(db_url=db_url or "", redis_url=redis_url)
     logging.info("Менеджеры данных инициализированы.")
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))
@@ -235,12 +236,10 @@ async def main():
     # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
     # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
     http_session = AiohttpSession(timeout=180)
-    bot = CleanupBot(
+    bot = Bot(
         token=bot_token or "",
         default=default_properties,
         session=http_session,
-        redis=redis_client,
-        keep_messages=1,
     )
     dp = Dispatcher(storage=storage)
 
@@ -255,13 +254,18 @@ async def main():
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
+    from bot.middlewares.activity_logging_middleware import ActivityLoggingMiddleware
+    dp.update.middleware(ActivityLoggingMiddleware())  # Middleware для логирования активности пользователей
     dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
-    dp.update.middleware(ChatCleanupMiddleware(keep_messages=5))  # Автоочистка старых сообщений
-    dp.update.middleware(SimpleRateLimiter(max_per_sec=10, redis=redis_client))  # анти-флуд на входящие события
+    # Автоочистка чатов полностью отключена
+    dp.update.middleware(SimpleRateLimiter(max_per_sec=1, redis=redis_client))  # анти-флуд на входящие события
     dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler, 'redis_client': redis_client}))
     dp.errors.register(error_handler)
 
     # Регистрация диалогов и хэндлеров
+    # Регистрируем feedback_reply_router первым, чтобы он обрабатывал сообщения в FEEDBACK_CHAT_ID
+    dp.include_router(feedback_reply_router)
+    
     all_dialogs = [
         main_menu_dialog, schedule_dialog, settings_dialog, find_dialog,
         about_dialog, feedback_dialog, admin_dialog, events_dialog
