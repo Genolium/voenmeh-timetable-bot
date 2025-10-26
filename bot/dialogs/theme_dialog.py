@@ -40,7 +40,7 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
 
     # Если пользователь не подписан, переключаемся на состояние блокировки
     if not is_subscribed and SUBSCRIPTION_CHANNEL:
-        await manager.switch_to(SettingsMenu.theme_subscription_gate)
+        await dialog_manager.switch_to(SettingsMenu.theme_subscription_gate)
         return {}
 
     return {

@@ -310,13 +310,23 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     # Получаем или генерируем изображение
     user_id = ctx.dialog_data.get("user_id")
     placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
-    
+    # Определяем тему пользователя (если доступно)
+    user_theme = None
+    try:
+        if user_id:
+            udm = dialog_manager.middleware_data.get("user_data_manager")
+            if udm:
+                user_theme = await udm.get_user_theme(user_id)
+    except Exception:
+        user_theme = None
+
     success, file_path = await image_service.get_or_generate_week_image(
         group=group,
         week_key=week_key,
         week_name=week_name,
         week_schedule=week_schedule,
         user_id=user_id,
+        user_theme=user_theme,
         placeholder_msg_id=placeholder_msg_id,
         final_caption=final_caption
     )
@@ -374,7 +384,18 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             pass
         return
     week_key, week_name_full = week_info
-    cache_key = f"{group}_{week_key}"
+    # Определяем тему пользователя для корректного выбора файла
+    user_theme_for_original = None
+    try:
+        udm = manager.middleware_data.get("user_data_manager")
+        if udm and callback.from_user:
+            user_theme_for_original = await udm.get_user_theme(callback.from_user.id)
+    except Exception:
+        user_theme_for_original = None
+    if user_theme_for_original and user_theme_for_original != 'standard':
+        cache_key = f"{group}_{week_key}_{user_theme_for_original}"
+    else:
+        cache_key = f"{group}_{week_key}"
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
     # Проверка подписки на канал, если настроено

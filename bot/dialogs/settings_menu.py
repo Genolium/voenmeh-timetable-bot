@@ -1,7 +1,7 @@
 import logging
 from aiogram.types import CallbackQuery
 from aiogram_dialog import Dialog, Window, DialogManager
-from aiogram_dialog.widgets.kbd import Button, Row, Back, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Row, Back, Select, SwitchTo, Column
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from .states import SettingsMenu
@@ -105,70 +105,96 @@ async def on_theme_button_click(callback: CallbackQuery, button: Button, manager
     """Обработчик кнопки выбора темы с проверкой подписки."""
     user_id = callback.from_user.id
 
-    # Проверяем подписку перед переходом к диалогу тем
+    # Проверяем подписку перед переходом к диалогу тем (как в оригинале в расписании)
     try:
-        from core.config import SUBSCRIPTION_CHANNEL, get_redis_client
+        from core.config import SUBSCRIPTION_CHANNEL
         from aiogram import Bot
 
-        redis_client = await get_redis_client()
-        cache_key = f"theme_sub_status:{user_id}"
-        cached = await redis_client.get(cache_key)
-
-        is_subscribed = False
-        if cached is not None:
-            is_subscribed = cached == '1'
-        else:
-            # Проверяем напрямую через API
-            if SUBSCRIPTION_CHANNEL:
-                bot: Bot = manager.middleware_data.get("bot")
-                if bot:
-                    member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
-                    status = getattr(member, "status", None)
-                    is_subscribed = status in ("member", "administrator", "creator")
-
-                    # Кэшируем результат
-                    await redis_client.set(cache_key, '1' if is_subscribed else '0', ex=21600 if is_subscribed else 60)
-
-        if not is_subscribed and SUBSCRIPTION_CHANNEL:
-            # Пользователь не подписан, показываем уведомление
-            from bot.tasks import check_theme_subscription_task
-            check_theme_subscription_task.send(user_id, callback.id)
-            await callback.answer("❌ Требуется подписка на канал для доступа к темам", show_alert=True)
-            return
-
-        # Пользователь подписан, переходим к диалогу тем
-        await manager.switch_to(SettingsMenu.choose_theme)
-
-    except Exception as e:
-        # В случае ошибки (например, Redis недоступен) проверяем подписку через API
-        logging.warning(f"Error checking theme subscription cache: {e}")
-
         if SUBSCRIPTION_CHANNEL:
-            try:
-                bot: Bot = manager.middleware_data.get("bot")
-                if bot:
-                    member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
-                    status = getattr(member, "status", None)
-                    is_subscribed = status in ("member", "administrator", "creator")
+            bot: Bot = manager.middleware_data.get("bot")
+            if bot:
+                member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
+                status = getattr(member, "status", None)
+                is_subscribed = status in ("member", "administrator", "creator")
 
-                    if not is_subscribed:
-                        # Пользователь не подписан, показываем уведомление
-                        from bot.tasks import check_theme_subscription_task
-                        check_theme_subscription_task.send(user_id, callback.id)
-                        await callback.answer("❌ Требуется подписка на канал для доступа к темам", show_alert=True)
-                        return
+                if not is_subscribed:
+                    # Переводим в окно-гейт и отправляем ссылку
+                    await manager.switch_to(SettingsMenu.theme_subscription_gate)
+                    channel_link = SUBSCRIPTION_CHANNEL
+                    if channel_link.startswith('@'):
+                        channel_link = f"https://t.me/{channel_link[1:]}"
+                    elif channel_link.startswith('-'):
+                        channel_link = f"tg://resolve?domain={channel_link}"
+                    elif not channel_link.startswith('http'):
+                        channel_link = f"https://t.me/{channel_link}"
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]])
+                    try:
+                        await callback.message.answer("Доступ к персональным темам доступен по подписке на канал.", reply_markup=kb)
+                        await callback.answer()
+                    except Exception:
+                        pass
+                    return
 
-            except Exception as api_error:
-                logging.warning(f"Error checking theme subscription via API: {api_error}")
-                # Даже если API проверка не удалась, показываем уведомление о подписке
-                from bot.tasks import check_theme_subscription_task
-                check_theme_subscription_task.send(user_id, callback.id)
-                await callback.answer("❌ Требуется подписка на канал для доступа к темам", show_alert=True)
-                return
-
-        # Если подписка не настроена или пользователь подписан, переходим к диалогу тем
+        # Подписка подтверждена или не требуется — переходим к выбору тем
         await manager.switch_to(SettingsMenu.choose_theme)
 
+    except Exception:
+        # При ошибках продолжаем, не блокируем пользователя
+        await manager.switch_to(SettingsMenu.choose_theme)
+
+async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    """Сохраняет выбранную тему пользователя и возвращает в меню настроек."""
+    try:
+        user_id = callback.from_user.id
+        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        if user_data_manager:
+            # Гарантируем наличие пользователя в БД
+            try:
+                await user_data_manager.register_user(user_id, getattr(callback.from_user, "username", None))
+            except Exception:
+                pass
+            await user_data_manager.set_user_theme(user_id, item_id)
+            await callback.answer("Тема обновлена ✅")
+        else:
+            await callback.answer("Не удалось сохранить тему", show_alert=True)
+    except Exception:
+        try:
+            await callback.answer("Ошибка при сохранении темы", show_alert=True)
+        except Exception:
+            pass
+    await manager.switch_to(SettingsMenu.main)
+
+async def get_theme_data(dialog_manager: DialogManager, **kwargs):
+    """Возвращает текущую тему и список тем с пометкой текущей."""
+    themes_info = {
+        'standard': {'name': '🎨 Стандартная', 'description': 'красная для нечётных недель, фиолетовая для чётных'},
+        'light': {'name': '☀️ Светлая', 'description': 'бирюзовая тема с кремовыми карточками'},
+        'dark': {'name': '🌙 Тёмная', 'description': 'тёмная тема с фиолетовыми акцентами'},
+        'classic': {'name': '📜 Классическая', 'description': 'тёмно-синяя тема в цветовой гамме Военмеха'},
+        'coffee': {'name': '☕ Кофейная', 'description': 'коричнево-золотая тема с кремовыми карточками'},
+    }
+    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_id = dialog_manager.event.from_user.id
+    current_theme = 'standard'
+    try:
+        if user_data_manager:
+            current_theme = await user_data_manager.get_user_theme(user_id) or 'standard'
+    except Exception:
+        current_theme = 'standard'
+
+    themes = []
+    for key, info in themes_info.items():
+        themes.append({
+            'id': key,
+            'name': info['name'],
+            'description': info['description'],
+            'is_current': key == current_theme,
+        })
+
+    return {
+        'current_theme': themes_info.get(current_theme, {'name': '🎨 Стандартная'})['name'],
+        'themes': themes,
+    }
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
     await callback.answer("📢 Переходим к новостям разработки!")
@@ -202,10 +228,8 @@ settings_dialog = Dialog(
         ),
         Format("{reminder_time_text}", when="are_reminders_enabled"),
 
-        Row(
-            Button(Format("🎨 Тема: {current_theme_name}"), id="theme_btn", on_click=on_theme_button_click),
-            Button(Const("📢 Новости разработки"), id="news_btn", on_click=on_news_clicked),
-        ),
+        Button(Format("🎨 Тема: {current_theme_name}"), id="theme_btn", on_click=on_theme_button_click),
+        Button(Const("📢 Новости разработки"), id="news_btn", on_click=on_news_clicked),
         Button(Const("◀️ Назад"), id="back_to_schedule", on_click=on_back_click),
         state=SettingsMenu.main, getter=get_settings_data, parse_mode="HTML"
     ),
@@ -228,5 +252,45 @@ settings_dialog = Dialog(
         ),
         Back(Const("◀️ Назад")),
         state=SettingsMenu.reminders_time, getter=get_settings_data
+    ),
+    # Добавляем окна из theme_dialog
+    Window(
+        Const("🎨 <b>Доступ к персональным темам</b>\n\n"
+              "Выберите уникальную тему для вашего расписания:\n\n"
+              "🎨 <b>Стандартная</b> - красная для нечётных, фиолетовая для чётных недель\n"
+              "☀️ <b>Светлая</b> - бирюзовая тема с кремовыми карточками\n"
+              "🌙 <b>Тёмная</b> - тёмная тема с фиолетовыми акцентами\n"
+              "📜 <b>Классическая</b> - тёмно-синяя тема с белыми карточками\n"
+              "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
+              "<i>Доступно только по подписке на канал разработки</i>"),
+        Button(Const("✅ Проверить подписку"), id="check_subscription", on_click=lambda c, b, m: m.switch_to(SettingsMenu.choose_theme)),
+        Back(Const("◀️ Назад"), on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
+        state=SettingsMenu.theme_subscription_gate,
+        parse_mode="HTML"
+    ),
+    Window(
+        Const("🎨 <b>Выбор темы оформления</b>\n\n"
+              "Выберите тему для вашего расписания:\n"),
+        Format("Текущая тема: <b>{current_theme}</b>\n"),
+        Const("\n📋 <i>Доступные темы:</i>\n"),
+        Column(
+            Select(
+                Jinja(
+                    "{% if item.is_current %}"
+                    "✅ {{ item.name }}"
+                    "{% else %}"
+                    "🔘 {{ item.name }}"
+                    "{% endif %}"
+                ),
+                id="select_theme",
+                item_id_getter=lambda item: item['id'],
+                items="themes",
+                on_click=on_theme_selected
+            )
+        ),
+        Back(Const("◀️ Назад"), on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
+        state=SettingsMenu.choose_theme,
+        getter=get_theme_data,
+        parse_mode="HTML"
     )
 )

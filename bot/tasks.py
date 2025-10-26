@@ -33,6 +33,7 @@ from bot.utils.image_compression import get_telegram_safe_image_path
 from core.image_cache_manager import ImageCacheManager
 from core.image_service import ImageService
 from core.image_generator import generate_schedule_image
+from core.user_data import UserDataManager
 
 load_dotenv()
 
@@ -289,12 +290,22 @@ def generate_week_image_task(cache_key: str, week_schedule: Dict[str, Any], week
                     # Используем контекстный менеджер для корректного закрытия сессии бота
                     assert bot_for_images is not None
                     async with bot_for_images:
+                        # Вычисляем тему пользователя, если доступен user_id
+                        user_theme = None
+                        try:
+                            if user_id is not None:
+                                db_url = os.getenv("DATABASE_URL")
+                                udm = UserDataManager(db_url=db_url or "", redis_url=redis_url)
+                                user_theme = await udm.get_user_theme(user_id)
+                        except Exception:
+                            user_theme = None
                         success, _ = await image_service.get_or_generate_week_image(
                             group=group,
                             week_key=week_key,
                             week_name=week_name,
                             week_schedule=week_schedule,
                             user_id=user_id,
+                            user_theme=user_theme,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption
                         )
@@ -405,7 +416,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
         except Exception as e:
             log.error(f"❌ check_theme_subscription_task failed: {e}")
 
-    return _inner()
+    asyncio.run(_inner())
 
 
 @dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=60000)

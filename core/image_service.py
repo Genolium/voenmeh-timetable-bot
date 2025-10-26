@@ -38,6 +38,7 @@ class ImageService:
         week_name: str,
         week_schedule: Dict[str, Any],
         user_id: Optional[int] = None,
+        user_theme: Optional[str] = None,
         placeholder_msg_id: Optional[int] = None,
         final_caption: Optional[str] = None
     ) -> Tuple[bool, Optional[str]]:
@@ -50,15 +51,20 @@ class ImageService:
             week_name: Название недели
             week_schedule: Данные расписания
             user_id: ID пользователя для отправки
+            user_theme: Тема оформления пользователя для генерации
             placeholder_msg_id: ID сообщения-плейсхолдера
             final_caption: Подпись к изображению
             
         Returns:
             Tuple[success, file_path]
         """
-        cache_key = f"{group}_{week_key}"
+        # Ключ кэша: для пользовательских тем учитываем тему
+        if user_theme and user_theme != 'standard':
+            cache_key = f"{group}_{week_key}_{user_theme}"
+        else:
+            cache_key = f"{group}_{week_key}"
         
-        logger.info(f"🎨 Requesting week image for {cache_key}")
+        logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
         
         # Проверяем кэш
         if await self.cache_manager.is_cached(cache_key):
@@ -86,7 +92,7 @@ class ImageService:
         
         # Генерируем изображение
         success, file_path = await self._generate_and_cache_image(
-            cache_key, week_schedule, week_name, group
+            cache_key, week_schedule, week_name, group, user_theme=user_theme
         )
         
         if success and user_id:
@@ -103,6 +109,7 @@ class ImageService:
         *,
         generated_by: str = "single",
         schedule_hash: Optional[str] = None,
+        user_theme: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -112,6 +119,9 @@ class ImageService:
             schedule_data: Данные расписания
             week_type: Тип недели
             group: Группа
+            generated_by: Источник генерации
+            schedule_hash: Хэш расписания
+            user_theme: Тема оформления пользователя
 
         Returns:
             Tuple[success, file_path]
@@ -144,6 +154,7 @@ class ImageService:
                 file_path.parent.mkdir(parents=True, exist_ok=True)
 
                 logger.info(f"🔄 Generating image for {cache_key}")
+                logger.info(f"Using user_theme={user_theme or 'standard'} for {cache_key}")
 
                 try:
                     # Измеряем время генерации для метрик
@@ -151,13 +162,6 @@ class ImageService:
                         # Сохраняем исходную компоновку — жестко фиксированный холст
                         from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
                         highres_vp = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
-
-                        # Получаем тему пользователя
-                        user_theme = None
-                        if user_id:
-                            from core.user_data import UserDataManager
-                            user_data_manager = UserDataManager(self.db_url, self.redis_url)
-                            user_theme = await user_data_manager.get_user_theme(user_id)
 
                         success = await generate_schedule_image(
                             schedule_data=schedule_data,
