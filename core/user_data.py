@@ -198,9 +198,10 @@ class UserDataManager:
                     "evening_notify": user.evening_notify,
                     "morning_summary": user.morning_summary,
                     "lesson_reminders": user.lesson_reminders,
-                    "reminder_time_minutes": user.reminder_time_minutes
+                    "reminder_time_minutes": user.reminder_time_minutes,
+                    "theme": user.theme
                 }
-            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 60}
+            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 60, "theme": "standard"}
 
     async def update_setting(self, user_id: int, setting_name: str, status: bool) -> None:
         """Обновляет конкретную настройку уведомлений для пользователя."""
@@ -230,6 +231,28 @@ class UserDataManager:
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             return user
+
+    async def get_user_theme(self, user_id: int) -> Optional[str]:
+        """Возвращает тему пользователя (standard, light, dark, classic, coffee)."""
+        async with self.async_session_maker() as session:
+            user = await session.get(User, user_id)
+            return user.theme if user else 'standard'
+
+    async def set_user_theme(self, user_id: int, theme: str) -> None:
+        """Устанавливает тему пользователя."""
+        # Проверяем, что тема валидная
+        valid_themes = ['standard', 'light', 'dark', 'classic', 'coffee']
+        if theme not in valid_themes:
+            logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using 'standard'.")
+            theme = 'standard'
+
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(theme=theme)
+            await session.execute(stmt)
+            await session.commit()
+
+        # Очищаем кэш пользователей после изменения темы
+        await self.clear_user_cache()
 
     # --- Методы для статистики ---
     async def get_total_users_count(self) -> int:

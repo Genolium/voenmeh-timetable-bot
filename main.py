@@ -47,23 +47,21 @@ from bot.dialogs.main_menu import dialog as main_menu_dialog
 from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback, on_check_subscription_callback
 from bot.dialogs.admin_menu import on_cancel_generation
 from bot.dialogs.settings_menu import settings_dialog
+from bot.dialogs.theme_dialog import theme_dialog
 from bot.dialogs.events_menu import events_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, Events
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu, Events
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 def setup_logging():
-    """Настраивает JSON логирование."""
-    logHandler = logging.StreamHandler()
-    # Используем JsonFormatter для вывода логов в формате JSON
-    formatter = JsonFormatter(
-        '%(asctime)s %(name)s %(levelname)s %(message)s %(user_id)s %(event_type)s'
+    """Настраивает простое логирование для отладки."""
+    # Простое логирование для отладки
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
     )
-    logHandler.setFormatter(formatter)
-    
-    # Устанавливаем обработчик для корневого логгера
-    logging.basicConfig(level=logging.INFO, handlers=[logHandler])
     # Устанавливаем уровень для логгера aiogram, чтобы не видеть слишком много системных сообщений
     logging.getLogger('aiogram').setLevel(logging.WARNING)
 
@@ -210,16 +208,22 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
     return True
 
 async def main():
+    print("🚀 Starting bot...")
     setup_logging()  # Вызываем настройку логирования
+    print("📝 Logging configured")
     load_dotenv()
+    print("🔧 Environment loaded")
 
     bot_token = os.getenv("BOT_TOKEN")
     redis_url = os.getenv("REDIS_URL")
     db_url = os.getenv("DATABASE_URL")
+    print("🔑 Environment variables checked")
 
     if not all([bot_token, redis_url, db_url]):
+        print("❌ Missing environment variables")
         logging.critical("Одна из критически важных переменных окружения не найдена (BOT_TOKEN, REDIS_URL, DATABASE_URL).")
         return
+    print("✅ All environment variables found")
 
     redis_client = Redis.from_url(redis_url or "")
     
@@ -273,6 +277,30 @@ async def main():
     for dialog in all_dialogs:
         dp.include_router(dialog)
     setup_dialogs(dp)
+
+    # DEBUG: Print registered dialogs and windows
+    from aiogram_dialog import Dialog
+    print("--- DEBUG DIALOGS ---")
+    # Access routers through the dispatcher's sub_routers attribute
+    if hasattr(dp, 'sub_routers'):
+        for router in dp.sub_routers:
+            if isinstance(router, Dialog):
+                print(f"Registered Dialog: {router.states_group_name}")
+                for state in router.windows:
+                    print(f"  -> Window for state: {state!r}")
+    else:
+        # Fallback: try to access through different methods
+        try:
+            # In newer aiogram versions, routers might be stored differently
+            routers = getattr(dp, '_sub_routers', []) or getattr(dp, 'routers', [])
+            for router in routers:
+                if isinstance(router, Dialog):
+                    print(f"Registered Dialog: {router.states_group_name}")
+                    for state in router.windows:
+                        print(f"  -> Window for state: {state!r}")
+        except Exception as e:
+            print(f"Could not access routers for debugging: {e}")
+    print("--- END DEBUG DIALOGS ---")
 
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))

@@ -120,7 +120,8 @@ async def generate_all_schedule_images():
                     schedule_data=week_schedule,
                     week_type=week_name,
                     group=group,
-                    output_path=output_path
+                    output_path=output_path,
+                    user_theme=None
                 )
                 
                 if success and os.path.exists(output_path):
@@ -219,7 +220,8 @@ async def generate_sample_images():
             schedule_data=test_data,
             week_type=week_type,
             group="TEST_SAMPLE",
-            output_path=str(output_path)
+            output_path=str(output_path),
+            user_theme=None
         )
         
         if success:

@@ -24,6 +24,9 @@ class User(Base):
 
     reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default='60', nullable=False)
 
+    # Пользовательская тема оформления (standard, light, dark, classic, coffee)
+    theme: Mapped[str] = mapped_column(String, default='standard', server_default='standard', nullable=False)
+
     # Индексы для оптимизации частых запросов
     __table_args__ = (
         Index('idx_user_group', 'group'),  # Для поиска по группам
@@ -31,6 +34,7 @@ class User(Base):
         Index('idx_user_last_active', 'last_active_date'),  # Для статистики активности
         Index('idx_user_registration', 'registration_date'),  # Для статистики регистраций
         Index('idx_user_notifications', 'evening_notify', 'morning_summary', 'lesson_reminders'),  # Для рассылок
+        Index('idx_user_theme', 'theme'),  # Для поиска по теме
     )
 
 class SemesterSettings(Base):

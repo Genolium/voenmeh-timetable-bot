@@ -23,14 +23,30 @@ except Exception:
     # Нет секций loggers/handlers/formatters — логирование Alembic пропускаем
     pass
 
-DB_HOST = os.getenv("POSTGRES_HOST")
-DB_PORT = os.getenv("POSTGRES_PORT")
-DB_NAME = os.getenv("POSTGRES_DB")
-DB_USER = os.getenv("POSTGRES_USER")
-DB_PASS = os.getenv("POSTGRES_PASSWORD")
+# Используем DATABASE_URL из core.config, если он доступен
+try:
+    from core.config import settings
+    # Alembic требует синхронный драйвер psycopg2, а не asyncpg
+    db_url = settings.DATABASE_URL
+    if db_url.startswith("postgresql+asyncpg://"):
+        # Заменяем asyncpg на psycopg2 для Alembic
+        sync_db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    elif db_url.startswith("postgresql://"):
+        # Если драйвер не указан, добавляем psycopg2
+        sync_db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
+    else:
+        sync_db_url = db_url
+    config.set_main_option('sqlalchemy.url', sync_db_url)
+except Exception:
+    # Fallback на переменные окружения для совместимости
+    DB_HOST = os.getenv("POSTGRES_HOST")
+    DB_PORT = os.getenv("POSTGRES_PORT")
+    DB_NAME = os.getenv("POSTGRES_DB")
+    DB_USER = os.getenv("POSTGRES_USER")
+    DB_PASS = os.getenv("POSTGRES_PASSWORD")
 
-sync_db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-config.set_main_option('sqlalchemy.url', sync_db_url)
+    sync_db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+    config.set_main_option('sqlalchemy.url', sync_db_url)
 
 target_metadata = Base.metadata
 

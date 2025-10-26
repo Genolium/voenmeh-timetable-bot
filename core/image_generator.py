@@ -113,6 +113,7 @@ async def generate_schedule_image(
     group: str,
     output_path: str,
     viewport_size: Optional[Dict[str, int]] = None,
+    user_theme: Optional[str] = None,
 ) -> bool:
     """
     Создает широкоформатное изображение расписания, рендеря HTML в headless-браузере.
@@ -148,6 +149,7 @@ async def generate_schedule_image(
         week_slug = 'odd' if 'Неч' in week_type else 'even'
         if not _bg_images_cache:
             from base64 import b64encode
+            # Стандартные фоны для нечётной/чётной недели
             try:
                 orange_path = project_root / "assets" / "orange_background.png"
                 _bg_images_cache['orange'] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
@@ -158,14 +160,53 @@ async def generate_schedule_image(
                 _bg_images_cache['purple'] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
             except Exception:
                 _bg_images_cache['purple'] = ""
+            # Дополнительные фоны для пользовательских тем
+            try:
+                light_path = project_root / "assets" / "light_background.png"
+                _bg_images_cache['light'] = f"data:image/png;base64,{b64encode(light_path.read_bytes()).decode()}"
+            except Exception:
+                _bg_images_cache['light'] = ""
+            try:
+                dark_path = project_root / "assets" / "dark_background.png"
+                _bg_images_cache['dark'] = f"data:image/png;base64,{b64encode(dark_path.read_bytes()).decode()}"
+            except Exception:
+                _bg_images_cache['dark'] = ""
+            try:
+                coffee_path = project_root / "assets" / "coffee_background.png"
+                _bg_images_cache['coffee'] = f"data:image/png;base64,{b64encode(coffee_path.read_bytes()).decode()}"
+            except Exception:
+                _bg_images_cache['coffee'] = ""
+            try:
+                official_path = project_root / "assets" / "official_background.png"
+                # Используем как фон для темы 'classic' (официальные цвета Военмеха)
+                _bg_images_cache['official'] = f"data:image/png;base64,{b64encode(official_path.read_bytes()).decode()}"
+            except Exception:
+                _bg_images_cache['official'] = ""
+
+        # Выбираем фон по теме пользователя
+        def _resolve_bg_key(theme: Optional[str], slug: str) -> str:
+            if theme == 'light':
+                return 'light'
+            if theme == 'dark':
+                return 'dark'
+            if theme == 'coffee':
+                return 'coffee'
+            if theme == 'classic':
+                return 'official'
+            # 'standard' или None — старое поведение: разные фоны для нечётной/чётной
+            return 'orange' if slug == 'odd' else 'purple'
+
+        bg_key = _resolve_bg_key(user_theme, week_slug)
+        bg_image_data = _bg_images_cache.get(bg_key, "")
 
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
             group=group,
             schedule_days=_prepare_days(schedule_data),
-            bg_image=(_bg_images_cache['orange'] if week_slug == 'odd' else _bg_images_cache['purple']),
+            bg_image=bg_image_data,
             assets_base=(project_root / 'assets').as_uri(),
+            user_theme=user_theme,
         )
 
         global async_playwright
