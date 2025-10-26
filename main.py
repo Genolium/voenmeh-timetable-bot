@@ -47,10 +47,11 @@ from bot.dialogs.main_menu import dialog as main_menu_dialog
 from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback, on_check_subscription_callback
 from bot.dialogs.admin_menu import on_cancel_generation
 from bot.dialogs.settings_menu import settings_dialog
+from bot.dialogs.theme_dialog import theme_dialog
 from bot.dialogs.events_menu import events_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, Events
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu, Events
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 def setup_logging():
@@ -267,12 +268,22 @@ async def main():
     dp.include_router(feedback_reply_router)
     
     all_dialogs = [
-        main_menu_dialog, schedule_dialog, settings_dialog, find_dialog,
+        main_menu_dialog, schedule_dialog, settings_dialog, theme_dialog, find_dialog,
         about_dialog, feedback_dialog, admin_dialog, events_dialog
     ]
     for dialog in all_dialogs:
         dp.include_router(dialog)
     setup_dialogs(dp)
+
+    # DEBUG: Print registered dialogs and windows
+    from aiogram_dialog import Dialog
+    print("--- DEBUG DIALOGS ---")
+    for router in dp.router.sub_routers:
+        if isinstance(router, Dialog):
+            print(f"Registered Dialog: {router.states_group_name}")
+            for state in router.windows:
+                print(f"  -> Window for state: {state!r}")
+    print("--- END DEBUG DIALOGS ---")
 
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))

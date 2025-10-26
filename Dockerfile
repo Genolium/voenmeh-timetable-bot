@@ -1,11 +1,11 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
 # Сначала копируем только requirements.txt, чтобы кэшировать установку зависимостей
 COPY requirements.txt .
 
-# Устанавливаем системные зависимости для Pillow/Playwright (chromium)
+# Устанавливаем системные зависимости для Pillow/Playwright (chromium) и PostgreSQL
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libglib2.0-0 \
@@ -32,6 +32,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 \
     libfreetype6 \
     fonts-liberation \
+    # PostgreSQL development пакеты для psycopg2
+    libpq-dev \
+    postgresql-client \
+    gcc \
+    g++ \
+    python3-dev \
+    # Дополнительные пакеты для сборки Python модулей
+    libffi-dev \
+    libssl-dev \
+    make \
+    file \
+    cmake \
+    build-essential \
   && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем зависимости Python

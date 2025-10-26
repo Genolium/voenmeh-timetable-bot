@@ -75,7 +75,8 @@ async def test_generate_schedule_image_success(mock_template_files, mock_playwri
         schedule_data=schedule_data,
         week_type="Чётная",
         group="TEST",
-        output_path=output_path
+        output_path=output_path,
+        user_theme=None
     )
 
     # Просто проверяем, что функция выполнилась без критических ошибок
@@ -103,7 +104,7 @@ async def test_generate_schedule_image_template_not_found(monkeypatch, mocker, t
     mock_print = MagicMock()
     monkeypatch.setattr('builtins.print', mock_print)
 
-    result = await generate_schedule_image({}, "", "", str(tmp_path / "test.png"))
+    result = await generate_schedule_image({}, "", "", str(tmp_path / "test.png"), user_theme=None)
     
     # При ошибках функция возвращает False
     assert result is False
@@ -127,7 +128,7 @@ async def test_generate_schedule_image_playwright_fails(mock_template_files, moc
     mock_print = MagicMock()
     monkeypatch.setattr('builtins.print', mock_print)
 
-    result = await generate_schedule_image({}, "Нечётная", "FAIL", str(tmp_path / "fail.png"))
+    result = await generate_schedule_image({}, "Нечётная", "FAIL", str(tmp_path / "fail.png"), user_theme=None)
     
     # При ошибках функция возвращает False
     assert result is False

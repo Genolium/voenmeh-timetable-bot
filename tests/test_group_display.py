@@ -59,7 +59,8 @@ async def test_group_display():
                     schedule_data=test_data,
                     week_type=week_type,
                     group=group,
-                    output_path=str(output_path)
+                    output_path=str(output_path),
+                    user_theme=None
                 )
                 
                 if success and os.path.exists(output_path):

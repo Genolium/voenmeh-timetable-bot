@@ -392,3 +392,78 @@ class TestUserDataManagerCaching:
         # Проверяем, что Redis URL сохранен
         assert manager._redis_url == "redis://localhost:6379"
         assert manager._redis_client is None  # Должен быть None до первого вызова
+
+    @pytest.mark.asyncio
+    async def test_get_user_theme_default(self, user_data_manager):
+        """Тест получения темы пользователя по умолчанию."""
+        # Регистрируем пользователя
+        await user_data_manager.register_user(12345, "test_user")
+
+        # Получаем тему (должна быть standard по умолчанию)
+        theme = await user_data_manager.get_user_theme(12345)
+        assert theme == "standard"
+
+    @pytest.mark.asyncio
+    async def test_get_user_theme_nonexistent_user(self, user_data_manager):
+        """Тест получения темы несуществующего пользователя."""
+        # Получаем тему несуществующего пользователя (должна быть standard по умолчанию)
+        theme = await user_data_manager.get_user_theme(99999)
+        assert theme == "standard"
+
+    @pytest.mark.asyncio
+    async def test_set_user_theme_valid(self, user_data_manager):
+        """Тест установки валидной темы."""
+        # Регистрируем пользователя
+        await user_data_manager.register_user(12345, "test_user")
+
+        # Устанавливаем тему
+        await user_data_manager.set_user_theme(12345, "light")
+
+        # Проверяем, что тема установилась
+        theme = await user_data_manager.get_user_theme(12345)
+        assert theme == "light"
+
+    @pytest.mark.asyncio
+    async def test_set_user_theme_invalid(self, user_data_manager):
+        """Тест установки невалидной темы."""
+        # Регистрируем пользователя
+        await user_data_manager.register_user(12345, "test_user")
+
+        # Пытаемся установить невалидную тему (должна установиться standard)
+        await user_data_manager.set_user_theme(12345, "invalid_theme")
+
+        # Проверяем, что установилась standard
+        theme = await user_data_manager.get_user_theme(12345)
+        assert theme == "standard"
+
+    @pytest.mark.asyncio
+    async def test_set_user_theme_all_valid(self, user_data_manager):
+        """Тест установки всех валидных тем."""
+        # Регистрируем пользователя
+        await user_data_manager.register_user(12345, "test_user")
+
+        valid_themes = ["standard", "light", "dark", "classic", "coffee"]
+
+        for theme in valid_themes:
+            # Устанавливаем тему
+            await user_data_manager.set_user_theme(12345, theme)
+
+            # Проверяем, что тема установилась
+            current_theme = await user_data_manager.get_user_theme(12345)
+            assert current_theme == theme
+
+    @pytest.mark.asyncio
+    async def test_get_user_settings_includes_theme(self, user_data_manager):
+        """Тест получения настроек пользователя включает тему."""
+        # Регистрируем пользователя
+        await user_data_manager.register_user(12345, "test_user")
+
+        # Устанавливаем тему
+        await user_data_manager.set_user_theme(12345, "dark")
+
+        # Получаем настройки
+        settings = await user_data_manager.get_user_settings(12345)
+
+        # Проверяем, что тема включена в настройки
+        assert "theme" in settings
+        assert settings["theme"] == "dark"

@@ -327,6 +327,87 @@ async def _send_error_message(user_id: int, error_text: str):
         log.error(f"❌ Не удалось отправить сообщение об ошибке пользователю {user_id}: {e}")
 
 
+@dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=30000)
+def check_theme_subscription_task(user_id: int, callback_data: str = None):
+    """
+    Проверяет подписку пользователя на канал для доступа к темам.
+    Кэширует результат проверки на 6 часов для подписанных, на 1 минуту для неподписанных.
+    """
+    async def _inner():
+        try:
+            r = get_redis_client(decode_responses=True)
+            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+            async with bot:
+                is_subscribed = False
+                cache_key = f"theme_sub_status:{user_id}"
+                try:
+                    cached = await r.get(cache_key)
+                    if cached is not None:
+                        is_subscribed = cached == '1'
+                    else:
+                        if SUBSCRIPTION_CHANNEL:
+                            try:
+                                member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
+                                status = getattr(member, "status", None)
+                                is_subscribed = status in ("member", "administrator", "creator")
+                            except Exception:
+                                is_subscribed = False
+                        await r.set(cache_key, '1' if is_subscribed else '0', ex=21600 if is_subscribed else 60)
+                except Exception:
+                    pass
+
+                if not is_subscribed and SUBSCRIPTION_CHANNEL:
+                    # Корректно формируем ссылку на канал
+                    channel_link = SUBSCRIPTION_CHANNEL
+                    if channel_link.startswith('@'):
+                        channel_link = f"https://t.me/{channel_link[1:]}"
+                    elif channel_link.startswith('-'):
+                        # Для каналов с числовым ID
+                        channel_link = f"tg://resolve?domain={channel_link}"
+                    elif not channel_link.startswith('http'):
+                        # Для обыных имен каналов
+                        channel_link = f"https://t.me/{channel_link}"
+
+                    kb = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]
+                    ])
+
+                    message_text = (
+                        "🎨 <b>Доступ к персональным темам</b>\n\n"
+                        "Выберите уникальную тему для вашего расписания:\n\n"
+                        "🎨 <b>Стандартная</b> - красная для нечётных, фиолетовая для чётных недель\n"
+                        "☀️ <b>Светлая</b> - бирюзовая тема с кремовыми карточками\n"
+                        "🌙 <b>Тёмная</b> - тёмная тема с фиолетовыми акцентами\n"
+                        "📜 <b>Классическая</b> - тёмно-синяя тема с белыми карточками\n"
+                        "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
+                        "<i>Доступно только по подписке на канал разработки</i>"
+                    )
+
+                    await bot.send_message(user_id, message_text, reply_markup=kb)
+                else:
+                    # Пользователь подписан, отправляем уведомление об успехе
+                    if callback_data:
+                        await bot.answer_callback_query(callback_data, "✅ Доступ к темам подтверждён!")
+                    # Отправляем сообщение с уведомлением и переключаем в нужное состояние
+                    await bot.send_message(
+                        user_id,
+                        "✅ <b>Подписка подтверждена!</b>\n\n"
+                        "Теперь вам доступны персональные темы оформления:\n\n"
+                        "🎨 <b>Стандартная</b> - красная для нечётных, фиолетовая для чётных недель\n"
+                        "☀️ <b>Светлая</b> - бирюзовая тема с кремовыми карточками\n"
+                        "🌙 <b>Тёмная</b> - тёмная тема с фиолетовыми акцентами\n"
+                        "📜 <b>Классическая</b> - тёмно-синяя тема с белыми карточками\n"
+                        "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
+                        "Выберите тему в настройках → 🎨 Тема",
+                        parse_mode="HTML"
+                    )
+
+        except Exception as e:
+            log.error(f"❌ check_theme_subscription_task failed: {e}")
+
+    return _inner()
+
+
 @dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=60000)
 def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: str):
     async def _inner():

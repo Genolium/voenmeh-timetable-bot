@@ -186,7 +186,8 @@ async def main():
             schedule_data=test_data,
             week_type=week_type,
             group="TEST_GROUP",
-            output_path=str(output_path)
+            output_path=str(output_path),
+            user_theme=None
         )
         
         if success:

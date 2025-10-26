@@ -16,26 +16,150 @@
     /* --- 2. Глобальные переменные и цветовая схема (Темизация) --- */
     /* :root — это корневой элемент документа. Здесь мы объявляем CSS-переменные для удобного управления цветами. */
     :root {
-      /* Цвета для нечётной недели (оранжево-красная тема) */
-      --color-odd-bg: #F9733E;
-      --color-odd-accent: #ff2f00;
-      --color-odd-badge-bg: #ff656f;
+      /* 🎨 СТАНДАРТНАЯ тема (из переменных Figma) */
+      --standard-odd-bg: #ff2f00;         /* Orange */
+      --standard-odd-accent: #ff2f00;     /* Orange */
+      --standard-odd-badge-bg: #ff656f;   /* Vibe Red */
+      --standard-odd-card-bg: #fffffe;    /* White */
+      --standard-even-bg: #6555f0;        /* Purple */
+      --standard-even-accent: #6555f0;    /* Purple */
+      --standard-even-badge-bg: #776aef;  /* Vibe Purple */
+      --standard-even-card-bg: #fffffe;   /* White */
+
+      /* ☀️ СВЕТЛАЯ тема (из переменных Figma) */
+      --light-odd-bg: #078080;            /* Emerald */
+      --light-odd-accent: #078080;        /* Emerald */
+      --light-odd-badge-bg: #078080;      /* Emerald */
+      --light-odd-card-bg: #f9f5f2;       /* Semi Light Blue */
+      --light-even-bg: #078080;           /* Emerald */
+      --light-even-accent: #078080;       /* Emerald */
+      --light-even-badge-bg: #078080;     /* Emerald */
+      --light-even-card-bg: #f9f5f2;      /* Semi Light Blue */
+
+      /* 🌙 ТЁМНАЯ тема (из переменных Figma) */
+      --dark-odd-bg: #020826;             /* Deep Dark Blue */
+      --dark-odd-accent: #6555f0;         /* Purple */
+      --dark-odd-badge-bg: #fffffe;       /* White */
+      --dark-odd-card-bg: #16161a;        /* Dark Grey */
+      --dark-even-bg: #020826;            /* Deep Dark Blue */
+      --dark-even-accent: #6555f0;        /* Purple */
+      --dark-even-badge-bg: #fffffe;      /* White */
+      --dark-even-card-bg: #16161a;       /* Dark Grey */
+
+      /* 📜 КЛАССИЧЕСКАЯ тема (из переменных Figma) */
+      --classic-odd-bg: #243c6a;          /* Deep Blue */
+      --classic-odd-accent: #243c6a;      /* Deep Blue */
+      --classic-odd-badge-bg: #ffffff;    /* White */
+      --classic-odd-card-bg: #37486e;     /* Blue */
+      --classic-even-bg: #243c6a;         /* Deep Blue */
+      --classic-even-accent: #243c6a;     /* Deep Blue */
+      --classic-even-badge-bg: #ffffff;   /* White */
+      --classic-even-card-bg: #37486e;    /* Blue */
+
+      /* ☕ КОФЕЙНАЯ тема (из переменных Figma) */
+      --coffee-odd-bg: #8c7851;           /* Light Coffee */
+      --coffee-odd-accent: #8c7851;       /* Light Coffee */
+      --coffee-odd-badge-bg: #8c7851;     /* Light Coffee */
+      --coffee-odd-card-bg: #eaddcf;      /* Coffee BG */
+      --coffee-even-bg: #8c7851;          /* Light Coffee */
+      --coffee-even-accent: #8c7851;      /* Light Coffee */
+      --coffee-even-badge-bg: #8c7851;    /* Light Coffee */
+      --coffee-even-card-bg: #eaddcf;     /* Coffee BG */
+
+      /* Дополнительные текстовые переменные по темам */
+      /* STANDARD: заголовки и текст на белом фоне */
+      --standard-text-main: #fffffe;      /* White - header text */
+      --standard-text-light: #fffffe;     /* White - subtitle */
+      --standard-card-text: #000000;      /* Black - lesson title */
+      --standard-card-text-light: #323232; /* Gray - lesson time */
+      --standard-odd-card-accent: #ff2f00;    /* Orange - room number ODD */
+      --standard-odd-card-day-title: #ff2f00; /* Orange - day title ODD */
+      --standard-even-card-accent: #6555f0;   /* Purple - room number EVEN */
+      --standard-even-card-day-title: #6555f0; /* Purple - day title EVEN */
+      --standard-badge-time: #fffffe;     /* White - badge time text */
       
-      /* Цвета для чётной недели (фиолетовая тема) */
-      --color-even-bg: #6555F0;
-      --color-even-accent: #776AEF;
-      --color-even-badge-bg: #776AEF;
+      /* LIGHT: тёмный текст на светлом фоне */
+      --light-text-main: #232323;         /* Dark Grey 2 - header text */
+      --light-text-light: #232323;        /* Dark Grey 2 - subtitle */
+      --light-card-text: #323232;         /* Light Grey - lesson title */
+      --light-card-text-light: #323232;   /* Light Grey - lesson time */
+      --light-odd-card-accent: #ff2f00;       /* Orange - room number */
+      --light-odd-card-day-title: #078080;    /* Emerald - day title */
+      --light-even-card-accent: #ff2f00;      /* Orange - room number */
+      --light-even-card-day-title: #078080;   /* Emerald - day title */
+      --light-badge-time: #fffffe;        /* White - badge time text */
+      
+      /* DARK: белый текст на тёмном фоне */
+      --dark-text-main: #fffffe;          /* White - header text */
+      --dark-text-light: #fffffe;         /* White - subtitle */
+      --dark-card-text: #fffffe;          /* White - lesson title */
+      --dark-card-text-light: #e1e5ea;    /* Light Grey 2 - lesson time */
+      --dark-odd-card-accent: #776aef;        /* Vibe Purple - room number */
+      --dark-odd-card-day-title: #fffffe;     /* White - day title */
+      --dark-even-card-accent: #776aef;       /* Vibe Purple - room number */
+      --dark-even-card-day-title: #fffffe;    /* White - day title */
+      --dark-badge-time: #16161a;         /* Dark Grey - badge time text */
+      
+      /* CLASSIC: белый текст на синем фоне */
+      --classic-text-main: #fffffe;       /* White - header text */
+      --classic-text-light: #fffffe;      /* White - subtitle */
+      --classic-card-text: #fffffe;       /* White - lesson title */
+      --classic-card-text-light: #fffffe; /* White - lesson time */
+      --classic-odd-card-accent: #fffffe;     /* White - room number */
+      --classic-odd-card-day-title: #fffffe;  /* White - day title */
+      --classic-even-card-accent: #fffffe;    /* White - room number */
+      --classic-even-card-day-title: #fffffe; /* White - day title */
+      --classic-badge-time: #243c6a;      /* Deep Blue - badge time text */
+      
+      /* COFFEE: кофейные оттенки на светлом фоне */
+      --coffee-text-main: #020826;        /* Deep Dark Blue - header text */
+      --coffee-text-light: #020826;       /* Deep Dark Blue - subtitle */
+      --coffee-card-text: #716040;        /* Coffee - lesson title */
+      --coffee-card-text-light: #716040;  /* Coffee - lesson time */
+      --coffee-odd-card-accent: #8c7851;      /* Light Coffee - room number */
+      --coffee-odd-card-day-title: #392e19;   /* Dark Coffee - day title */
+      --coffee-even-card-accent: #8c7851;     /* Light Coffee - room number */
+      --coffee-even-card-day-title: #392e19;  /* Dark Coffee - day title */
+      --coffee-badge-time: #fffffe;       /* White - badge time text */
+
+      /* Выбор темы на основе пользовательской настройки */
+      {% set theme_prefix = user_theme if user_theme else 'standard' %}
+      {% set odd_bg = theme_prefix + '-odd-bg' %}
+      {% set odd_accent = theme_prefix + '-odd-accent' %}
+      {% set odd_badge = theme_prefix + '-odd-badge-bg' %}
+      {% set odd_card_bg = theme_prefix + '-odd-card-bg' %}
+      {% set even_bg = theme_prefix + '-even-bg' %}
+      {% set even_accent = theme_prefix + '-even-accent' %}
+      {% set even_badge = theme_prefix + '-even-badge-bg' %}
+      {% set even_card_bg = theme_prefix + '-even-card-bg' %}
+      {% set text_main_key = theme_prefix + '-text-main' %}
+      {% set text_light_key = theme_prefix + '-text-light' %}
+      {% set card_text_key = theme_prefix + '-card-text' %}
+      {% set card_text_light_key = theme_prefix + '-card-text-light' %}
+      {% set odd_card_accent_key = theme_prefix + '-odd-card-accent' %}
+      {% set even_card_accent_key = theme_prefix + '-even-card-accent' %}
+      {% set odd_card_day_title_key = theme_prefix + '-odd-card-day-title' %}
+      {% set even_card_day_title_key = theme_prefix + '-even-card-day-title' %}
+      {% set badge_time_key = theme_prefix + '-badge-time' %}
 
       /* Здесь, с помощью шаблонизатора Jinja, мы выбираем нужную палитру в зависимости от типа недели. */
       /* Это позволяет менять всю тему сайта, просто меняя 'week_slug' в данных. */
-      --color-bg: {{ 'var(--color-odd-bg)' if week_slug == 'odd' else 'var(--color-even-bg)' }};
-      --color-accent: {{ 'var(--color-odd-accent)' if week_slug == 'odd' else 'var(--color-even-accent)' }};
-      --color-badge-bg: {{ 'var(--color-odd-badge-bg)' if week_slug == 'odd' else 'var(--color-even-badge-bg)' }};
+      --color-bg: {{ 'var(--' + odd_bg + ')' if week_slug == 'odd' else 'var(--' + even_bg + ')' }};
+      --color-accent: {{ 'var(--' + odd_accent + ')' if week_slug == 'odd' else 'var(--' + even_accent + ')' }};
+      --color-badge-bg: {{ 'var(--' + odd_badge + ')' if week_slug == 'odd' else 'var(--' + even_badge + ')' }};
+      --color-card-bg: {{ 'var(--' + odd_card_bg + ')' if week_slug == 'odd' else 'var(--' + even_card_bg + ')' }};
 
-      /* Переменные для текстовых цветов для консистентности */
-      --text-main: #000000;
-      --text-light: #323232;
-      --text-white: #FFFFFF;
+      /* Переменные для текстовых цветов (зависят от темы) */
+      --text-main: {{ 'var(--' + text_main_key + ')' }};
+      --text-light: {{ 'var(--' + text_light_key + ')' }};
+      --text-white: #fffffe;              /* White */
+      
+      /* Цвета текста внутри карточек (зависят от темы И недели) */
+      --card-text-main: {{ 'var(--' + card_text_key + ')' }};
+      --card-text-light: {{ 'var(--' + card_text_light_key + ')' }};
+      --card-text-accent: {{ 'var(--' + odd_card_accent_key + ')' if week_slug == 'odd' else 'var(--' + even_card_accent_key + ')' }};
+      --card-day-title: {{ 'var(--' + odd_card_day_title_key + ')' if week_slug == 'odd' else 'var(--' + even_card_day_title_key + ')' }};
+      --badge-time-color: {{ 'var(--' + badge_time_key + ')' }};
     }
 
     /* --- 3. Базовые стили и сброс --- */
@@ -78,7 +202,7 @@
 
     /* Стили для главного заголовка "Расписание" и подзаголовка с типом недели. */
     .schedule-header {
-      color: var(--text-white);
+      color: var(--text-main);
       display: flex;
       justify-content: space-between;
       align-items: flex-end;
@@ -94,6 +218,7 @@
       font-size: 6.4rem;
       font-weight: 400;
       letter-spacing: 0.096rem;
+      color: var(--text-light);
     }
 
     .bot-credit p {
@@ -111,7 +236,7 @@
       font-weight: 400;
       letter-spacing: 0.048rem;
       text-align: right;
-      color: var(--text-white);
+      color: var(--text-main);
       opacity: 0.8;
     }
 
@@ -132,13 +257,13 @@
     /* justify-content: center; — ВЕРТИКАЛЬНО ЦЕНТРИРУЕТ контент, если его мало (как во Вторник). */
     .day-card {
       position: relative;
-      background: var(--text-white);
+      background: var(--color-card-bg);
       border-radius: 4rem;
       padding: 4.5rem 8rem;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      min-height: 52rem; 
+      min-height: 52rem;
     }
 
     /* Заголовок дня недели (Понедельник, Вторник и т.д.). */
@@ -147,7 +272,7 @@
       font-weight: 700;
       font-size: 6.4rem;
       letter-spacing: 0.096rem;
-      color: var(--color-accent);
+      color: var(--card-day-title);
       margin-bottom: 2.5rem; 
     }
 
@@ -173,7 +298,7 @@
     .lesson-title {
       grid-column: 1 / 9;
       font-weight: 400;
-      color: var(--text-main);
+      color: var(--card-text-main);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -183,7 +308,7 @@
     .lesson-room {
       grid-column: 9 / 10;
       font-weight: 400;
-      color: var(--color-accent);
+      color: var(--card-text-accent);
       text-align: left;
       white-space: nowrap;
       overflow: hidden;
@@ -197,7 +322,7 @@
       grid-column: 11 / 13;
       font-family: 'Segoe UI Light', 'Segoe UI', sans-serif;
       font-weight: 300;
-      color: var(--text-light);
+      color: var(--card-text-light);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -208,7 +333,7 @@
     /* Текст для выходного дня. */
     .holiday-text {
         font-size: 3.8rem;
-        color: var(--text-main);
+        color: var(--card-day-title);
     }
 
     /* Плашка с временем первой пары. */
@@ -227,7 +352,7 @@
     /* Верхняя часть плашки с цифрами времени. */
     .badge-time {
       background-color: var(--color-badge-bg);
-      color: var(--text-white);
+      color: var(--badge-time-color);
       border-radius: 2rem;
       padding: 1.5rem 3rem;
       font-family: 'Saira', sans-serif;

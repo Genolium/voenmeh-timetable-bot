@@ -53,3 +53,10 @@ class WidgetIds(str, Enum):
     ADMIN_EVENTS = "admin_events"
     # Events user menu
     EVENTS_OPEN = "events_open"
+
+    # Themes
+    THEME_STANDARD = "theme_standard"
+    THEME_LIGHT = "theme_light"
+    THEME_DARK = "theme_dark"
+    THEME_CLASSIC = "theme_classic"
+    THEME_COFFEE = "theme_coffee"

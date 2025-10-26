@@ -152,13 +152,21 @@ class ImageService:
                         from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
                         highres_vp = {"width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT}
 
+                        # Получаем тему пользователя
+                        user_theme = None
+                        if user_id:
+                            from core.user_data import UserDataManager
+                            user_data_manager = UserDataManager(self.db_url, self.redis_url)
+                            user_theme = await user_data_manager.get_user_theme(user_id)
+
                         success = await generate_schedule_image(
                             schedule_data=schedule_data,
                             week_type=week_type,
                             group=group,
                             output_path=str(file_path),
-                        viewport_size=highres_vp
-                    )
+                            viewport_size=highres_vp,
+                            user_theme=user_theme
+                        )
 
                     if not success or not file_path.exists():
                         logger.error(f"❌ Failed to generate image for {cache_key}")
