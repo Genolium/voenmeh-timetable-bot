@@ -63,6 +63,9 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         logger.info("Вечерняя рассылка: нет пользователей для уведомления.")
         return
 
+    logger.info(f"Вечерняя рассылка: обработка {len(users_to_notify)} пользователей")
+    processed_count = 0
+    
     for user_id, group_name in users_to_notify:
         # Получаем тип пользователя
         user = await user_data_manager.get_full_user_info(user_id)
@@ -97,6 +100,14 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
 
         send_message_task.send(user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+        processed_count += 1
+        
+        # Периодически освобождаем event loop для обработки других событий
+        if processed_count % 50 == 0:
+            await asyncio.sleep(0)
+            logger.debug(f"Вечерняя рассылка: обработано {processed_count}/{len(users_to_notify)} пользователей")
+    
+    logger.info(f"Вечерняя рассылка: завершено. Обработано {processed_count} пользователей")
 
 async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     today = datetime.now(MOSCOW_TZ)
@@ -111,6 +122,9 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
         logger.info("Утренняя рассылка: нет пользователей для уведомления.")
         return
 
+    logger.info(f"Утренняя рассылка: обработка {len(users_to_notify)} пользователей")
+    processed_count = 0
+    
     for user_id, group_name in users_to_notify:
         # Получаем тип пользователя
         user = await user_data_manager.get_full_user_info(user_id)
@@ -135,6 +149,14 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
             text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{schedule_text}{get_footer_with_promo()}"
             send_message_task.send(user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+            processed_count += 1
+        
+        # Периодически освобождаем event loop для обработки других событий
+        if processed_count % 50 == 0:
+            await asyncio.sleep(0)
+            logger.debug(f"Утренняя рассылка: обработано {processed_count}/{len(users_to_notify)} пользователей")
+    
+    logger.info(f"Утренняя рассылка: завершено. Отправлено сообщений: {processed_count}")
 
 async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manager: UserDataManager, timetable_manager: TimetableManager):
     now_in_moscow = datetime.now(MOSCOW_TZ)
@@ -144,7 +166,11 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
     if not users_to_plan:
         return
 
+    logger.info(f"Планирование напоминаний: обработка {len(users_to_plan)} пользователей")
+    processed_count = 0
+
     for user_id, group_name, reminder_time in users_to_plan:
+        processed_count += 1
         try:
             # Пропускаем преподавателей
             user = await user_data_manager.get_full_user_info(user_id)
@@ -209,6 +235,13 @@ async def lesson_reminders_planner(scheduler: AsyncIOScheduler, user_data_manage
                 )
             except (ValueError, KeyError) as e:
                  logger.warning(f"Ошибка планирования напоминания в перерыве для user_id={user_id}: {e}")
+        
+        # Периодически освобождаем event loop для обработки других событий
+        if processed_count % 50 == 0:
+            await asyncio.sleep(0)
+            logger.debug(f"Планирование напоминаний: обработано {processed_count}/{len(users_to_plan)} пользователей")
+    
+    logger.info(f"Планирование напоминаний: завершено. Обработано {processed_count} пользователей")
 
 async def cancel_reminders_for_user(scheduler: AsyncIOScheduler, user_id: int):
     try:
@@ -531,8 +564,10 @@ async def send_schedule_diff_notifications(
         
         total_notifications_sent = 0
         groups_with_changes = set()  # Отслеживаем группы с изменениями
+        processed_groups_count = 0
         
         for group_name, user_ids in groups_to_users.items():
+            processed_groups_count += 1
             group_has_changes = False
             
             for check_date in dates_to_check:
@@ -570,6 +605,11 @@ async def send_schedule_diff_notifications(
             
             if not group_has_changes:
                 logger.debug(f"Нет изменений в расписании группы {group_name}")
+            
+            # Периодически освобождаем event loop для обработки других событий
+            if processed_groups_count % 10 == 0:
+                await asyncio.sleep(0)
+                logger.debug(f"Обработка diff: проверено {processed_groups_count}/{len(groups_to_users)} групп")
         
         logger.info(f"Отправлено {total_notifications_sent} дифф-уведомлений о изменениях в расписании")
         
@@ -660,18 +700,20 @@ async def handle_graduated_groups(user_data_manager: UserDataManager, timetable_
                     + (f"\n... и еще {len(available_groups) - 10} групп" if len(available_groups) > 10 else "")
                 )
                 
-                # Отправляем уведомление
-                await bot.send_message(
-                    chat_id=user_id,
-                    text=message_text,
-                    parse_mode="HTML"
-                )
+                # Используем фоновую задачу для отправки уведомлений
+                send_message_task.send(user_id, message_text)
+                TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
                 
                 # Очищаем группу пользователя
                 await user_data_manager.set_user_group(user_id, None)
                 
                 notified_count += 1
-                logger.info(f"✅ Уведомлен пользователь {user_id} о выпуске группы {old_group}")
+                logger.info(f"✅ Запланировано уведомление пользователя {user_id} о выпуске группы {old_group}")
+                
+                # Периодически освобождаем event loop
+                if notified_count % 50 == 0:
+                    await asyncio.sleep(0)
+                    logger.debug(f"Обработка выпускных групп: обработано {notified_count}/{len(affected_users)} пользователей")
                 
             except Exception as e:
                 logger.error(f"❌ Ошибка уведомления пользователя {user_id}: {e}")

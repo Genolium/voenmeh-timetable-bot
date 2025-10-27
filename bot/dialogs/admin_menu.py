@@ -949,6 +949,7 @@ async def on_spring_semester_input(message: Message, widget: TextInput, manager:
 
 # --- Сегментированная рассылка с шаблонами ---
 async def build_segment_users(user_data_manager: UserDataManager, group_prefix: str | None, days_active: int | None):
+    """Строит список пользователей для сегментированной рассылки с оптимизацией."""
     group_prefix_up = (group_prefix or "").upper().strip()
     all_ids = await user_data_manager.get_all_user_ids()
     selected_ids: list[int] = []
@@ -956,7 +957,10 @@ async def build_segment_users(user_data_manager: UserDataManager, group_prefix: 
     threshold = None
     if days_active and days_active > 0:
         threshold = dt.now(MOSCOW_TZ).replace(tzinfo=None) - timedelta(days=days_active)
+    
+    processed_count = 0
     for uid in all_ids:
+        processed_count += 1
         info = await user_data_manager.get_full_user_info(uid)
         if not info:
             continue
@@ -965,6 +969,11 @@ async def build_segment_users(user_data_manager: UserDataManager, group_prefix: 
         if threshold and (not info.last_active_date or info.last_active_date < threshold):
             continue
         selected_ids.append(uid)
+        
+        # Периодически освобождаем event loop для обработки других событий
+        if processed_count % 100 == 0:
+            await asyncio.sleep(0)
+    
     return selected_ids
 
 def render_template(template_text: str, user_info) -> str:
@@ -1041,29 +1050,45 @@ async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manag
     message_type = manager.dialog_data.get('segment_message_type', 'text')
     user_ids = manager.dialog_data.get('segment_selected_ids', [])
     await callback.answer("🚀 Рассылка по сегменту поставлена в очередь...")
-    count = 0
     
-    if message_type == 'text':
-        template = manager.dialog_data.get('segment_template', "")
-        for uid in user_ids:
-            info = await udm.get_full_user_info(uid)
-            if not info:
-                continue
-            text = render_template(template, info)
-            send_message_task.send(uid, text)
-            TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
-            count += 1
-    else:  # media
-        from_chat_id = manager.dialog_data.get('segment_message_chat_id')
-        message_id = manager.dialog_data.get('segment_message_id')
-        if from_chat_id and message_id:
+    # Запускаем постановку задач в фоне, чтобы не блокировать event loop
+    async def _process_segment_broadcast():
+        count = 0
+        
+        if message_type == 'text':
+            template = manager.dialog_data.get('segment_template', "")
             for uid in user_ids:
-                copy_message_task.send(uid, from_chat_id, message_id)
-                TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc()
+                info = await udm.get_full_user_info(uid)
+                if not info:
+                    continue
+                text = render_template(template, info)
+                send_message_task.send(uid, text)
+                TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
                 count += 1
+                
+                # Периодически уступаем управление event loop
+                if count % 50 == 0:
+                    await asyncio.sleep(0)
+        else:  # media
+            from_chat_id = manager.dialog_data.get('segment_message_chat_id')
+            message_id = manager.dialog_data.get('segment_message_id')
+            if from_chat_id and message_id:
+                for uid in user_ids:
+                    copy_message_task.send(uid, from_chat_id, message_id)
+                    TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc()
+                    count += 1
+                    
+                    # Периодически уступаем управление event loop
+                    if count % 50 == 0:
+                        await asyncio.sleep(0)
+        
+        message_type_text = "текстовых" if message_type == 'text' else "медиа"
+        await bot.send_message(admin_id, f"✅ Отправка {message_type_text} сообщений по сегменту запущена. Поставлено задач: {count}")
     
-    message_type_text = "текстовых" if message_type == 'text' else "медиа"
-    await bot.send_message(admin_id, f"✅ Отправка {message_type_text} сообщений по сегменту запущена. Поставлено задач: {count}")
+    # Запускаем в фоне
+    asyncio.create_task(_process_segment_broadcast())
+    
+    # Сразу возвращаемся в меню
     await manager.switch_to(Admin.menu)
 
 async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
@@ -1144,35 +1169,55 @@ async def on_broadcast_received(*args, **kwargs):
         all_users = await user_data_manager.get_all_user_ids()
         await message.reply("🚀 Рассылка поставлена в очередь...")
 
-        sent_count = 0
-        for user_id in all_users:
-            user_info = await user_data_manager.get_full_user_info(user_id)
-            if not user_info:
-                continue
-            text = render_template(template, user_info)
-            send_message_task.send(user_id, text)
-            TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
-            sent_count += 1
-
-        await bot.send_message(admin_id, f"✅ Рассылка завершена. Поставлено задач: {sent_count}")
+        # Запускаем постановку задач в фоне, чтобы не блокировать event loop
+        async def _process_broadcast():
+            sent_count = 0
+            for user_id in all_users:
+                user_info = await user_data_manager.get_full_user_info(user_id)
+                if not user_info:
+                    continue
+                text = render_template(template, user_info)
+                send_message_task.send(user_id, text)
+                TASKS_SENT_TO_QUEUE.labels(actor_name='send_message_task').inc()
+                sent_count += 1
+                
+                # Периодически уступаем управление event loop
+                if sent_count % 50 == 0:
+                    await asyncio.sleep(0)
+            
+            await bot.send_message(admin_id, f"✅ Рассылка завершена. Поставлено задач: {sent_count}")
+        
+        # Запускаем в фоне
+        asyncio.create_task(_process_broadcast())
+        
+        # Сразу возвращаемся в меню
+        await manager.switch_to(Admin.menu)
     else:
         # Обработка медиа: Ставим задачи на копирование сообщения всем пользователям
-        try:
-            all_users = await user_data_manager.get_all_user_ids()
-            await message.reply(f"🚀 Начинаю постановку задач на медиа-рассылку для {len(all_users)} пользователей...")
+        all_users = await user_data_manager.get_all_user_ids()
+        await message.reply(f"🚀 Начинаю постановку задач на медиа-рассылку для {len(all_users)} пользователей...")
 
-            count = 0
-            for user_id in all_users:
-                copy_message_task.send(user_id, message.chat.id, message.message_id)
-                TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc()
-                count += 1
+        # Запускаем постановку задач в фоне, чтобы не блокировать event loop
+        async def _process_media_broadcast():
+            try:
+                count = 0
+                for user_id in all_users:
+                    copy_message_task.send(user_id, message.chat.id, message.message_id)
+                    TASKS_SENT_TO_QUEUE.labels(actor_name='copy_message_task').inc()
+                    count += 1
+                    
+                    # Периодически уступаем управление event loop
+                    if count % 50 == 0:
+                        await asyncio.sleep(0)
 
-            await bot.send_message(admin_id, f"✅ Медиа-рассылка завершена! Поставлено задач: {count}")
-        except Exception as e:
-            await bot.send_message(admin_id, f"❌ Ошибка при медиа-рассылке: {e}")
-            # Assuming ERRORS_TOTAL is defined elsewhere or needs to be imported
-            # ERRORS_TOTAL.labels(source='admin_broadcast').inc()
+                await bot.send_message(admin_id, f"✅ Медиа-рассылка завершена! Поставлено задач: {count}")
+            except Exception as e:
+                await bot.send_message(admin_id, f"❌ Ошибка при медиа-рассылке: {e}")
 
+        # Запускаем в фоне
+        asyncio.create_task(_process_media_broadcast())
+        
+        # Сразу возвращаемся в меню
         await manager.switch_to(Admin.menu)
 
 async def on_user_id_input(message: Message, widget: TextInput, manager: DialogManager, data: str):

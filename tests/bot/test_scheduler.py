@@ -8,7 +8,7 @@ from bot.scheduler import (
     cancel_reminders_for_user, plan_reminders_for_user,
     monitor_schedule_changes, backup_current_schedule, collect_db_metrics,
     cleanup_image_cache, setup_scheduler, print_progress_bar,
-    auto_backup, handle_graduated_groups
+    auto_backup, handle_graduated_groups, send_schedule_diff_notifications
 )
 from core.config import MOSCOW_TZ
 

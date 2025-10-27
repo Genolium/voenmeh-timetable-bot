@@ -233,15 +233,40 @@ class TestAdminMenuHandlers:
 
     @pytest.mark.asyncio
     async def test_on_broadcast_received_success(self, mock_message, mock_manager):
-        """Тест успешной обработки рассылки."""
-        mock_message.content_type = "text"
+        """Тест успешной обработки текстовой рассылки.
+        
+        Проверяет, что:
+        1. Рассылка запускается в фоне (через asyncio.create_task)
+        2. Бот сразу возвращается в меню (не блокирует event loop)
+        3. Задачи ставятся в очередь Dramatiq
+        """
+        from bot.dialogs.states import Admin
+        
+        mock_message.content_type = ContentType.TEXT
         mock_message.text = "Test broadcast message"
-        mock_message.reply = AsyncMock()  # Добавляем мок для reply
+        mock_message.reply = AsyncMock()
+        
+        # Мокаем user_data_manager
+        mock_manager.middleware_data["user_data_manager"].get_all_user_ids = AsyncMock(return_value=[111, 222, 333])
+        mock_manager.middleware_data["user_data_manager"].get_full_user_info = AsyncMock(return_value=MagicMock(user_id=111, username="test", group="TEST"))
+        
+        # Мокаем bot
+        mock_manager.middleware_data["bot"].send_message = AsyncMock()
 
-        with patch('bot.dialogs.admin_menu.copy_message_task') as mock_task:
-            await on_broadcast_received(mock_message, mock_manager)
+        with patch('bot.dialogs.admin_menu.send_message_task') as mock_task:
+            mock_task.send = MagicMock()
+            
+            with patch('asyncio.create_task') as mock_create_task:
+                await on_broadcast_received(mock_message, mock_manager)
 
-            mock_message.reply.assert_called_once_with("🚀 Рассылка поставлена в очередь...")
+                # Проверяем, что рассылка поставлена в очередь
+                mock_message.reply.assert_called_once_with("🚀 Рассылка поставлена в очередь...")
+                
+                # ВАЖНО: Проверяем, что рассылка запускается в фоне (не блокирует event loop)
+                mock_create_task.assert_called_once()
+                
+                # ВАЖНО: Проверяем, что бот СРАЗУ возвращается в меню (до завершения рассылки)
+                mock_manager.switch_to.assert_called_once_with(Admin.menu)
 
     @pytest.mark.asyncio
     async def test_on_segment_criteria_input(self, mock_message, mock_manager):
