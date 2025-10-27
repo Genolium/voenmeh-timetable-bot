@@ -54,7 +54,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
     (python -m playwright install-deps chromium || true) && \
     (python -m playwright install --with-deps chromium || python -m playwright install chromium)
 
-# Теперь копируем ВСЕ остальные файлы проекта 
+# Теперь копируем ВСЕ остальные файлы проекта
 COPY . .
 
 # Команда для запуска приложения

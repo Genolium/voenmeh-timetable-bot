@@ -9,15 +9,14 @@ import os
 import subprocess
 import time
 from typing import Optional
+
 import aiohttp
 from redis.asyncio import Redis
 
 # Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 class RabbitMQMonitor:
     def __init__(self):
@@ -27,7 +26,7 @@ class RabbitMQMonitor:
         self.check_interval = 120  # секунды
         self.max_failures = 5
         self.failure_count = 0
-        
+
     def _extract_credentials(self):
         """Extract management credentials from DRAMATIQ_BROKER_URL or env overrides."""
         # Allow explicit overrides
@@ -38,6 +37,7 @@ class RabbitMQMonitor:
 
         try:
             from urllib.parse import urlparse
+
             parsed = urlparse(self.rabbitmq_url)
             if parsed.username and parsed.password:
                 return parsed.username, parsed.password
@@ -51,12 +51,10 @@ class RabbitMQMonitor:
         """Проверяет состояние RabbitMQ через Management API"""
         try:
             username, password = self._extract_credentials()
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{self.management_url}/api/overview",
-                    auth=aiohttp.BasicAuth(username, password),
-                    timeout=10
+                    f"{self.management_url}/api/overview", auth=aiohttp.BasicAuth(username, password), timeout=10
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -68,7 +66,7 @@ class RabbitMQMonitor:
         except Exception as e:
             logger.error(f"Ошибка при проверке RabbitMQ: {e}")
             return False
-    
+
     async def check_redis_health(self) -> bool:
         """Проверяет состояние Redis"""
         try:
@@ -80,18 +78,13 @@ class RabbitMQMonitor:
         except Exception as e:
             logger.error(f"Ошибка при проверке Redis: {e}")
             return False
-    
+
     async def restart_rabbitmq(self) -> bool:
         """Перезапускает RabbitMQ контейнер"""
         try:
             logger.info("Перезапуск RabbitMQ контейнера...")
-            result = subprocess.run(
-                ["docker-compose", "restart", "rabbitmq"],
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            
+            result = subprocess.run(["docker-compose", "restart", "rabbitmq"], capture_output=True, text=True, timeout=60)
+
             if result.returncode == 0:
                 logger.info("RabbitMQ успешно перезапущен")
                 return True
@@ -101,7 +94,7 @@ class RabbitMQMonitor:
         except Exception as e:
             logger.error(f"Исключение при перезапуске RabbitMQ: {e}")
             return False
-    
+
     async def wait_for_rabbitmq_startup(self, timeout: int = 120) -> bool:
         """Ждет запуска RabbitMQ после перезапуска"""
         logger.info(f"Ожидание запуска RabbitMQ (таймаут: {timeout}с)...")
@@ -121,13 +114,13 @@ class RabbitMQMonitor:
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{self.management_url}/api/connections",
-                    auth=aiohttp.BasicAuth(username, password),
-                    timeout=10
+                    f"{self.management_url}/api/connections", auth=aiohttp.BasicAuth(username, password), timeout=10
                 ) as response:
                     if response.status == 200:
                         connections = await response.json()
-                        active_connections = len([c for c in connections if 'dramatiq' in c.get('client_properties', {}).get('product', '')])
+                        active_connections = len(
+                            [c for c in connections if "dramatiq" in c.get("client_properties", {}).get("product", "")]
+                        )
                         logger.info(f"Активных dramatiq соединений: {active_connections}")
                         return active_connections > 0
                     else:
@@ -136,27 +129,27 @@ class RabbitMQMonitor:
         except Exception as e:
             logger.error(f"Ошибка при проверке worker: {e}")
             return False
-        
+
         logger.error("Таймаут ожидания запуска RabbitMQ")
         return False
-    
+
     async def monitor_loop(self):
         """Основной цикл мониторинга"""
         logger.info("Запуск мониторинга RabbitMQ...")
-        
+
         while True:
             try:
                 # Проверяем здоровье RabbitMQ
                 rabbitmq_healthy = await self.check_rabbitmq_health()
                 redis_healthy = await self.check_redis_health()
-                
+
                 if not rabbitmq_healthy:
                     self.failure_count += 1
                     logger.warning(f"RabbitMQ нездоров (попытка {self.failure_count}/{self.max_failures})")
-                    
+
                     if self.failure_count >= self.max_failures:
                         logger.error("Достигнуто максимальное количество неудач, перезапуск RabbitMQ")
-                        
+
                         if await self.restart_rabbitmq():
                             # Ждем запуска
                             if await self.wait_for_rabbitmq_startup():
@@ -171,18 +164,20 @@ class RabbitMQMonitor:
                     if self.failure_count > 0:
                         logger.info("RabbitMQ восстановлен, сброс счетчика неудач")
                         self.failure_count = 0
-                
+
                 # Ждем следующей проверки
                 await asyncio.sleep(self.check_interval)
-                
+
             except Exception as e:
                 logger.error(f"Ошибка в цикле мониторинга: {e}")
                 await asyncio.sleep(self.check_interval)
+
 
 async def main():
     """Точка входа"""
     monitor = RabbitMQMonitor()
     await monitor.monitor_loop()
+
 
 if __name__ == "__main__":
     try:

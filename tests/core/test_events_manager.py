@@ -1,6 +1,7 @@
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from core.db.models import Base, Event
@@ -14,16 +15,16 @@ async def async_session():
         "sqlite+aiosqlite:///:memory:",
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
-        echo=False
+        echo=False,
     )
-    
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    
+
     yield session_factory
-    
+
     await engine.dispose()
 
 
@@ -43,7 +44,7 @@ async def sample_event(async_session):
             start_at=datetime(2025, 12, 31, 23, 59, 0),
             location="Тестовая локация",
             link="https://example.com",
-            is_published=True
+            is_published=True,
         )
         session.add(event)
         await session.commit()
@@ -55,15 +56,11 @@ class TestEventsManager:
     """Тесты для EventsManager"""
 
     # --- Тесты категорий ---
-    
+
     async def test_init(self, async_session):
         """Тест инициализации EventsManager"""
         manager = EventsManager(async_session)
         assert manager.session_factory == async_session
-
-
-
-
 
     # --- Тесты событий ---
 
@@ -78,7 +75,7 @@ class TestEventsManager:
         event_id = await events_manager.create_event(title="Тестовое событие")
         assert isinstance(event_id, int)
         assert event_id > 0
-        
+
         events, count = await events_manager.list_events()
         assert count == 1
         assert events[0].title == "Тестовое событие"
@@ -96,9 +93,9 @@ class TestEventsManager:
             location="Тестовая локация",
             link="https://example.com",
             image_file_id="test_file_id",
-            is_published=False
+            is_published=False,
         )
-        
+
         event = await events_manager.get_event(event_id)
         assert event.title == "Полное событие"
         assert event.description == "Полное описание"
@@ -114,9 +111,9 @@ class TestEventsManager:
         event_id = await events_manager.create_event(
             title="  Событие с пробелами  ",
             location="  Локация с пробелами  ",
-            link="  https://example.com  "
+            link="  https://example.com  ",
         )
-        
+
         event = await events_manager.get_event(event_id)
         assert event.title == "Событие с пробелами"
         assert event.location == "Локация с пробелами"
@@ -126,7 +123,7 @@ class TestEventsManager:
         """Тест валидации пустого заголовка"""
         with pytest.raises(ValueError, match="Заголовок не может быть пустым"):
             await events_manager.create_event(title="")
-        
+
         with pytest.raises(ValueError, match="Заголовок не может быть пустым"):
             await events_manager.create_event(title="   ")
 
@@ -166,35 +163,31 @@ class TestEventsManager:
         event = await events_manager.get_event(99999)
         assert event is None
 
-
-
     async def test_list_events_published_filter(self, events_manager):
         """Тест фильтрации опубликованных событий"""
         await events_manager.create_event(title="Опубликованное", is_published=True)
         await events_manager.create_event(title="Неопубликованное", is_published=False)
-        
+
         published_events, published_count = await events_manager.list_events(only_published=True)
         unpublished_events, unpublished_count = await events_manager.list_events(only_published=False)
         all_events, all_count = await events_manager.list_events(only_published=None)
-        
+
         assert published_count == 1
         assert unpublished_count == 1
         assert all_count == 2
         assert published_events[0].title == "Опубликованное"
         assert unpublished_events[0].title == "Неопубликованное"
 
-
-
     async def test_list_events_pagination(self, events_manager):
         """Тест пагинации событий"""
         # Создаем несколько событий
         for i in range(5):
             await events_manager.create_event(title=f"Событие {i}")
-        
+
         # Тестируем пагинацию
         page1_events, total_count = await events_manager.list_events(limit=2, offset=0)
         page2_events, _ = await events_manager.list_events(limit=2, offset=2)
-        
+
         assert total_count == 5
         assert len(page1_events) == 2
         assert len(page2_events) == 2
@@ -206,13 +199,13 @@ class TestEventsManager:
         today_morning = datetime(2025, 6, 15, 9, 0, 0)
         yesterday = datetime(2025, 6, 14, 12, 0, 0)
         tomorrow = datetime(2025, 6, 16, 12, 0, 0)
-        
+
         await events_manager.create_event(title="Сегодня утром", start_at=today_morning)
         await events_manager.create_event(title="Вчера", start_at=yesterday)
         await events_manager.create_event(title="Завтра", start_at=tomorrow)
-        
-        today_events, count = await events_manager.list_events(time_filter='today', now=now)
-        
+
+        today_events, count = await events_manager.list_events(time_filter="today", now=now)
+
         assert count == 1
         assert today_events[0].title == "Сегодня утром"
 
@@ -224,14 +217,14 @@ class TestEventsManager:
         friday_this_week = datetime(2025, 6, 13, 12, 0, 0)  # Friday
         last_week = datetime(2025, 6, 1, 12, 0, 0)  # Previous Sunday
         next_week = datetime(2025, 6, 16, 12, 0, 0)  # Next Monday
-        
+
         await events_manager.create_event(title="Понедельник этой недели", start_at=monday_this_week)
         await events_manager.create_event(title="Пятница этой недели", start_at=friday_this_week)
         await events_manager.create_event(title="Прошлая неделя", start_at=last_week)
         await events_manager.create_event(title="Следующая неделя", start_at=next_week)
-        
-        this_week_events, count = await events_manager.list_events(time_filter='this_week', now=now)
-        
+
+        this_week_events, count = await events_manager.list_events(time_filter="this_week", now=now)
+
         assert count == 2
         titles = [event.title for event in this_week_events]
         assert "Понедельник этой недели" in titles
@@ -242,13 +235,13 @@ class TestEventsManager:
         now = datetime(2025, 6, 15, 12, 0, 0)
         past_event = datetime(2025, 6, 14, 12, 0, 0)
         future_event = datetime(2025, 6, 16, 12, 0, 0)
-        
+
         await events_manager.create_event(title="Прошедшее событие", start_at=past_event)
         await events_manager.create_event(title="Будущее событие", start_at=future_event)
         await events_manager.create_event(title="Событие без даты")  # start_at=None
-        
+
         future_events, count = await events_manager.list_events(from_now_only=True, now=now)
-        
+
         assert count == 2  # Будущее событие + событие без даты
         titles = [event.title for event in future_events]
         assert "Будущее событие" in titles
@@ -258,7 +251,7 @@ class TestEventsManager:
         """Тест обновления события"""
         result = await events_manager.update_event(sample_event.id, title="Новый заголовок")
         assert result is True
-        
+
         updated_event = await events_manager.get_event(sample_event.id)
         assert updated_event.title == "Новый заголовок"
 
@@ -271,6 +264,6 @@ class TestEventsManager:
         """Тест удаления события"""
         result = await events_manager.delete_event(sample_event.id)
         assert result is True
-        
+
         deleted_event = await events_manager.get_event(sample_event.id)
         assert deleted_event is None

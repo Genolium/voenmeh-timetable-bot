@@ -1,20 +1,25 @@
 """
 Модуль для генерации автоматических отчётов по статистике для администраторов.
 """
+
+import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Any
-import json
+from typing import Any, Dict, List, Optional
 
 from aiogram import Bot
 from aiogram.types import InputFile
 
 from core.config import MOSCOW_TZ
-from core.user_data import UserDataManager
 from core.metrics import (
-    USERS_TOTAL, SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE,
-    ERRORS_TOTAL, RETRIES_TOTAL, LAST_SCHEDULE_UPDATE_TS
+    ERRORS_TOTAL,
+    LAST_SCHEDULE_UPDATE_TS,
+    RETRIES_TOTAL,
+    SUBSCRIBED_USERS,
+    TASKS_SENT_TO_QUEUE,
+    USERS_TOTAL,
 )
+from core.user_data import UserDataManager
 
 logger = logging.getLogger(__name__)
 
@@ -35,19 +40,37 @@ class AdminReportsGenerator:
         """
         try:
             # Получаем статистику из базы данных
-            total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist = await self.user_data_manager.gather_stats()
+            (
+                total_users,
+                dau,
+                wau,
+                mau,
+                subscribed_total,
+                unsubscribed_total,
+                subs_breakdown,
+                top_groups,
+                group_dist,
+            ) = await self.user_data_manager.gather_stats()
 
             # Получаем метрики из Prometheus (мокаем для примера)
             prometheus_metrics = await self._get_prometheus_metrics()
 
             # Текущая дата
-            today = datetime.now(MOSCOW_TZ).strftime('%d.%m.%Y')
+            today = datetime.now(MOSCOW_TZ).strftime("%d.%m.%Y")
 
             # Формируем отчёт
             report = self._format_daily_report(
-                today, total_users, dau, wau, mau, subscribed_total,
-                unsubscribed_total, subs_breakdown, top_groups,
-                group_dist, prometheus_metrics
+                today,
+                total_users,
+                dau,
+                wau,
+                mau,
+                subscribed_total,
+                unsubscribed_total,
+                subs_breakdown,
+                top_groups,
+                group_dist,
+                prometheus_metrics,
             )
 
             return report
@@ -70,15 +93,29 @@ class AdminReportsGenerator:
             active_users_week = await self.user_data_manager.get_active_users_by_period(7)
 
             # Получаем общую статистику
-            total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist = await self.user_data_manager.gather_stats()
+            (
+                total_users,
+                dau,
+                wau,
+                mau,
+                subscribed_total,
+                unsubscribed_total,
+                subs_breakdown,
+                top_groups,
+                group_dist,
+            ) = await self.user_data_manager.gather_stats()
 
             # Получаем метрики из Prometheus за неделю
             prometheus_metrics = await self._get_prometheus_metrics_weekly()
 
             # Формируем отчёт
             report = self._format_weekly_report(
-                new_users_week, active_users_week, total_users,
-                subscribed_total, top_groups, prometheus_metrics
+                new_users_week,
+                active_users_week,
+                total_users,
+                subscribed_total,
+                top_groups,
+                prometheus_metrics,
             )
 
             return report
@@ -101,15 +138,29 @@ class AdminReportsGenerator:
             active_users_month = await self.user_data_manager.get_active_users_by_period(30)
 
             # Получаем общую статистику
-            total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist = await self.user_data_manager.gather_stats()
+            (
+                total_users,
+                dau,
+                wau,
+                mau,
+                subscribed_total,
+                unsubscribed_total,
+                subs_breakdown,
+                top_groups,
+                group_dist,
+            ) = await self.user_data_manager.gather_stats()
 
             # Получаем метрики из Prometheus за месяц
             prometheus_metrics = await self._get_prometheus_metrics_monthly()
 
             # Формируем отчёт
             report = self._format_monthly_report(
-                new_users_month, active_users_month, total_users,
-                subscribed_total, top_groups, prometheus_metrics
+                new_users_month,
+                active_users_month,
+                total_users,
+                subscribed_total,
+                top_groups,
+                prometheus_metrics,
             )
 
             return report
@@ -127,7 +178,7 @@ class AdminReportsGenerator:
             "errors_count": 2,
             "retries_count": 5,
             "schedule_updates": 3,
-            "last_update": datetime.now(MOSCOW_TZ).strftime('%d.%m.%Y %H:%M')
+            "last_update": datetime.now(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M"),
         }
 
     async def _get_prometheus_metrics_weekly(self) -> Dict[str, Any]:
@@ -137,7 +188,7 @@ class AdminReportsGenerator:
             "errors_total": 14,
             "retries_total": 35,
             "schedule_updates": 21,
-            "peak_activity": "Понедельник 08:00-09:00"
+            "peak_activity": "Понедельник 08:00-09:00",
         }
 
     async def _get_prometheus_metrics_monthly(self) -> Dict[str, Any]:
@@ -148,12 +199,23 @@ class AdminReportsGenerator:
             "retries_total": 140,
             "schedule_updates": 90,
             "avg_daily_users": 1250,
-            "top_features": ["schedule_view", "settings", "feedback"]
+            "top_features": ["schedule_view", "settings", "feedback"],
         }
 
-    def _format_daily_report(self, today: str, total_users: int, dau: int, wau: int, mau: int,
-                           subscribed_total: int, unsubscribed_total: int, subs_breakdown: Dict[str, int],
-                           top_groups: List[tuple], group_dist: Dict[str, int], prometheus_metrics: Dict[str, Any]) -> str:
+    def _format_daily_report(
+        self,
+        today: str,
+        total_users: int,
+        dau: int,
+        wau: int,
+        mau: int,
+        subscribed_total: int,
+        unsubscribed_total: int,
+        subs_breakdown: Dict[str, int],
+        top_groups: List[tuple],
+        group_dist: Dict[str, int],
+        prometheus_metrics: Dict[str, Any],
+    ) -> str:
         """Форматирует ежедневный отчёт."""
 
         top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
@@ -202,8 +264,15 @@ class AdminReportsGenerator:
 """
         return report
 
-    def _format_weekly_report(self, new_users_week: int, active_users_week: int, total_users: int,
-                            subscribed_total: int, top_groups: List[tuple], prometheus_metrics: Dict[str, Any]) -> str:
+    def _format_weekly_report(
+        self,
+        new_users_week: int,
+        active_users_week: int,
+        total_users: int,
+        subscribed_total: int,
+        top_groups: List[tuple],
+        prometheus_metrics: Dict[str, Any],
+    ) -> str:
         """Форматирует еженедельный отчёт."""
 
         top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
@@ -235,8 +304,15 @@ class AdminReportsGenerator:
 """
         return report
 
-    def _format_monthly_report(self, new_users_month: int, active_users_month: int, total_users: int,
-                             subscribed_total: int, top_groups: List[tuple], prometheus_metrics: Dict[str, Any]) -> str:
+    def _format_monthly_report(
+        self,
+        new_users_month: int,
+        active_users_month: int,
+        total_users: int,
+        subscribed_total: int,
+        top_groups: List[tuple],
+        prometheus_metrics: Dict[str, Any],
+    ) -> str:
         """Форматирует ежемесячный отчёт."""
 
         top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
@@ -284,11 +360,7 @@ async def send_daily_reports(bot: Bot, user_data_manager: UserDataManager) -> No
         # Отправляем отчёт каждому администратору
         for admin_id in admin_ids:
             try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=report,
-                    parse_mode="HTML"
-                )
+                await bot.send_message(chat_id=admin_id, text=report, parse_mode="HTML")
                 logger.info(f"Daily report sent to admin {admin_id}")
             except Exception as e:
                 logger.error(f"Failed to send daily report to admin {admin_id}: {e}")
@@ -309,11 +381,7 @@ async def send_weekly_reports(bot: Bot, user_data_manager: UserDataManager) -> N
         # Отправляем отчёт каждому администратору
         for admin_id in admin_ids:
             try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=report,
-                    parse_mode="HTML"
-                )
+                await bot.send_message(chat_id=admin_id, text=report, parse_mode="HTML")
                 logger.info(f"Weekly report sent to admin {admin_id}")
             except Exception as e:
                 logger.error(f"Failed to send weekly report to admin {admin_id}: {e}")
@@ -334,11 +402,7 @@ async def send_monthly_reports(bot: Bot, user_data_manager: UserDataManager) -> 
         # Отправляем отчёт каждому администратору
         for admin_id in admin_ids:
             try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text=report,
-                    parse_mode="HTML"
-                )
+                await bot.send_message(chat_id=admin_id, text=report, parse_mode="HTML")
                 logger.info(f"Monthly report sent to admin {admin_id}")
             except Exception as e:
                 logger.error(f"Failed to send monthly report to admin {admin_id}: {e}")

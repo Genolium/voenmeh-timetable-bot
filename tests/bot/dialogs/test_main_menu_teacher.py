@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from bot.dialogs.main_menu import on_teacher_entered
 
@@ -69,6 +70,7 @@ async def test_on_group_entered_success():
 
     # Имитируем успешный поиск группы
     from bot.dialogs.main_menu import on_group_entered
+
     await on_group_entered(message, None, manager)
 
     # Просто проверяем, что функция выполнилась без ошибок
@@ -94,8 +96,8 @@ async def test_on_group_entered_group_not_found():
     }
 
     from bot.dialogs.main_menu import on_group_entered
+
     await on_group_entered(message, None, manager)
 
     # Просто проверяем, что функция выполнилась без ошибок
     assert True
-

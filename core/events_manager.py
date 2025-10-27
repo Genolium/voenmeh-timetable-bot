@@ -1,13 +1,13 @@
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
-import logging
 
-from sqlalchemy import select, update, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from core.db.models import Event
-from core.metrics import USER_ACTIONS, FEATURE_POPULARITY
+from core.metrics import FEATURE_POPULARITY, USER_ACTIONS
 
 
 class EventsManager:
@@ -29,7 +29,6 @@ class EventsManager:
         now: Optional[datetime] = None,
         time_filter: Optional[str] = None,  # 'today' | 'this_week' | None (all)
         from_now_only: bool = False,
-
     ) -> Tuple[List[Event], int]:
         async with self.session_factory() as session:
             # Временно отключаем загрузку категории, пока миграция не применена
@@ -39,28 +38,34 @@ class EventsManager:
             elif only_published is False:
                 base = base.where(Event.is_published == False)
 
-
-            
             # Фильтр по времени
             if time_filter:
                 ref = now or datetime.utcnow()
                 # Конвертируем datetime с timezone в naive datetime для PostgreSQL
-                if hasattr(ref, 'tzinfo') and ref.tzinfo is not None:
+                if hasattr(ref, "tzinfo") and ref.tzinfo is not None:
                     ref = ref.replace(tzinfo=None)
 
-                if time_filter == 'today':
+                if time_filter == "today":
                     start_day = ref.replace(hour=0, minute=0, second=0, microsecond=0)
                     end_day = start_day + timedelta(days=1)
-                    base = base.where(Event.start_at.is_not(None)).where(Event.start_at >= start_day).where(Event.start_at < end_day)
-                elif time_filter == 'this_week':
+                    base = (
+                        base.where(Event.start_at.is_not(None))
+                        .where(Event.start_at >= start_day)
+                        .where(Event.start_at < end_day)
+                    )
+                elif time_filter == "this_week":
                     weekday = ref.weekday()  # Monday=0
                     start_week = ref.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=weekday)
                     end_week = start_week + timedelta(days=7)
-                    base = base.where(Event.start_at.is_not(None)).where(Event.start_at >= start_week).where(Event.start_at < end_week)
+                    base = (
+                        base.where(Event.start_at.is_not(None))
+                        .where(Event.start_at >= start_week)
+                        .where(Event.start_at < end_week)
+                    )
             elif from_now_only:
                 ref = now or datetime.utcnow()
                 # Конвертируем datetime с timezone в naive datetime для PostgreSQL
-                if hasattr(ref, 'tzinfo') and ref.tzinfo is not None:
+                if hasattr(ref, "tzinfo") and ref.tzinfo is not None:
                     ref = ref.replace(tzinfo=None)
                 # Сравниваем только по дате, игнорируя время
                 # Показываем события без даты или с датой >= сегодня (00:00:00)
@@ -125,21 +130,28 @@ class EventsManager:
             await session.refresh(event)
 
             # Логируем создание события
-            logger.info("Event created", extra={
-                "event_id": event.id,
-                "title": title,
-                "is_published": is_published,
-                "has_image": bool(image_file_id),
-                "has_location": bool(location),
-                "has_link": bool(link),
-                "admin_id": str(admin_id) if admin_id else "unknown",
-                "action": "create_event",
-                "feature": "events"
-            })
+            logger.info(
+                "Event created",
+                extra={
+                    "event_id": event.id,
+                    "title": title,
+                    "is_published": is_published,
+                    "has_image": bool(image_file_id),
+                    "has_location": bool(location),
+                    "has_link": bool(link),
+                    "admin_id": str(admin_id) if admin_id else "unknown",
+                    "action": "create_event",
+                    "feature": "events",
+                },
+            )
 
             # Обновляем метрики
             user_type = "admin" if admin_id else "unknown"
-            FEATURE_POPULARITY.labels(feature_name="events", user_type=user_type, day_of_week=datetime.now().strftime('%A').lower()).inc()
+            FEATURE_POPULARITY.labels(
+                feature_name="events",
+                user_type=user_type,
+                day_of_week=datetime.now().strftime("%A").lower(),
+            ).inc()
             USER_ACTIONS.labels(action="event_created", user_type=user_type, source="admin_panel").inc()
 
             return event.id
@@ -159,4 +171,3 @@ class EventsManager:
             await session.execute(stmt)
             await session.commit()
             return True
-

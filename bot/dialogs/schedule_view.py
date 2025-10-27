@@ -1,47 +1,54 @@
-from datetime import date, timedelta, datetime
+import asyncio
+import logging
 import os
-from aiogram.types import CallbackQuery, ContentType, FSInputFile, InputMediaPhoto, InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import date, datetime, timedelta
+
 from aiogram import Bot
-from aiogram_dialog import Dialog, Window, DialogManager, StartMode
-from aiogram_dialog.widgets.text import Format, Const
+from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo
 from aiogram_dialog.widgets.media import StaticMedia
-from bot.utils.image_compression import get_telegram_safe_image_path
+from aiogram_dialog.widgets.text import Const, Format
 
-from .states import Schedule, MainMenu, SettingsMenu, FindMenu
-from .constants import DialogDataKeys, WidgetIds
-from core.manager import TimetableManager
-from core.image_generator import generate_schedule_image
-from bot.text_formatters import (
-    format_schedule_text, format_teacher_schedule_text,
-    generate_dynamic_header, calculate_semester_week_number
-)
-from core.config import MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, MEDIA_PATH, SUBSCRIPTION_CHANNEL
-from core.metrics import SCHEDULE_GENERATION_TIME, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, GROUP_POPULARITY, USER_ACTIVITY_DAILY
-from core.image_cache_manager import ImageCacheManager
 from bot.tasks import generate_week_image_task, send_week_original_if_subscribed_task
-import logging
-import asyncio
+from bot.text_formatters import (
+    calculate_semester_week_number,
+    format_schedule_text,
+    format_teacher_schedule_text,
+    generate_dynamic_header,
+)
+from bot.utils.image_compression import get_telegram_safe_image_path
+from core.config import MEDIA_PATH, MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, SUBSCRIPTION_CHANNEL
+from core.image_cache_manager import ImageCacheManager
+from core.image_generator import generate_schedule_image
+from core.manager import TimetableManager
+from core.metrics import GROUP_POPULARITY, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME, USER_ACTIVITY_DAILY
+
+from .constants import DialogDataKeys, WidgetIds
+from .states import FindMenu, MainMenu, Schedule, SettingsMenu
+
 
 async def cleanup_old_cache():
     """Очищает ВСЕ картинки из кэша (файлы + Redis)."""
     try:
         # Получаем Redis клиент из middleware
         from core.config import get_redis_client
+
         redis_client = get_redis_client()
-        
+
         # Создаем cache manager для полной очистки
         from core.image_cache_manager import ImageCacheManager
+
         cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=24)
-        
+
         # Получаем статистику до очистки
         stats_before = await cache_manager.get_cache_stats()
-        
+
         # Очищаем файлы
         output_dir = MEDIA_PATH / "generated"
         deleted_files = 0
         deleted_size = 0
-        
+
         if output_dir.exists():
             for file_path in output_dir.glob("*.png"):
                 try:
@@ -52,17 +59,17 @@ async def cleanup_old_cache():
                     logging.info(f"Удален файл кэша: {file_path}")
                 except Exception as e:
                     logging.error(f"Ошибка при удалении файла {file_path}: {e}")
-        
+
         # Очищаем Redis кэш
         try:
             # Удаляем все ключи с префиксами кэша
             cache_data_pattern = f"{cache_manager.cache_data_prefix}*"
             cache_meta_pattern = f"{cache_manager.cache_metadata_prefix}*"
-            
+
             # Находим все ключи
             data_keys = await redis_client.keys(cache_data_pattern)
             meta_keys = await redis_client.keys(cache_meta_pattern)
-            
+
             # Удаляем их
             if data_keys:
                 await redis_client.delete(*data_keys)
@@ -70,37 +77,40 @@ async def cleanup_old_cache():
             if meta_keys:
                 await redis_client.delete(*meta_keys)
                 logging.info(f"Удалено {len(meta_keys)} ключей метаданных из Redis")
-                
+
         except Exception as e:
             logging.error(f"Ошибка при очистке Redis кэша: {e}")
-        
+
         # Получаем статистику после очистки
         stats_after = await cache_manager.get_cache_stats()
-        
+
         logging.info(f"Очистка кэша завершена: удалено {deleted_files} файлов, {deleted_size / (1024*1024):.2f} MB")
         logging.info(f"Redis статистика: до - {stats_before}, после - {stats_after}")
-        
+
     except Exception as e:
         logging.error(f"Ошибка при очистке кэша: {e}")
+
 
 async def get_cache_info():
     """Возвращает информацию о размере кэша (файлы + Redis)."""
     try:
         # Получаем Redis клиент
         from core.config import get_redis_client
+
         redis_client = get_redis_client()
-        
+
         # Создаем cache manager для получения полной статистики
         from core.image_cache_manager import ImageCacheManager
+
         cache_manager = ImageCacheManager(redis_client, cache_ttl_hours=24)
-        
+
         # Получаем полную статистику кэша
         cache_stats = await cache_manager.get_cache_stats()
-        
+
         # Получаем информацию о файлах
         output_dir = MEDIA_PATH / "generated"
         file_list = []
-        
+
         if output_dir.exists():
             for file_path in output_dir.glob("*.png"):
                 try:
@@ -108,7 +118,7 @@ async def get_cache_info():
                     file_list.append(f"{file_path.name} ({file_size / (1024*1024):.2f} MB)")
                 except Exception as e:
                     logging.error(f"Ошибка при получении информации о файле {file_path}: {e}")
-        
+
         # Формируем результат
         result = {
             "total_files": cache_stats.get("file_count", 0),
@@ -116,15 +126,16 @@ async def get_cache_info():
             "cache_dir": str(output_dir),
             "files": file_list,
             "redis_keys": cache_stats.get("redis_keys", 0),
-            "redis_size_mb": cache_stats.get("redis_size_mb", 0)
+            "redis_size_mb": cache_stats.get("redis_size_mb", 0),
         }
-        
+
         logging.info(f"Кэш содержит {result['total_files']} файлов, {result['redis_keys']} Redis ключей")
-        
+
         return result
     except Exception as e:
         logging.error(f"Ошибка при получении информации о кэше: {e}")
         return {"error": str(e)}
+
 
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
@@ -149,7 +160,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
             user_type = await user_data_manager.get_user_type(user_id) or "student"
         except Exception:
             pass
-    
+
     ctx.dialog_data["user_type"] = user_type
 
     # Получаем расписание на день: для преподавателя используем teacher-метод
@@ -183,8 +194,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
 
     # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
     schedule_text = (
-        format_teacher_schedule_text(day_info)
-        if user_type == "teacher" else format_schedule_text(day_info, week_number)
+        format_teacher_schedule_text(day_info) if user_type == "teacher" else format_schedule_text(day_info, week_number)
     )
 
     return {
@@ -194,14 +204,15 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
         "has_lessons": bool(day_info.get("lessons")),
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
-        "user_type_text": "" if user_type == "student" else "Преподаватель:"
+        "user_type_text": "" if user_type == "student" else "Преподаватель:",
     }
+
 
 async def on_full_week_image_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     # Защита от спама: проверяем, не нажимал ли пользователь кнопку недавно
     ctx = manager.current_context()
     user_id = callback.from_user.id
-    
+
     # Проверяем время последнего нажатия для этого пользователя
     last_click_key = f"last_week_click:{user_id}"
     try:
@@ -215,7 +226,7 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
         await manager_obj.redis.set(last_click_key, "1", ex=3)
     except Exception:
         pass
-    
+
     # Сохраняем user_id, запускаем генерацию и фиксируем состояние на Schedule.view
     ctx.dialog_data["user_id"] = user_id
     await get_week_image_data(manager)
@@ -228,14 +239,15 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
     except Exception:
         pass
 
+
 async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     bot = dialog_manager.middleware_data.get("bot")
     ctx = dialog_manager.current_context()
-    
+
     if DialogDataKeys.GROUP not in ctx.dialog_data:
         ctx.dialog_data[DialogDataKeys.GROUP] = dialog_manager.start_data.get(DialogDataKeys.GROUP)
-        
+
     if not ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
         ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
@@ -248,19 +260,19 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         USER_ACTIVITY_DAILY.labels(action_type="view_week", user_group=group.upper()).inc()
     except Exception:
         pass
-    
+
     week_info = await manager.get_academic_week_type(current_date)
     if not week_info:
         return {
             "week_name": "Неизвестно",
             "group": group,
             "start_date": "??.??",
-            "end_date": "??.??"
+            "end_date": "??.??",
         }
-    
+
     week_key, week_name_full = week_info
     week_name = week_name_full.split(" ")[0]
-    
+
     # Даты недели
     days_since_monday = current_date.weekday()
     monday_date = current_date - timedelta(days=days_since_monday)
@@ -270,34 +282,40 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
 
     # Используем унифицированный сервис изображений
     from core.image_service import ImageService
+
     cache_manager = ImageCacheManager(manager.redis, cache_ttl_hours=24)
     image_service = ImageService(cache_manager, bot)
-    
+
     # Получаем данные расписания
     if ctx.dialog_data.get("user_type") == "teacher":
         # Сбор недельного расписания преподавателя по индексам
-        week_schedule = { 
-            "Понедельник": [], "Вторник": [], "Среда": [], 
-            "Четверг": [], "Пятница": [], "Суббота": []
+        week_schedule = {
+            "Понедельник": [],
+            "Вторник": [],
+            "Среда": [],
+            "Четверг": [],
+            "Пятница": [],
+            "Суббота": [],
         }
         teacher_lessons = manager._teachers_index.get(group, [])
         for lesson in teacher_lessons:
             # Фильтруем по типу недели
-            lesson_week_code = lesson.get('week_code', '0')
-            is_every_week = lesson_week_code == '0'
-            is_odd_match = week_key == 'odd' and lesson_week_code == '1'
-            is_even_match = week_key == 'even' and lesson_week_code == '2'
+            lesson_week_code = lesson.get("week_code", "0")
+            is_every_week = lesson_week_code == "0"
+            is_odd_match = week_key == "odd" and lesson_week_code == "1"
+            is_even_match = week_key == "even" and lesson_week_code == "2"
             if is_every_week or is_odd_match or is_even_match:
-                day = lesson.get('day')
+                day = lesson.get("day")
                 if day in week_schedule:
                     week_schedule[day].append(lesson)
     else:
         full_schedule = manager._schedules.get(group.upper(), {})
         week_schedule = full_schedule.get(week_key, {})
-    
+
     # Формируем подпись
     subject_line = (
-        f"🗓 <b>Расписание для преподавателя {group}</b>" if ctx.dialog_data.get("user_type") == "teacher"
+        f"🗓 <b>Расписание для преподавателя {group}</b>"
+        if ctx.dialog_data.get("user_type") == "teacher"
         else f"🗓 <b>Расписание для группы {group}</b>"
     )
     final_caption = (
@@ -306,7 +324,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         f"Неделя: <b>{week_name}</b>\n"
         f"Период: <b>с {start_date_str} по {end_date_str}</b>"
     )
-    
+
     # Получаем или генерируем изображение
     user_id = ctx.dialog_data.get("user_id")
     placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
@@ -328,26 +346,29 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         user_id=user_id,
         user_theme=user_theme,
         placeholder_msg_id=placeholder_msg_id,
-        final_caption=final_caption
+        final_caption=final_caption,
     )
-    
+
     if not success:
         logging.error(f"Failed to get/generate week image for {group}_{week_key}")
-    
+
     return {
         "week_name": week_name,
         "group": group,
         "start_date": start_date_str,
-        "end_date": end_date_str
+        "end_date": end_date_str,
     }
+
 
 async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Callback handler для кнопки 'Оригинал' без параметра button"""
     await on_send_original_file(callback, None, dialog_manager)
 
+
 async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Повторная проверка подписки и попытка отправки оригинала."""
     await on_send_original_file(callback, None, dialog_manager)
+
 
 async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Отправляет оригинал изображения недели как файл (Document), без сжатия Telegram."""
@@ -392,7 +413,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             user_theme_for_original = await udm.get_user_theme(callback.from_user.id)
     except Exception:
         user_theme_for_original = None
-    if user_theme_for_original and user_theme_for_original != 'standard':
+    if user_theme_for_original and user_theme_for_original != "standard":
         cache_key = f"{group}_{week_key}_{user_theme_for_original}"
     else:
         cache_key = f"{group}_{week_key}"
@@ -412,20 +433,25 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                     pass
                 # Корректно формируем ссылку на канал
                 channel_link = SUBSCRIPTION_CHANNEL
-                if channel_link.startswith('@'):
+                if channel_link.startswith("@"):
                     channel_link = f"https://t.me/{channel_link[1:]}"
-                elif channel_link.startswith('-'):
+                elif channel_link.startswith("-"):
                     # Для каналов с числовым ID используем tg://
                     channel_link = f"tg://resolve?domain={channel_link}"
-                elif not channel_link.startswith('http'):
+                elif not channel_link.startswith("http"):
                     # Для обычных имен каналов
                     channel_link = f"https://t.me/{channel_link}"
-                    
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)],
-                    [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")]
-                ])
-                await callback.message.answer("Доступ к полному качеству доступен по подписке на канал.", reply_markup=kb)
+
+                kb = InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)],
+                        [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")],
+                    ]
+                )
+                await callback.message.answer(
+                    "Доступ к полному качеству доступен по подписке на канал.",
+                    reply_markup=kb,
+                )
                 try:
                     await callback.answer()
                 except Exception:
@@ -476,23 +502,29 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     except Exception:
         pass
 
+
 async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int):
     ctx = manager.current_context()
     current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
     new_date = current_date + timedelta(days=days)
     ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = new_date.isoformat()
 
+
 async def on_today_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     manager.current_context().dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
-    
+
+
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
-    
+
+
 async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.start(SettingsMenu.main)
 
+
 async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.start(FindMenu.choice)
+
 
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
@@ -508,8 +540,9 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
         "• Увидите закулисье проекта\n\n"
         "<i>Подписывайтесь, чтобы быть в курсе! 👆</i>",
         parse_mode="HTML",
-        disable_web_page_preview=True
+        disable_web_page_preview=True,
     )
+
 
 async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager):
     # Удаляем медиасообщение с изображением и остаёмся в текущем окне диалога
@@ -522,11 +555,13 @@ async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager)
     except Exception:
         pass
 
+
 async def auto_delete_old_messages(manager: DialogManager, user_id: int, keep_last: int = 3):
     """
     Deprecated shim. Cleanup now handled by CleanupBot and middleware.
     """
     return
+
 
 async def track_message(manager: DialogManager, user_id: int, message_id: int):
     """
@@ -534,47 +569,96 @@ async def track_message(manager: DialogManager, user_id: int, message_id: int):
     """
     return
 
+
 schedul_dialog_windows = [
     Window(
         StaticMedia(
             path=NO_LESSONS_IMAGE_PATH,
             type=ContentType.PHOTO,
-            when=lambda data, widget, manager: not data.get("has_lessons")
+            when=lambda data, widget, manager: not data.get("has_lessons"),
         ),
         Format("{dynamic_header}"),
         Format("{progress_bar}"),
         Format("{schedule_text}"),
         Row(
-            Button(Const("⏪"), id=WidgetIds.PREV_WEEK, on_click=lambda c, b, m: on_date_shift(c, b, m, -7)),
-            Button(Const("◀️"), id=WidgetIds.PREV_DAY, on_click=lambda c, b, m: on_date_shift(c, b, m, -1)),
+            Button(
+                Const("⏪"),
+                id=WidgetIds.PREV_WEEK,
+                on_click=lambda c, b, m: on_date_shift(c, b, m, -7),
+            ),
+            Button(
+                Const("◀️"),
+                id=WidgetIds.PREV_DAY,
+                on_click=lambda c, b, m: on_date_shift(c, b, m, -1),
+            ),
             Button(Const("📅"), id=WidgetIds.TODAY, on_click=on_today_click),
-            Button(Const("▶️"), id=WidgetIds.NEXT_DAY, on_click=lambda c, b, m: on_date_shift(c, b, m, 1)),
-            Button(Const("⏩"), id=WidgetIds.NEXT_WEEK, on_click=lambda c, b, m: on_date_shift(c, b, m, 7)),
+            Button(
+                Const("▶️"),
+                id=WidgetIds.NEXT_DAY,
+                on_click=lambda c, b, m: on_date_shift(c, b, m, 1),
+            ),
+            Button(
+                Const("⏩"),
+                id=WidgetIds.NEXT_WEEK,
+                on_click=lambda c, b, m: on_date_shift(c, b, m, 7),
+            ),
         ),
         # Для преподавателей скрываем кнопки Неделя/Настройки/Поиск/Новости
         Row(
-            Button(Const("🗓 Неделя"), id="week_as_image", on_click=on_full_week_image_click,
-                   when=lambda data, w, m: data.get("user_type") != "teacher"),
-            Button(Const("🔄 Сменить"), id=WidgetIds.CHANGE_GROUP, on_click=on_change_group_click),
-            Button(Const("⚙️ Настройки"), id=WidgetIds.SETTINGS, on_click=on_settings_click,
-                   when=lambda data, w, m: data.get("user_type") != "teacher"),
+            Button(
+                Const("🗓 Неделя"),
+                id="week_as_image",
+                on_click=on_full_week_image_click,
+                when=lambda data, w, m: data.get("user_type") != "teacher",
+            ),
+            Button(
+                Const("🔄 Сменить"),
+                id=WidgetIds.CHANGE_GROUP,
+                on_click=on_change_group_click,
+            ),
+            Button(
+                Const("⚙️ Настройки"),
+                id=WidgetIds.SETTINGS,
+                on_click=on_settings_click,
+                when=lambda data, w, m: data.get("user_type") != "teacher",
+            ),
         ),
         Row(
-            Button(Const("🔍 Поиск"), id=WidgetIds.FIND_BTN, on_click=on_find_click,
-                   when=lambda data, w, m: data.get("user_type") != "teacher"),
-            Button(Const("📢 Новости"), id="news_btn", on_click=on_news_clicked,
-                   when=lambda data, w, m: data.get("user_type") != "teacher"),
+            Button(
+                Const("🔍 Поиск"),
+                id=WidgetIds.FIND_BTN,
+                on_click=on_find_click,
+                when=lambda data, w, m: data.get("user_type") != "teacher",
+            ),
+            Button(
+                Const("📢 Новости"),
+                id="news_btn",
+                on_click=on_news_clicked,
+                when=lambda data, w, m: data.get("user_type") != "teacher",
+            ),
         ),
-        state=Schedule.view, getter=get_schedule_data,
-        parse_mode="HTML", disable_web_page_preview=True
+        state=Schedule.view,
+        getter=get_schedule_data,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
     ),
     Window(
-        Const("🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."),
-        Row(
-            Button(Const("📄 Оригинал (файл)"), id="send_original_file_week", on_click=on_send_original_file),
-            Button(Const("◀️ Назад"), id="noop_back_to_day", on_click=lambda c, b, m: m.switch_to(Schedule.view)),
+        Const(
+            "🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."
         ),
-        state=Schedule.week_image_view
+        Row(
+            Button(
+                Const("📄 Оригинал (файл)"),
+                id="send_original_file_week",
+                on_click=on_send_original_file,
+            ),
+            Button(
+                Const("◀️ Назад"),
+                id="noop_back_to_day",
+                on_click=lambda c, b, m: m.switch_to(Schedule.view),
+            ),
+        ),
+        state=Schedule.week_image_view,
     ),
     # Окно гейта подписки временно отключено
 ]

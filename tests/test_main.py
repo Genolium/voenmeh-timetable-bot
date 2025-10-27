@@ -6,18 +6,18 @@ import asyncio
 import json
 import logging
 import os
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import pytest
 from aiogram import Bot, Dispatcher
-from aiogram.types import Message, User, Chat, CallbackQuery
 from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import CallbackQuery, Chat, Message, User
 from aiogram_dialog import DialogManager
 from redis.asyncio.client import Redis
 
 import main
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, Events
+from bot.dialogs.states import About, Admin, Events, Feedback, MainMenu, Schedule
 from core.config import ADMIN_IDS
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
@@ -28,9 +28,7 @@ class TestSetupLogging:
 
     def test_setup_logging(self):
         """Тест настройки логирования."""
-        with patch('logging.basicConfig') as mock_basic_config, \
-             patch('logging.getLogger') as mock_get_logger:
-
+        with patch("logging.basicConfig") as mock_basic_config, patch("logging.getLogger") as mock_get_logger:
             mock_logger = MagicMock()
             mock_get_logger.return_value = mock_logger
 
@@ -39,10 +37,10 @@ class TestSetupLogging:
             # Проверяем, что basicConfig был вызван
             mock_basic_config.assert_called_once()
             args, kwargs = mock_basic_config.call_args
-            assert kwargs['level'] == logging.INFO
+            assert kwargs["level"] == logging.INFO
 
             # Проверяем, что уровень для aiogram был установлен
-            mock_get_logger.assert_called_with('aiogram')
+            mock_get_logger.assert_called_with("aiogram")
             mock_logger.setLevel.assert_called_once_with(logging.WARNING)
 
 
@@ -54,7 +52,7 @@ class TestSetBotCommands:
         """Тест успешной установки команд бота."""
         mock_bot = AsyncMock()
 
-        with patch('main.ADMIN_IDS', [123456789]):
+        with patch("main.ADMIN_IDS", [123456789]):
             await main.set_bot_commands(mock_bot)
 
             # Проверяем, что команды были установлены для обычных пользователей
@@ -71,7 +69,7 @@ class TestSetBotCommands:
         """Тест установки команд без администраторов."""
         mock_bot = AsyncMock()
 
-        with patch('main.ADMIN_IDS', []):
+        with patch("main.ADMIN_IDS", []):
             await main.set_bot_commands(mock_bot)
 
             # Проверяем, что команды установлены только для обычных пользователей
@@ -85,9 +83,7 @@ class TestSetBotCommands:
         mock_bot = AsyncMock()
         mock_bot.set_my_commands.side_effect = Exception("API Error")
 
-        with patch('main.ADMIN_IDS', []), \
-             patch('main.logging') as mock_logging:
-
+        with patch("main.ADMIN_IDS", []), patch("main.logging") as mock_logging:
             await main.set_bot_commands(mock_bot)
 
             # Проверяем, что ошибка была залогирована
@@ -102,6 +98,7 @@ class TestCommandHandlers:
     async def test_start_command_handler_with_saved_group(self):
         """Тест обработчика /start с сохраненной группой."""
         from unittest.mock import MagicMock
+
         from core.user_data import UserDataManager
 
         mock_user_data_manager = MagicMock(spec=UserDataManager)
@@ -120,15 +117,14 @@ class TestCommandHandlers:
 
         # Проверяем, что диалог был запущен с правильными параметрами
         mock_dialog_manager.start.assert_called_once_with(
-            Schedule.view,
-            data={"group": "ИВТ-201"},
-            mode=main.StartMode.RESET_STACK
+            Schedule.view, data={"group": "ИВТ-201"}, mode=main.StartMode.RESET_STACK
         )
 
     @pytest.mark.asyncio
     async def test_start_command_handler_without_saved_group(self):
         """Тест обработчика /start без сохраненной группы."""
         from unittest.mock import MagicMock
+
         from core.user_data import UserDataManager
 
         mock_user_data_manager = MagicMock(spec=UserDataManager)
@@ -143,10 +139,7 @@ class TestCommandHandlers:
         await main.start_command_handler(mock_message, mock_dialog_manager)
 
         # Проверяем, что был запущен диалог выбора типа пользователя
-        mock_dialog_manager.start.assert_called_once_with(
-            MainMenu.choose_user_type,
-            mode=main.StartMode.RESET_STACK
-        )
+        mock_dialog_manager.start.assert_called_once_with(MainMenu.choose_user_type, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
     async def test_start_command_handler_invalid_user_data_manager(self):
@@ -157,7 +150,7 @@ class TestCommandHandlers:
         mock_message = MagicMock()
         mock_message.from_user.id = 123456789
 
-        with patch('main.logging') as mock_logging:
+        with patch("main.logging") as mock_logging:
             await main.start_command_handler(mock_message, mock_dialog_manager)
 
             # Проверяем, что ошибка была залогирована
@@ -171,10 +164,7 @@ class TestCommandHandlers:
 
         await main.about_command_handler(MagicMock(), mock_dialog_manager)
 
-        mock_dialog_manager.start.assert_called_once_with(
-            About.page_1,
-            mode=main.StartMode.RESET_STACK
-        )
+        mock_dialog_manager.start.assert_called_once_with(About.page_1, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
     async def test_about_command_handler_error_with_fallback(self):
@@ -184,7 +174,7 @@ class TestCommandHandlers:
 
         mock_message = AsyncMock()
 
-        with patch('main.logging') as mock_logging:
+        with patch("main.logging") as mock_logging:
             await main.about_command_handler(mock_message, mock_dialog_manager)
 
             # Проверяем, что ошибка была залогирована
@@ -201,10 +191,7 @@ class TestCommandHandlers:
 
         await main.feedback_command_handler(MagicMock(), mock_dialog_manager)
 
-        mock_dialog_manager.start.assert_called_once_with(
-            Feedback.enter_feedback,
-            mode=main.StartMode.RESET_STACK
-        )
+        mock_dialog_manager.start.assert_called_once_with(Feedback.enter_feedback, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
     async def test_admin_command_handler(self):
@@ -213,10 +200,7 @@ class TestCommandHandlers:
 
         await main.admin_command_handler(MagicMock(), mock_dialog_manager)
 
-        mock_dialog_manager.start.assert_called_once_with(
-            Admin.menu,
-            mode=main.StartMode.RESET_STACK
-        )
+        mock_dialog_manager.start.assert_called_once_with(Admin.menu, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
     async def test_events_command_handler(self):
@@ -225,10 +209,7 @@ class TestCommandHandlers:
 
         await main.events_command_handler(MagicMock(), mock_dialog_manager)
 
-        mock_dialog_manager.start.assert_called_once_with(
-            Events.list,
-            mode=main.StartMode.RESET_STACK
-        )
+        mock_dialog_manager.start.assert_called_once_with(Events.list, mode=main.StartMode.RESET_STACK)
 
 
 class TestRunMetricsServer:
@@ -237,9 +218,7 @@ class TestRunMetricsServer:
     @pytest.mark.asyncio
     async def test_run_metrics_server(self):
         """Тест запуска сервера метрик."""
-        with patch('main.start_http_server') as mock_start_http_server, \
-             patch('main.logging') as mock_logging:
-
+        with patch("main.start_http_server") as mock_start_http_server, patch("main.logging") as mock_logging:
             await main.run_metrics_server(8000)
 
             # Проверяем, что сервер был запущен
@@ -289,7 +268,7 @@ class TestSimpleRateLimiter:
         mock_event = MagicMock()
         mock_event.from_user.id = 123456789
 
-        with patch('main.time.monotonic', return_value=1000.0):
+        with patch("main.time.monotonic", return_value=1000.0):
             result = await limiter(mock_handler, mock_event, {})
 
             # Проверяем, что обработчик был вызван
@@ -313,7 +292,7 @@ class TestSimpleRateLimiter:
         mock_event.from_user.id = 123456789
         mock_event.answer = AsyncMock()
 
-        with patch('main.time.monotonic', return_value=1000.0):
+        with patch("main.time.monotonic", return_value=1000.0):
             result = await limiter(mock_handler, mock_event, {})
 
             # Проверяем, что обработчик не был вызван
@@ -354,15 +333,12 @@ class TestErrorHandler:
         assert "Эта кнопка больше неактуальна" in mock_callback_query.answer.call_args[0][0]
 
         # Проверяем, что было отправлено сообщение
-        mock_bot.send_message.assert_called_once_with(
-            123456789,
-            "Меню обновлено. Нажмите /start"
-        )
+        mock_bot.send_message.assert_called_once_with(123456789, "Меню обновлено. Нажмите /start")
 
     @pytest.mark.asyncio
     async def test_error_handler_other_exception(self):
         """Тест обработки других исключений."""
-        with patch('main.logging') as mock_logging:
+        with patch("main.logging") as mock_logging:
             result = await main.error_handler(exception=Exception("Test error"))
 
             assert result is True
@@ -378,10 +354,7 @@ class TestMainFunction:
     @pytest.mark.asyncio
     async def test_main_missing_env_vars(self):
         """Тест main с отсутствующими переменными окружения."""
-        with patch.dict(os.environ, {}, clear=True), \
-             patch('main.logging') as mock_logging, \
-             patch('main.load_dotenv'):
-
+        with patch.dict(os.environ, {}, clear=True), patch("main.logging") as mock_logging, patch("main.load_dotenv"):
             await main.main()
 
             # Проверяем, что была залогирована критическая ошибка
@@ -391,13 +364,15 @@ class TestMainFunction:
     @pytest.mark.asyncio
     async def test_main_timetable_manager_creation_failed(self):
         """Тест main с ошибкой создания TimetableManager."""
-        with patch.dict(os.environ, {
-            'BOT_TOKEN': 'test_token',
-            'REDIS_URL': 'redis://localhost',
-            'DATABASE_URL': 'sqlite://test.db'
-        }), patch('main.logging') as mock_logging:
-
-            with patch('main.TimetableManager.create', return_value=None):
+        with patch.dict(
+            os.environ,
+            {
+                "BOT_TOKEN": "test_token",
+                "REDIS_URL": "redis://localhost",
+                "DATABASE_URL": "sqlite://test.db",
+            },
+        ), patch("main.logging") as mock_logging:
+            with patch("main.TimetableManager.create", return_value=None):
                 await main.main()
 
                 # Проверяем, что была залогирована критическая ошибка
@@ -408,5 +383,5 @@ class TestMainFunction:
     # Основные компоненты уже протестированы в отдельных тестах
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     pytest.main([__file__])

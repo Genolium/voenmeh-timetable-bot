@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from bot.dialogs.theme_dialog import get_theme_data, on_theme_selected, on_check_subscription
+import pytest
+
 from bot.dialogs.states import SettingsMenu
+from bot.dialogs.theme_dialog import get_theme_data, on_check_subscription, on_theme_selected
 from core.config import SUBSCRIPTION_CHANNEL
 
 
@@ -13,10 +14,7 @@ def mock_manager():
     mock_bot = AsyncMock()
     manager = AsyncMock()
 
-    manager.middleware_data = {
-        "user_data_manager": mock_udm,
-        "bot": mock_bot
-    }
+    manager.middleware_data = {"user_data_manager": mock_udm, "bot": mock_bot}
     manager.event = MagicMock()
     manager.event.from_user.id = 123
 
@@ -25,7 +23,6 @@ def mock_manager():
 
 @pytest.mark.asyncio
 class TestThemeDialog:
-
     async def test_get_theme_data_subscribed(self, mock_manager):
         """Тест получения данных темы для подписанного пользователя."""
         # Мокаем проверку подписки
@@ -41,6 +38,7 @@ class TestThemeDialog:
 
         # Заменяем get_redis_client
         import bot.dialogs.theme_dialog as theme_module
+
         original_get_redis = theme_module.get_redis_client
         theme_module.get_redis_client = AsyncMock(return_value=mock_redis)
 
@@ -67,10 +65,11 @@ class TestThemeDialog:
 
         # Мокаем Redis
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = '0'  # Кэш показывает, что не подписан
+        mock_redis.get.return_value = "0"  # Кэш показывает, что не подписан
 
         # Заменяем get_redis_client
         import bot.dialogs.theme_dialog as theme_module
+
         original_get_redis = theme_module.get_redis_client
         theme_module.get_redis_client = AsyncMock(return_value=mock_redis)
 
@@ -94,10 +93,11 @@ class TestThemeDialog:
 
         # Мокаем Redis
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = '1'  # Подписан
+        mock_redis.get.return_value = "1"  # Подписан
 
         # Заменяем get_redis_client
         import bot.dialogs.theme_dialog as theme_module
+
         original_get_redis = theme_module.get_redis_client
         theme_module.get_redis_client = AsyncMock(return_value=mock_redis)
 
@@ -131,10 +131,11 @@ class TestThemeDialog:
 
         # Мокаем Redis
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = '0'  # Не подписан
+        mock_redis.get.return_value = "0"  # Не подписан
 
         # Заменяем get_redis_client
         import bot.dialogs.theme_dialog as theme_module
+
         original_get_redis = theme_module.get_redis_client
         theme_module.get_redis_client = AsyncMock(return_value=mock_redis)
 
@@ -161,6 +162,7 @@ class TestThemeDialog:
 
         # Мокаем задачу проверки подписки
         import bot.dialogs.theme_dialog as theme_module
+
         original_task = theme_module.check_theme_subscription_task
         theme_module.check_theme_subscription_task = AsyncMock()
 

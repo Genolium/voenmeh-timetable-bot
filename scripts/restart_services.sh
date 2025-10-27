@@ -45,7 +45,7 @@ fi
 restart_service() {
     local service=$1
     log "Перезапуск сервиса: $service"
-    
+
     if docker-compose ps | grep -q "$service"; then
         docker-compose restart "$service"
         success "Сервис $service перезапущен"
@@ -58,7 +58,7 @@ restart_service() {
 check_service() {
     local service=$1
     log "Проверка состояния сервиса: $service"
-    
+
     if docker-compose ps | grep -q "$service.*Up"; then
         success "Сервис $service работает"
     else
@@ -70,19 +70,19 @@ check_service() {
 if [ $# -eq 0 ]; then
     # Перезапуск всех сервисов
     log "Перезапуск всех сервисов Voenmeh Bot..."
-    
+
     # Останавливаем все сервисы
     log "Остановка всех сервисов..."
     docker-compose down
-    
+
     # Запускаем все сервисы
     log "Запуск всех сервисов..."
     docker-compose up -d
-    
+
     # Ждем немного для запуска
     log "Ожидание запуска сервисов..."
     sleep 10
-    
+
     # Проверяем состояние основных сервисов
     log "Проверка состояния сервисов..."
     check_service "postgres"
@@ -90,60 +90,60 @@ if [ $# -eq 0 ]; then
     check_service "rabbitmq"
     check_service "bot"
     check_service "worker"
-    
+
     success "Все сервисы перезапущены!"
-    
+
 elif [ "$1" = "rabbitmq" ]; then
     # Специальная обработка для RabbitMQ
     log "Перезапуск RabbitMQ с очисткой..."
-    
+
     # Останавливаем RabbitMQ
     docker-compose stop rabbitmq
-    
+
     # Ждем полной остановки
     sleep 5
-    
+
     # Запускаем RabbitMQ
     docker-compose up -d rabbitmq
-    
+
     # Ждем запуска
     log "Ожидание запуска RabbitMQ..."
     sleep 15
-    
+
     # Проверяем состояние
     check_service "rabbitmq"
-    
+
     # Перезапускаем воркер, если он зависит от RabbitMQ
     restart_service "worker"
-    
+
     success "RabbitMQ перезапущен!"
-    
+
 elif [ "$1" = "worker" ]; then
     # Перезапуск воркера
     restart_service "worker"
-    
+
 elif [ "$1" = "bot" ]; then
     # Перезапуск бота
     restart_service "bot"
-    
+
 elif [ "$1" = "db" ] || [ "$1" = "postgres" ]; then
     # Перезапуск базы данных
     restart_service "db"
-    
+
 elif [ "$1" = "redis" ]; then
     # Перезапуск Redis
     restart_service "redis"
-    
+
 elif [ "$1" = "status" ]; then
     # Показать статус всех сервисов
     log "Статус всех сервисов:"
     docker-compose ps
-    
+
 elif [ "$1" = "logs" ]; then
     # Показать логи всех сервисов
     log "Логи всех сервисов (Ctrl+C для выхода):"
     docker-compose logs -f
-    
+
 elif [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Использование: $0 [service_name]"
     echo ""
@@ -162,7 +162,7 @@ elif [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "  $0                # Перезапустить все"
     echo "  $0 rabbitmq       # Перезапустить только RabbitMQ"
     echo "  $0 status         # Показать статус"
-    
+
 else
     error "Неизвестный сервис: $1"
     echo "Используйте '$0 help' для справки"

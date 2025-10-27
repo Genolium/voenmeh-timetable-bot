@@ -1,9 +1,10 @@
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from aiogram import Bot
 
-from core.admin_reports import AdminReportsGenerator, send_daily_reports, send_weekly_reports, send_monthly_reports
+from core.admin_reports import AdminReportsGenerator, send_daily_reports, send_monthly_reports, send_weekly_reports
 
 
 @pytest.fixture
@@ -24,22 +25,22 @@ def mock_user_data_manager():
     manager.get_subscribed_users_count.return_value = 800
     manager.get_unsubscribed_count.return_value = 50
     manager.get_subscription_breakdown.return_value = {
-        'evening': 400,
-        'morning': 300,
-        'reminders': 200
+        "evening": 400,
+        "morning": 300,
+        "reminders": 200,
     }
     manager.get_top_groups.return_value = [
-        ('О735Б', 150),
-        ('О735А', 120),
-        ('О734Б', 100),
-        ('О734А', 90),
-        ('О733Б', 80)
+        ("О735Б", 150),
+        ("О735А", 120),
+        ("О734Б", 100),
+        ("О734А", 90),
+        ("О733Б", 80),
     ]
     manager.get_group_distribution.return_value = {
-        '1 студент': 5,
-        '2-5 студентов': 15,
-        '6-10 студентов': 10,
-        '11+ студентов': 8
+        "1 студент": 5,
+        "2-5 студентов": 15,
+        "6-10 студентов": 10,
+        "11+ студентов": 8,
     }
     manager.get_new_users_count.return_value = 100
     return manager
@@ -59,20 +60,25 @@ class TestAdminReportsGenerator:
         """Тест успешной генерации ежедневного отчёта."""
         # Мокаем gather_stats
         mock_user_data_manager.gather_stats.return_value = (
-            1000, 500, 700, 900, 800, 50,  # total, dau, wau, mau, subscribed, unsubscribed
-            {'evening': 400, 'morning': 300, 'reminders': 200},  # breakdown
-            [('О735Б', 150), ('О735А', 120)],  # top_groups
-            {'1 студент': 5, '2-5 студентов': 15}  # group_dist
+            1000,
+            500,
+            700,
+            900,
+            800,
+            50,  # total, dau, wau, mau, subscribed, unsubscribed
+            {"evening": 400, "morning": 300, "reminders": 200},  # breakdown
+            [("О735Б", 150), ("О735А", 120)],  # top_groups
+            {"1 студент": 5, "2-5 студентов": 15},  # group_dist
         )
 
         # Мокаем Prometheus метрики
-        with patch.object(admin_reports_generator, '_get_prometheus_metrics') as mock_metrics:
+        with patch.object(admin_reports_generator, "_get_prometheus_metrics") as mock_metrics:
             mock_metrics.return_value = {
-                'tasks_sent': 150,
-                'errors_count': 2,
-                'retries_count': 5,
-                'schedule_updates': 3,
-                'last_update': '22.10.2025 10:00'
+                "tasks_sent": 150,
+                "errors_count": 2,
+                "retries_count": 5,
+                "schedule_updates": 3,
+                "last_update": "22.10.2025 10:00",
             }
 
             report = await admin_reports_generator.generate_daily_report()
@@ -81,9 +87,9 @@ class TestAdminReportsGenerator:
             assert "📊" in report
             assert "Ежедневный отчёт" in report
             assert "1000" in report  # total users
-            assert "500" in report   # daily active
+            assert "500" in report  # daily active
             assert "О735Б" in report  # top group
-            assert "150" in report   # tasks sent
+            assert "150" in report  # tasks sent
 
     @pytest.mark.asyncio
     async def test_generate_daily_report_error(self, admin_reports_generator, mock_user_data_manager):
@@ -99,13 +105,13 @@ class TestAdminReportsGenerator:
     async def test_generate_weekly_report_success(self, admin_reports_generator, mock_user_data_manager):
         """Тест успешной генерации еженедельного отчёта."""
         # Мокаем Prometheus метрики
-        with patch.object(admin_reports_generator, '_get_prometheus_metrics_weekly') as mock_metrics:
+        with patch.object(admin_reports_generator, "_get_prometheus_metrics_weekly") as mock_metrics:
             mock_metrics.return_value = {
-                'tasks_sent_total': 1050,
-                'errors_total': 14,
-                'retries_total': 35,
-                'schedule_updates': 21,
-                'peak_activity': 'Понедельник 08:00-09:00'
+                "tasks_sent_total": 1050,
+                "errors_total": 14,
+                "retries_total": 35,
+                "schedule_updates": 21,
+                "peak_activity": "Понедельник 08:00-09:00",
             }
 
             report = await admin_reports_generator.generate_weekly_report()
@@ -120,14 +126,14 @@ class TestAdminReportsGenerator:
     async def test_generate_monthly_report_success(self, admin_reports_generator, mock_user_data_manager):
         """Тест успешной генерации ежемесячного отчёта."""
         # Мокаем Prometheus метрики
-        with patch.object(admin_reports_generator, '_get_prometheus_metrics_monthly') as mock_metrics:
+        with patch.object(admin_reports_generator, "_get_prometheus_metrics_monthly") as mock_metrics:
             mock_metrics.return_value = {
-                'tasks_sent_total': 4200,
-                'errors_total': 56,
-                'retries_total': 140,
-                'schedule_updates': 90,
-                'avg_daily_users': 1250,
-                'top_features': ['schedule_view', 'settings', 'feedback']
+                "tasks_sent_total": 4200,
+                "errors_total": 56,
+                "retries_total": 140,
+                "schedule_updates": 90,
+                "avg_daily_users": 1250,
+                "top_features": ["schedule_view", "settings", "feedback"],
             }
 
             report = await admin_reports_generator.generate_monthly_report()
@@ -142,19 +148,25 @@ class TestAdminReportsGenerator:
         """Тест структуры ежедневного отчёта."""
         today = "22.10.2025"
         prometheus_metrics = {
-            'tasks_sent': 150,
-            'errors_count': 2,
-            'retries_count': 5,
-            'schedule_updates': 3,
-            'last_update': '22.10.2025 10:00'
+            "tasks_sent": 150,
+            "errors_count": 2,
+            "retries_count": 5,
+            "schedule_updates": 3,
+            "last_update": "22.10.2025 10:00",
         }
 
         report = admin_reports_generator._format_daily_report(
-            today, 1000, 500, 700, 900, 800, 50,
-            {'evening': 400, 'morning': 300, 'reminders': 200},
-            [('О735Б', 150), ('О735А', 120)],
-            {'1 студент': 5, '2-5 студентов': 15},
-            prometheus_metrics
+            today,
+            1000,
+            500,
+            700,
+            900,
+            800,
+            50,
+            {"evening": 400, "morning": 300, "reminders": 200},
+            [("О735Б", 150), ("О735А", 120)],
+            {"1 студент": 5, "2-5 студентов": 15},
+            prometheus_metrics,
         )
 
         # Проверяем структуру отчёта
@@ -169,17 +181,15 @@ class TestAdminReportsGenerator:
     def test_format_weekly_report_structure(self, admin_reports_generator):
         """Тест структуры еженедельного отчёта."""
         prometheus_metrics = {
-            'tasks_sent_total': 1050,
-            'errors_total': 14,
-            'retries_total': 35,
-            'schedule_updates': 21,
-            'peak_activity': 'Понедельник 08:00-09:00'
+            "tasks_sent_total": 1050,
+            "errors_total": 14,
+            "retries_total": 35,
+            "schedule_updates": 21,
+            "peak_activity": "Понедельник 08:00-09:00",
         }
 
         report = admin_reports_generator._format_weekly_report(
-            100, 500, 1000, 800,
-            [('О735Б', 150), ('О735А', 120)],
-            prometheus_metrics
+            100, 500, 1000, 800, [("О735Б", 150), ("О735А", 120)], prometheus_metrics
         )
 
         # Проверяем структуру отчёта
@@ -193,18 +203,16 @@ class TestAdminReportsGenerator:
     def test_format_monthly_report_structure(self, admin_reports_generator):
         """Тест структуры ежемесячного отчёта."""
         prometheus_metrics = {
-            'tasks_sent_total': 4200,
-            'errors_total': 56,
-            'retries_total': 140,
-            'schedule_updates': 90,
-            'avg_daily_users': 1250,
-            'top_features': ['schedule_view', 'settings', 'feedback']
+            "tasks_sent_total": 4200,
+            "errors_total": 56,
+            "retries_total": 140,
+            "schedule_updates": 90,
+            "avg_daily_users": 1250,
+            "top_features": ["schedule_view", "settings", "feedback"],
         }
 
         report = admin_reports_generator._format_monthly_report(
-            200, 800, 1000, 800,
-            [('О735Б', 150), ('О735А', 120)],
-            prometheus_metrics
+            200, 800, 1000, 800, [("О735Б", 150), ("О735А", 120)], prometheus_metrics
         )
 
         # Проверяем структуру отчёта
@@ -221,7 +229,7 @@ class TestAdminReportsSending:
     @pytest.mark.asyncio
     async def test_send_daily_reports_success(self, mock_bot, mock_user_data_manager):
         """Тест успешной отправки ежедневных отчётов."""
-        with patch('core.admin_reports.AdminReportsGenerator') as mock_generator_class:
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
             mock_generator = AsyncMock()
             mock_generator.generate_daily_report.return_value = "📊 Daily Report"
             mock_generator_class.return_value = mock_generator
@@ -260,7 +268,7 @@ class TestAdminReportsSending:
     @pytest.mark.asyncio
     async def test_send_weekly_reports_success(self, mock_bot, mock_user_data_manager):
         """Тест успешной отправки еженедельных отчётов."""
-        with patch('core.admin_reports.AdminReportsGenerator') as mock_generator_class:
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
             mock_generator = AsyncMock()
             mock_generator.generate_weekly_report.return_value = "📊 Weekly Report"
             mock_generator_class.return_value = mock_generator
@@ -277,7 +285,7 @@ class TestAdminReportsSending:
     @pytest.mark.asyncio
     async def test_send_monthly_reports_success(self, mock_bot, mock_user_data_manager):
         """Тест успешной отправки ежемесячных отчётов."""
-        with patch('core.admin_reports.AdminReportsGenerator') as mock_generator_class:
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
             mock_generator = AsyncMock()
             mock_generator.generate_monthly_report.return_value = "📊 Monthly Report"
             mock_generator_class.return_value = mock_generator
@@ -295,7 +303,7 @@ class TestAdminReportsSending:
     async def test_send_reports_exception_handling(self, mock_bot, mock_user_data_manager):
         """Тест обработки исключений в функциях отправки отчётов."""
         # Мокаем ошибку в генераторе отчёта
-        with patch('core.admin_reports.AdminReportsGenerator') as mock_generator_class:
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
             mock_generator = AsyncMock()
             mock_generator.generate_daily_report.side_effect = Exception("Report generation failed")
             mock_generator_class.return_value = mock_generator

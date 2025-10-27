@@ -1,12 +1,13 @@
-from aiogram.types import Message, ContentType
 from aiogram import Bot
-from aiogram_dialog import Dialog, Window, DialogManager
+from aiogram.types import ContentType, Message
+from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.text import Const
 
-from .states import Feedback
 from core.config import FEEDBACK_CHAT_ID
 from core.feedback_manager import FeedbackManager
+
+from .states import Feedback
 
 
 async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager):
@@ -26,35 +27,35 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
 
     # Определяем тип сообщения и извлекаем текст/файл
     message_text = None
-    message_type = 'text'
+    message_type = "text"
     file_id = None
 
     if message.text:
         message_text = message.text
-        message_type = 'text'
+        message_type = "text"
     elif message.photo:
         message_text = message.caption or "Фото без подписи"
-        message_type = 'photo'
+        message_type = "photo"
         file_id = message.photo[-1].file_id  # Берем фото в максимальном разрешении
     elif message.video:
         message_text = message.caption or "Видео без подписи"
-        message_type = 'video'
+        message_type = "video"
         file_id = message.video.file_id
     elif message.document:
         message_text = message.caption or f"Документ: {message.document.file_name}"
-        message_type = 'document'
+        message_type = "document"
         file_id = message.document.file_id
     elif message.audio:
         message_text = message.caption or "Аудио без подписи"
-        message_type = 'audio'
+        message_type = "audio"
         file_id = message.audio.file_id
     elif message.voice:
         message_text = "Голосовое сообщение"
-        message_type = 'voice'
+        message_type = "voice"
         file_id = message.voice.file_id
     elif message.sticker:
         message_text = f"Стикер: {message.sticker.emoji}"
-        message_type = 'sticker'
+        message_type = "sticker"
         file_id = message.sticker.file_id
 
     # Сохраняем в БД
@@ -64,14 +65,14 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
         user_full_name=message.from_user.full_name,
         message_text=message_text,
         message_type=message_type,
-        file_id=file_id
+        file_id=file_id,
     )
 
     # Пересылаем сообщение в чат для фидбэка
     await bot.forward_message(
         chat_id=FEEDBACK_CHAT_ID,
         from_chat_id=message.chat.id,
-        message_id=message.message_id
+        message_id=message.message_id,
     )
 
     # Дополнительно отправляем информацию о пользователе
@@ -102,6 +103,6 @@ feedback_dialog = Dialog(
         ),
         # MessageInput ловит любое сообщение, так как мы не указали фильтр по типу контента
         MessageInput(on_feedback_received, content_types=[ContentType.ANY]),
-        state=Feedback.enter_feedback
+        state=Feedback.enter_feedback,
     )
 )

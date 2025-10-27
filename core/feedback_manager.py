@@ -1,13 +1,13 @@
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
-import logging
 
-from sqlalchemy import select, update, delete
-from sqlalchemy.orm import selectinload
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
+from sqlalchemy.orm import selectinload
 
 from core.db.models import Feedback
-from core.metrics import USER_ACTIONS, FEATURE_POPULARITY
+from core.metrics import FEATURE_POPULARITY, USER_ACTIONS
 
 
 class FeedbackManager:
@@ -26,8 +26,8 @@ class FeedbackManager:
         username: str | None,
         user_full_name: str | None,
         message_text: str | None = None,
-        message_type: str = 'text',
-        file_id: str | None = None
+        message_type: str = "text",
+        file_id: str | None = None,
     ) -> Feedback:
         """
         Создает новый фидбек от пользователя.
@@ -43,35 +43,37 @@ class FeedbackManager:
                 message_type=message_type,
                 file_id=file_id,
                 is_answered=False,
-                created_at=datetime.utcnow()
+                created_at=datetime.utcnow(),
             )
             session.add(feedback)
             await session.commit()
             await session.refresh(feedback)
 
             # Логируем создание фидбека
-            logger.info("Feedback created", extra={
-                "user_id": str(user_id),
-                "username": username,
-                "message_type": message_type,
-                "feedback_id": feedback.id,
-                "action": "create_feedback",
-                "feature": "feedback"
-            })
+            logger.info(
+                "Feedback created",
+                extra={
+                    "user_id": str(user_id),
+                    "username": username,
+                    "message_type": message_type,
+                    "feedback_id": feedback.id,
+                    "action": "create_feedback",
+                    "feature": "feedback",
+                },
+            )
 
             # Обновляем метрики (тип пользователя будет определен в middleware)
-            FEATURE_POPULARITY.labels(feature_name="feedback", user_type="unknown", day_of_week=datetime.now().strftime('%A').lower()).inc()
+            FEATURE_POPULARITY.labels(
+                feature_name="feedback",
+                user_type="unknown",
+                day_of_week=datetime.now().strftime("%A").lower(),
+            ).inc()
             USER_ACTIONS.labels(action="feedback_sent", user_type="unknown", source="user_interface").inc()
 
             return feedback
 
     async def list_feedback(
-        self,
-        *,
-        only_unanswered: Optional[bool] = None,
-        limit: int = 20,
-        offset: int = 0,
-        user_id: Optional[int] = None
+        self, *, only_unanswered: Optional[bool] = None, limit: int = 20, offset: int = 0, user_id: Optional[int] = None
     ) -> Tuple[List[Feedback], int]:
         """
         Получает список фидбеков с пагинацией и фильтрами.
@@ -114,17 +116,10 @@ class FeedbackManager:
         Получает фидбек по ID.
         """
         async with self.session_factory() as session:
-            result = await session.execute(
-                select(Feedback).where(Feedback.id == feedback_id)
-            )
+            result = await session.execute(select(Feedback).where(Feedback.id == feedback_id))
             return result.scalar_one_or_none()
 
-    async def answer_feedback(
-        self,
-        feedback_id: int,
-        admin_id: int,
-        response_text: str
-    ) -> bool:
+    async def answer_feedback(self, feedback_id: int, admin_id: int, response_text: str) -> bool:
         """
         Отвечает на фидбек от имени администратора.
         """
@@ -138,7 +133,7 @@ class FeedbackManager:
                     is_answered=True,
                     admin_response=response_text,
                     admin_id=admin_id,
-                    answered_at=datetime.utcnow()
+                    answered_at=datetime.utcnow(),
                 )
             )
             await session.commit()
@@ -147,16 +142,23 @@ class FeedbackManager:
 
             if success:
                 # Логируем ответ на фидбек
-                logger.info("Feedback answered", extra={
-                    "feedback_id": feedback_id,
-                    "admin_id": str(admin_id),
-                    "response_length": len(response_text),
-                    "action": "answer_feedback",
-                    "feature": "admin_feedback"
-                })
+                logger.info(
+                    "Feedback answered",
+                    extra={
+                        "feedback_id": feedback_id,
+                        "admin_id": str(admin_id),
+                        "response_length": len(response_text),
+                        "action": "answer_feedback",
+                        "feature": "admin_feedback",
+                    },
+                )
 
                 # Обновляем метрики
-                FEATURE_POPULARITY.labels(feature_name="admin_feedback", user_type="admin", day_of_week=datetime.now().strftime('%A').lower()).inc()
+                FEATURE_POPULARITY.labels(
+                    feature_name="admin_feedback",
+                    user_type="admin",
+                    day_of_week=datetime.now().strftime("%A").lower(),
+                ).inc()
                 USER_ACTIONS.labels(action="feedback_answered", user_type="admin", source="admin_panel").inc()
 
             return success
@@ -166,9 +168,7 @@ class FeedbackManager:
         Удаляет фидбек.
         """
         async with self.session_factory() as session:
-            result = await session.execute(
-                delete(Feedback).where(Feedback.id == feedback_id)
-            )
+            result = await session.execute(delete(Feedback).where(Feedback.id == feedback_id))
             await session.commit()
             return result.rowcount > 0
 
@@ -182,21 +182,17 @@ class FeedbackManager:
             total = len(total_result.fetchall())
 
             # Неотвеченные фидбеки
-            unanswered_result = await session.execute(
-                select(Feedback).where(Feedback.is_answered == False)
-            )
+            unanswered_result = await session.execute(select(Feedback).where(Feedback.is_answered == False))
             unanswered = len(unanswered_result.fetchall())
 
             # Фидбеки за последние 7 дней
             week_ago = datetime.utcnow() - timedelta(days=7)
-            recent_result = await session.execute(
-                select(Feedback).where(Feedback.created_at >= week_ago)
-            )
+            recent_result = await session.execute(select(Feedback).where(Feedback.created_at >= week_ago))
             recent = len(recent_result.fetchall())
 
             return {
-                'total': total,
-                'unanswered': unanswered,
-                'answered': total - unanswered,
-                'recent_7_days': recent
+                "total": total,
+                "unanswered": unanswered,
+                "answered": total - unanswered,
+                "recent_7_days": recent,
             }

@@ -1,14 +1,16 @@
-from aiogram_dialog import Dialog, DialogManager, Window
-from aiogram_dialog.widgets.text import Const, Format
-from aiogram_dialog.widgets.kbd import Button, SwitchTo, Select, Row, Url, Column
-from aiogram_dialog.widgets.input import TextInput
-from aiogram_dialog.widgets.media import StaticMedia
+from datetime import datetime, timedelta
+
 from aiogram.types import ContentType
+from aiogram_dialog import Dialog, DialogManager, Window
+from aiogram_dialog.widgets.input import TextInput
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo, Url
+from aiogram_dialog.widgets.media import StaticMedia
+from aiogram_dialog.widgets.text import Const, Format
+
+from core.config import MOSCOW_TZ
+from core.events_manager import EventsManager
 
 from .states import Events
-from core.events_manager import EventsManager
-from core.config import MOSCOW_TZ
-from datetime import datetime, timedelta
 
 
 def _is_empty_field(value: str) -> bool:
@@ -19,11 +21,22 @@ def _is_empty_field(value: str) -> bool:
     # Приводим к нижнему регистру для проверки
     lower_value = value.strip().lower()
     skip_words = [
-        'пропустить', 'пропуск', 'skip',
-        'отмена', 'отменить', 'cancel',
-        'нет', 'no', 'none',
-        '-', '—', '–', '.',
-        'пусто', 'empty', 'null'
+        "пропустить",
+        "пропуск",
+        "skip",
+        "отмена",
+        "отменить",
+        "cancel",
+        "нет",
+        "no",
+        "none",
+        "-",
+        "—",
+        "–",
+        ".",
+        "пусто",
+        "empty",
+        "null",
     ]
 
     return lower_value in skip_words
@@ -47,14 +60,14 @@ def _filter_skip_words(text: str, skip_words: list) -> str:
         if lower_word not in skip_words_lower:
             filtered_words.append(word)
 
-    return ' '.join(filtered_words) if filtered_words else ''
+    return " ".join(filtered_words) if filtered_words else ""
 
 
 async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
     session_factory = dialog_manager.middleware_data.get("session_factory")
     manager = EventsManager(session_factory)
-    page = dialog_manager.dialog_data.get('page', 0)
-    time_filter = dialog_manager.dialog_data.get('time_filter')  # None|'today'|'this_week'
+    page = dialog_manager.dialog_data.get("page", 0)
+    time_filter = dialog_manager.dialog_data.get("time_filter")  # None|'today'|'this_week'
     limit = 10
     offset = page * limit
 
@@ -70,17 +83,29 @@ async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
         time_filter=time_filter,
         from_now_only=from_now_only,
     )
+
     def present(e):
         # Ограничиваем название до 25 символов
         title = e.title[:25] + "..." if len(e.title) > 25 else e.title
 
         # Фильтруем служебные слова из заголовка
         skip_words = [
-            'пропустить', 'пропуск', 'skip',
-            'отмена', 'отменить', 'cancel',
-            'нет', 'no', 'none',
-            '-', '—', '–', '.',
-            'пусто', 'empty', 'null'
+            "пропустить",
+            "пропуск",
+            "skip",
+            "отмена",
+            "отменить",
+            "cancel",
+            "нет",
+            "no",
+            "none",
+            "-",
+            "—",
+            "–",
+            ".",
+            "пусто",
+            "empty",
+            "null",
         ]
         title = _filter_skip_words(title, skip_words).strip()
 
@@ -103,6 +128,7 @@ async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
                 loc_part = f" @{loc_short}"
 
         return f"{title}{date_part}{loc_part}"
+
     return {
         "events": [(present(e), str(e.id)) for e in items],
         "total": total,
@@ -115,21 +141,27 @@ async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
 
 
 async def on_event_selected(callback, widget, manager: DialogManager, item_id: str):
-    manager.dialog_data['event_id'] = int(item_id)
+    manager.dialog_data["event_id"] = int(item_id)
     await manager.switch_to(Events.details)
 
 
 async def get_event_details(dialog_manager: DialogManager, **kwargs):
     session_factory = dialog_manager.middleware_data.get("session_factory")
     manager = EventsManager(session_factory)
-    event_id = dialog_manager.dialog_data.get('event_id')
+    event_id = dialog_manager.dialog_data.get("event_id")
     event = await manager.get_event(event_id) if event_id else None
     if not event:
-        return {"details": "Событие не найдено", "has_link": False, "event_link": "", "has_image": False, "image_file_id": ""}
-    
+        return {
+            "details": "Событие не найдено",
+            "has_link": False,
+            "event_link": "",
+            "has_image": False,
+            "image_file_id": "",
+        }
+
     # Формируем детали мероприятия
     text_parts = [f"<b>{event.title}</b>"]
-    
+
     # Дата/время (если указана и не 00:00)
     if event.start_at:
         if event.start_at.hour == 0 and event.start_at.minute == 0:
@@ -138,7 +170,7 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
         else:
             # Показываем дату и время
             text_parts.append(f"🗓 {event.start_at.strftime('%d.%m.%Y %H:%M')}")
-    
+
     # Локация (если указана и не является служебным словом)
     if event.location and not _is_empty_field(event.location):
         text_parts.append(f"📍 {event.location}")
@@ -146,7 +178,7 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
     # Описание (если указано и не является служебным словом)
     if event.description and not _is_empty_field(event.description):
         text_parts.append(f"\n{event.description}")
-    
+
     link = (event.link or "").strip()
     link_valid = link and (link.startswith("http://") or link.startswith("https://") or link.startswith("tg://"))
     return {
@@ -159,27 +191,27 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
 
 
 async def on_events_prev(callback, button, manager: DialogManager):
-    page = manager.dialog_data.get('page', 0)
+    page = manager.dialog_data.get("page", 0)
     if page > 0:
-        manager.dialog_data['page'] = page - 1
+        manager.dialog_data["page"] = page - 1
     await manager.switch_to(Events.list)
 
 
 async def on_events_next(callback, button, manager: DialogManager):
-    page = manager.dialog_data.get('page', 0)
-    manager.dialog_data['page'] = page + 1
+    page = manager.dialog_data.get("page", 0)
+    manager.dialog_data["page"] = page + 1
     await manager.switch_to(Events.list)
 
 
 async def on_set_filter(callback, button, manager: DialogManager):
     filter_map = {
-        'flt_all': None,
-        'flt_today': 'today',
-        'flt_week': 'this_week',
+        "flt_all": None,
+        "flt_today": "today",
+        "flt_week": "this_week",
     }
     fid = button.widget_id
-    manager.dialog_data['time_filter'] = filter_map.get(fid)
-    manager.dialog_data['page'] = 0
+    manager.dialog_data["time_filter"] = filter_map.get(fid)
+    manager.dialog_data["page"] = 0
     await manager.switch_to(Events.list)
 
 
@@ -201,14 +233,17 @@ events_dialog = Dialog(
                 when="has_items",
             ),
         ),
-        Format("Пока нет опубликованных мероприятий", when=lambda data, w, m: not data.get('has_items')), 
+        Format(
+            "Пока нет опубликованных мероприятий",
+            when=lambda data, w, m: not data.get("has_items"),
+        ),
         Row(
             Button(Const("⬅️"), id="user_prev", on_click=on_events_prev, when="has_prev"),
             Button(Const("➡️"), id="user_next", on_click=on_events_next, when="has_next"),
         ),
         state=Events.list,
         getter=get_events_for_user,
-        parse_mode="HTML"
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(
@@ -218,13 +253,15 @@ events_dialog = Dialog(
         ),
         Format("{details}"),
         Row(
-            Url(Const("🔗 Регистрация/ссылка"), url=Format("{event_link}"), when="has_link"),
-            SwitchTo(Const("◀️ Назад"), id="back_to_list", state=Events.list)
+            Url(
+                Const("🔗 Регистрация/ссылка"),
+                url=Format("{event_link}"),
+                when="has_link",
+            ),
+            SwitchTo(Const("◀️ Назад"), id="back_to_list", state=Events.list),
         ),
         state=Events.details,
         getter=get_event_details,
-        parse_mode="HTML"
-    )
+        parse_mode="HTML",
+    ),
 )
-
-

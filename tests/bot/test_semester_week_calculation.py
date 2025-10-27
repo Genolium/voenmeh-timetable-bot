@@ -2,9 +2,10 @@
 Тесты для функции calculate_semester_week_number с использованием настроек семестров из БД.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from bot.text_formatters import calculate_semester_week_number, calculate_semester_week_number_fallback
 
@@ -19,14 +20,17 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров: осенний 1 сентября, весенний 9 февраля
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
             # Тест: дата в осеннем семестре
             test_date = date(2024, 9, 15)  # 15 сентября - 3-я неделя осеннего семестра
@@ -53,7 +57,7 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
@@ -73,14 +77,17 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
             # Тест: первый день осеннего семестра
             test_date = date(2024, 9, 1)
@@ -101,14 +108,17 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров для 2024 года
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
             # Тест: дата до осеннего семестра - недели не считаются
             test_date = date(2024, 1, 15)
@@ -131,7 +141,7 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 

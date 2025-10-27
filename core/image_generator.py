@@ -1,10 +1,10 @@
-import os
-import logging
 import asyncio
+import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -25,10 +25,17 @@ except Exception:
     _async_playwright = None
 async_playwright = _async_playwright
 
-def print_progress_bar(current: int, total: int, prefix: str = "Прогресс", suffix: str = "", length: int = 30):
+
+def print_progress_bar(
+    current: int,
+    total: int,
+    prefix: str = "Прогресс",
+    suffix: str = "",
+    length: int = 30,
+):
     """
     Выводит прогресс-бар в консоль для генерации изображений.
-    
+
     Args:
         current: Текущий прогресс
         total: Общее количество
@@ -37,11 +44,12 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
         length: Длина прогресс-бара
     """
     filled_length = int(length * current // total)
-    bar = '█' * filled_length + '-' * (length - filled_length)
+    bar = "█" * filled_length + "-" * (length - filled_length)
     percent = f"{100 * current // total}%"
-    print(f'\r{prefix} |{bar}| {percent} {suffix}', end='', flush=True)
+    print(f"\r{prefix} |{bar}| {percent} {suffix}", end="", flush=True)
     if current == total:
         print()  # Новая строка в конце
+
 
 _bg_images_cache = {}
 _template_cache = None
@@ -51,15 +59,15 @@ _template_mtime: float | None = None
 _POOL_MAX_PAGES = int(os.getenv("IMAGE_BROWSER_MAX_PAGES", "60"))  # Перезапуск после N страниц
 _POOL_MAX_AGE_SEC = int(os.getenv("IMAGE_BROWSER_MAX_AGE_SEC", "900"))  # …или после T секунд
 _POOL_HEADLESS_ARGS = [
-    '--headless=new',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-web-security',
-    '--disable-features=VizDisplayCompositor',
-    '--no-zygote',
-    '--disable-extensions',
-    '--disable-background-networking',
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-web-security",
+    "--disable-features=VizDisplayCompositor",
+    "--no-zygote",
+    "--disable-extensions",
+    "--disable-background-networking",
 ]
 
 
@@ -79,33 +87,32 @@ def _prepare_days(schedule_data: dict) -> List[dict]:
     for name in order:
         lessons = upper.get(name.upper(), [])
         # Определяем первую пару по минимальному времени (в минутах)
-        first = ''
+        first = ""
         if lessons:
             try:
                 first = sorted(
                     lessons,
-                    key=lambda l: _time_to_minutes(l.get('start_time_raw', '23:59'))
-                )[0].get('start_time_raw', '')
+                    key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
+                )[
+                    0
+                ].get("start_time_raw", "")
             except Exception:
-                first = ''
+                first = ""
         items = []
         for l in lessons:
             title = f"{l.get('subject', '')}{' (' + l.get('type','') + ')' if l.get('type') else ''}"
-            room_raw = (l.get('room', '') or '').strip('; ')  # Удаляем только точку с запятой и пробелы, сохраняем звездочки
+            room_raw = (l.get("room", "") or "").strip("; ")  # Удаляем только точку с запятой и пробелы, сохраняем звездочки
             room_lower = room_raw.lower()
             # Считаем такие значения отсутствием кабинета
-            if not room_raw or ('кабинет' in room_lower and 'не указан' in room_lower):
-                room_fmt = ''
+            if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
+                room_fmt = ""
             else:
                 room_fmt = f"{room_raw}"
-            items.append({
-                'title': title,
-                'room': room_fmt,
-                'time': l.get('time','')
-            })
+            items.append({"title": title, "room": room_fmt, "time": l.get("time", "")})
         # Добавляем оба ключа для совместимости с тестами и шаблонами: 'name' и 'title'
-        prepared.append({'name': name, 'title': name, 'firstStart': first, 'lessons': items})
+        prepared.append({"name": name, "title": name, "firstStart": first, "lessons": items})
     return prepared
+
 
 async def generate_schedule_image(
     schedule_data: dict,
@@ -142,59 +149,63 @@ async def generate_schedule_image(
         if _template_cache is None or (
             _template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime
         ):
-            env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
+            env = Environment(
+                loader=FileSystemLoader(str(templates_dir)),
+                autoescape=select_autoescape(),
+            )
             _template_cache = env.get_template("schedule_template.html")
             _template_mtime = current_mtime
 
-        week_slug = 'odd' if 'Неч' in week_type else 'even'
+        week_slug = "odd" if "Неч" in week_type else "even"
         if not _bg_images_cache:
             from base64 import b64encode
+
             # Стандартные фоны для нечётной/чётной недели
             try:
                 orange_path = project_root / "assets" / "orange_background.png"
-                _bg_images_cache['orange'] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
+                _bg_images_cache["orange"] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['orange'] = ""
+                _bg_images_cache["orange"] = ""
             try:
                 purple_path = project_root / "assets" / "purple_background.png"
-                _bg_images_cache['purple'] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
+                _bg_images_cache["purple"] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['purple'] = ""
+                _bg_images_cache["purple"] = ""
             # Дополнительные фоны для пользовательских тем
             try:
                 light_path = project_root / "assets" / "light_background.png"
-                _bg_images_cache['light'] = f"data:image/png;base64,{b64encode(light_path.read_bytes()).decode()}"
+                _bg_images_cache["light"] = f"data:image/png;base64,{b64encode(light_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['light'] = ""
+                _bg_images_cache["light"] = ""
             try:
                 dark_path = project_root / "assets" / "dark_background.png"
-                _bg_images_cache['dark'] = f"data:image/png;base64,{b64encode(dark_path.read_bytes()).decode()}"
+                _bg_images_cache["dark"] = f"data:image/png;base64,{b64encode(dark_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['dark'] = ""
+                _bg_images_cache["dark"] = ""
             try:
                 coffee_path = project_root / "assets" / "coffee_background.png"
-                _bg_images_cache['coffee'] = f"data:image/png;base64,{b64encode(coffee_path.read_bytes()).decode()}"
+                _bg_images_cache["coffee"] = f"data:image/png;base64,{b64encode(coffee_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['coffee'] = ""
+                _bg_images_cache["coffee"] = ""
             try:
                 official_path = project_root / "assets" / "official_background.png"
                 # Используем как фон для темы 'classic' (официальные цвета Военмеха)
-                _bg_images_cache['official'] = f"data:image/png;base64,{b64encode(official_path.read_bytes()).decode()}"
+                _bg_images_cache["official"] = f"data:image/png;base64,{b64encode(official_path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache['official'] = ""
+                _bg_images_cache["official"] = ""
 
         # Выбираем фон по теме пользователя
         def _resolve_bg_key(theme: Optional[str], slug: str) -> str:
-            if theme == 'light':
-                return 'light'
-            if theme == 'dark':
-                return 'dark'
-            if theme == 'coffee':
-                return 'coffee'
-            if theme == 'classic':
-                return 'official'
+            if theme == "light":
+                return "light"
+            if theme == "dark":
+                return "dark"
+            if theme == "coffee":
+                return "coffee"
+            if theme == "classic":
+                return "official"
             # 'standard' или None — старое поведение: разные фоны для нечётной/чётной
-            return 'orange' if slug == 'odd' else 'purple'
+            return "orange" if slug == "odd" else "purple"
 
         bg_key = _resolve_bg_key(user_theme, week_slug)
         bg_image_data = _bg_images_cache.get(bg_key, "")
@@ -205,7 +216,7 @@ async def generate_schedule_image(
             group=group,
             schedule_days=_prepare_days(schedule_data),
             bg_image=bg_image_data,
-            assets_base=(project_root / 'assets').as_uri(),
+            assets_base=(project_root / "assets").as_uri(),
             user_theme=user_theme,
         )
 
@@ -236,7 +247,13 @@ async def generate_schedule_image(
                 # Первичная инициализация
                 ctx = await async_playwright().__aenter__()
                 browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                state = _PoolState(
+                    lock=asyncio.Lock(),
+                    ctx=ctx,
+                    browser=browser,
+                    created_at=time.time(),
+                    pages_made=0,
+                )
                 setattr(loop, "__img_pool_state__", state)
                 return state
             # Health-check: браузер жив?
@@ -257,7 +274,13 @@ async def generate_schedule_image(
                 finally:
                     ctx = await async_playwright().__aenter__()
                     browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                    state = _PoolState(
+                        lock=asyncio.Lock(),
+                        ctx=ctx,
+                        browser=browser,
+                        created_at=time.time(),
+                        pages_made=0,
+                    )
                     setattr(loop, "__img_pool_state__", state)
             # Ротация по возрасту/количеству страниц
             if (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES:
@@ -273,7 +296,13 @@ async def generate_schedule_image(
                 finally:
                     ctx = await async_playwright().__aenter__()
                     browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
+                    state = _PoolState(
+                        lock=asyncio.Lock(),
+                        ctx=ctx,
+                        browser=browser,
+                        created_at=time.time(),
+                        pages_made=0,
+                    )
                     setattr(loop, "__img_pool_state__", state)
             return state
 
@@ -293,16 +322,19 @@ async def generate_schedule_image(
                     attempt += 1
                     try:
                         # --- УСТАНАВЛИВАЕМ VIEWPORT (ширина не меняется) ---
-                        from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
+                        from core.render_config import VIEWPORT_HEIGHT, VIEWPORT_WIDTH
+
                         default_width = VIEWPORT_WIDTH
                         default_height = VIEWPORT_HEIGHT
                         initial_width = (
-                            (viewport_size or {}).get('width', default_width)
-                            if isinstance(viewport_size, dict) else default_width
+                            (viewport_size or {}).get("width", default_width)
+                            if isinstance(viewport_size, dict)
+                            else default_width
                         )
                         initial_height = (
-                            (viewport_size or {}).get('height', default_height)
-                            if isinstance(viewport_size, dict) else default_height
+                            (viewport_size or {}).get("height", default_height)
+                            if isinstance(viewport_size, dict)
+                            else default_height
                         )
 
                         await page.set_viewport_size({"width": initial_width, "height": initial_height})

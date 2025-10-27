@@ -13,5 +13,3 @@ receivers:
     webhook_configs:
       - url: http://bot:8010/alerts
         send_resolved: true
-
-

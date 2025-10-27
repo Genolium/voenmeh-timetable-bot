@@ -51,7 +51,7 @@ services:
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro 
+      - /var/run/docker.sock:/var/run/docker.sock:ro
 
   db:
     image: postgres:15-alpine
@@ -120,7 +120,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-    
+
   grafana:
     image: grafana/grafana:11.1.0
     container_name: voenmeh_grafana
@@ -226,7 +226,7 @@ volumes:
   postgres_data:
   prometheus_data:
   grafana_data:
-  loki_data:       
+  loki_data:
   promtail_data:
   pgadmin_data:
   rabbitmq_data:

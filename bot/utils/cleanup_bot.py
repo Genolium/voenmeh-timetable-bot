@@ -51,7 +51,7 @@ class CleanupBot(Bot):
             if len(ids) <= self._keep_messages:
                 return
 
-            to_delete = ids[:-self._keep_messages]
+            to_delete = ids[: -self._keep_messages]
             deleted = 0
             for mid in to_delete:
                 try:
@@ -69,7 +69,10 @@ class CleanupBot(Bot):
                     deleted += 1
             if deleted:
                 logger.debug(
-                    "Pruned %s old messages in chat %s (thread %s)", deleted, chat_id, thread_id
+                    "Pruned %s old messages in chat %s (thread %s)",
+                    deleted,
+                    chat_id,
+                    thread_id,
                 )
         except Exception as e:
             logger.debug("CleanupBot tracking error: %s", e)
@@ -100,5 +103,3 @@ class CleanupBot(Bot):
     async def send_media_group(self, chat_id: int | str, media: Any, **kwargs: Any):
         # Media groups are exempt from auto-tracking/deletion
         return await super().send_media_group(chat_id, media, **kwargs)
-
-

@@ -3,6 +3,7 @@ from enum import Enum
 
 class DialogDataKeys(str, Enum):
     """Ключи для хранения данных в `dialog_data`."""
+
     GROUP = "group"
     SEARCH_TYPE = "search_type"
     TEACHER_NAME = "teacher_name"
@@ -10,10 +11,10 @@ class DialogDataKeys(str, Enum):
     FOUND_ITEMS = "found_items"
     CURRENT_DATE_ISO = "current_date_iso"
 
- 
 
 class WidgetIds(str, Enum):
     """Идентификаторы (ID) для виджетов в диалогах."""
+
     # Settings
     EVENING_NOTIFY = "evening_notify"
     MORNING_SUMMARY = "morning_summary"

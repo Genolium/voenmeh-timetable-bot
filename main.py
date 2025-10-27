@@ -5,53 +5,60 @@ import sys
 import time
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.client.session.aiohttp import AiohttpSession
-from aiohttp import ClientTimeout
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandStart
-from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.fsm.storage.base import DefaultKeyBuilder
-from aiogram.types import Message, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
-from aiogram_dialog import setup_dialogs, StartMode, DialogManager
+from aiogram.fsm.storage.redis import RedisStorage
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, Message
+from aiogram_dialog import DialogManager, StartMode, setup_dialogs
 from aiogram_dialog.api.exceptions import UnknownIntent
+from aiohttp import ClientTimeout
 from dotenv import load_dotenv
-from prometheus_client import start_http_server 
+from prometheus_client import start_http_server
 from pythonjsonlogger.json import JsonFormatter
 from redis.asyncio.client import Redis
 
-# --- Импорты ядра ---
-from core.config import ADMIN_IDS
-from core.alert_webhook import run_alert_webhook_server
-from core.business_alerts import start_business_monitoring
-from core.manager import TimetableManager
-from core.user_data import UserDataManager
-from core.image_generator import shutdown_image_generator
-
-# --- Импорты бота ---
-from bot.handlers.inline_handlers import inline_query_handler
-from bot.handlers.feedback_reply_handler import feedback_reply_router
-from bot.middlewares.logging_middleware import LoggingMiddleware
-from bot.middlewares.manager_middleware import ManagerMiddleware
-from bot.middlewares.user_data_middleware import UserDataMiddleware
-from bot.middlewares.session_middleware import SessionMiddleware
-# from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
-from bot.scheduler import setup_scheduler
-# from bot.utils.cleanup_bot import CleanupBot  # Автоочистка чатов отключена
-
 # --- Импорты диалогов ---
 from bot.dialogs.about_menu import about_dialog
-from bot.dialogs.admin_menu import admin_dialog
+from bot.dialogs.admin_menu import admin_dialog, on_cancel_generation
+from bot.dialogs.events_menu import events_dialog
 from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
-from bot.dialogs.schedule_view import schedule_dialog, on_inline_back, on_send_original_file_callback, on_check_subscription_callback
-from bot.dialogs.admin_menu import on_cancel_generation
+from bot.dialogs.schedule_view import (
+    on_check_subscription_callback,
+    on_inline_back,
+    on_send_original_file_callback,
+    schedule_dialog,
+)
 from bot.dialogs.settings_menu import settings_dialog
-from bot.dialogs.theme_dialog import theme_dialog
-from bot.dialogs.events_menu import events_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu, Events
+from bot.dialogs.states import About, Admin, Events, Feedback, MainMenu, Schedule, SettingsMenu
+from bot.dialogs.theme_dialog import theme_dialog
+from bot.handlers.feedback_reply_handler import feedback_reply_router
+
+# --- Импорты бота ---
+from bot.handlers.inline_handlers import inline_query_handler
+from bot.middlewares.logging_middleware import LoggingMiddleware
+from bot.middlewares.manager_middleware import ManagerMiddleware
+from bot.middlewares.session_middleware import SessionMiddleware
+from bot.middlewares.user_data_middleware import UserDataMiddleware
+
+# from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
+from bot.scheduler import setup_scheduler
+from core.alert_webhook import run_alert_webhook_server
+from core.business_alerts import start_business_monitoring
+
+# --- Импорты ядра ---
+from core.config import ADMIN_IDS
+from core.image_generator import shutdown_image_generator
+from core.manager import TimetableManager
+from core.user_data import UserDataManager
+
+# from bot.utils.cleanup_bot import CleanupBot  # Автоочистка чатов отключена
+
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
 def setup_logging():
@@ -59,11 +66,12 @@ def setup_logging():
     # Простое логирование для отладки
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler()]
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler()],
     )
     # Устанавливаем уровень для логгера aiogram, чтобы не видеть слишком много системных сообщений
-    logging.getLogger('aiogram').setLevel(logging.WARNING)
+    logging.getLogger("aiogram").setLevel(logging.WARNING)
+
 
 async def set_bot_commands(bot: Bot):
     """Устанавливает меню команд для пользователей и администраторов."""
@@ -81,15 +89,14 @@ async def set_bot_commands(bot: Bot):
         return
 
     if ADMIN_IDS:
-        admin_commands = user_commands + [
-            BotCommand(command="admin", description="👑 Админ-панель")
-        ]
+        admin_commands = user_commands + [BotCommand(command="admin", description="👑 Админ-панель")]
         for admin_id in ADMIN_IDS:
             try:
                 await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
             except Exception as e:
                 logging.error(f"Не удалось установить команды для админа {admin_id}: {e}")
         logging.info(f"Установлены расширенные команды для администраторов: {ADMIN_IDS}")
+
 
 # --- Обработчики команд ---
 async def start_command_handler(message: Message, dialog_manager: DialogManager):
@@ -108,6 +115,7 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
     else:
         await dialog_manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
 
+
 async def about_command_handler(message: Message, dialog_manager: DialogManager):
     try:
         await dialog_manager.start(About.page_1, mode=StartMode.RESET_STACK)
@@ -121,14 +129,18 @@ async def about_command_handler(message: Message, dialog_manager: DialogManager)
         except Exception:
             pass
 
+
 async def feedback_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
+
 
 async def admin_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Admin.menu, mode=StartMode.RESET_STACK)
 
+
 async def events_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Events.list, mode=StartMode.RESET_STACK)
+
 
 # --- Функции для запуска сервисов ---
 async def run_metrics_server(port: int = 8000):
@@ -136,6 +148,7 @@ async def run_metrics_server(port: int = 8000):
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, start_http_server, port)
     logging.info(f"Prometheus metrics server started on http://localhost:{port}")
+
 
 # --- Основная функция запуска ---
 # Простой входной рейт-лимит через throttling middleware
@@ -145,7 +158,7 @@ class SimpleRateLimiter:
         self.redis = redis  # Pass redis_client
 
     async def __call__(self, handler, event, data):
-        user_id = getattr(getattr(event, 'from_user', None), 'id', None)
+        user_id = getattr(getattr(event, "from_user", None), "id", None)
         if not user_id:
             return await handler(event, data)
         key = f"rate_limit:{user_id}"
@@ -153,7 +166,7 @@ class SimpleRateLimiter:
         now = time.monotonic()
         # Безопасно парсим значения из Redis (могут быть bytes/str)
         parsed = []
-        for t in (history or []):
+        for t in history or []:
             try:
                 val = float(t if isinstance(t, (int, float, str)) else t.decode())
                 if now - val < 1.0:
@@ -163,15 +176,19 @@ class SimpleRateLimiter:
         history = parsed
         if len(history) >= self._max_per_sec:
             # Вместо молча дропаем событие, отвечаем пользователю
-            if hasattr(event, 'answer'):
+            if hasattr(event, "answer"):
                 try:
-                    await event.answer("⚠️ Слишком много запросов. Подождите немного и попробуйте снова.", show_alert=True)
+                    await event.answer(
+                        "⚠️ Слишком много запросов. Подождите немного и попробуйте снова.",
+                        show_alert=True,
+                    )
                 except Exception:
                     pass
             return
         await self.redis.rpush(key, now)
         await self.redis.expire(key, 2)
         return await handler(event, data)
+
 
 async def error_handler(event=None, exception: Exception | None = None, *args, **kwargs):
     """Глобальный обработчик ошибок. Совместим с разными сигнатурами aiogram.
@@ -188,7 +205,10 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
             # Пытаемся вежливо ответить на колбэк и предложить открыть меню
             try:
                 if cq is not None and hasattr(cq, "answer"):
-                    await cq.answer("Эта кнопка больше неактуальна. Откройте меню заново.", show_alert=False)
+                    await cq.answer(
+                        "Эта кнопка больше неактуальна. Откройте меню заново.",
+                        show_alert=False,
+                    )
             except Exception:
                 pass
             try:
@@ -206,6 +226,7 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
         # Никогда не падаем из обработчика ошибок
         pass
     return True
+
 
 async def main():
     print("🚀 Starting bot...")
@@ -226,12 +247,12 @@ async def main():
     print("✅ All environment variables found")
 
     redis_client = Redis.from_url(redis_url or "")
-    
+
     timetable_manager = await TimetableManager.create(redis_client=redis_client)
     if not timetable_manager:
         logging.critical("Критическая ошибка: не удалось инициализировать TimetableManager. Запуск отменен.")
         return
-    
+
     user_data_manager = UserDataManager(db_url=db_url or "", redis_url=redis_url)
     logging.info("Менеджеры данных инициализированы.")
 
@@ -251,7 +272,7 @@ async def main():
         bot=bot,
         manager=timetable_manager,
         user_data_manager=user_data_manager,
-        redis_client=redis_client
+        redis_client=redis_client,
     )
 
     # Подключение Middleware
@@ -259,20 +280,32 @@ async def main():
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
     from bot.middlewares.activity_logging_middleware import ActivityLoggingMiddleware
+
     dp.update.middleware(ActivityLoggingMiddleware())  # Middleware для логирования активности пользователей
-    dp.update.middleware(LoggingMiddleware()) # Middleware для сбора метрик и логов
+    dp.update.middleware(LoggingMiddleware())  # Middleware для сбора метрик и логов
     # Автоочистка чатов полностью отключена
     dp.update.middleware(SimpleRateLimiter(max_per_sec=1, redis=redis_client))  # анти-флуд на входящие события
-    dp.update.middleware(lambda handler, event, data: handler(event, {**data, 'bot': bot, 'scheduler': scheduler, 'redis_client': redis_client}))
+    dp.update.middleware(
+        lambda handler, event, data: handler(
+            event,
+            {**data, "bot": bot, "scheduler": scheduler, "redis_client": redis_client},
+        )
+    )
     dp.errors.register(error_handler)
 
     # Регистрация диалогов и хэндлеров
     # Регистрируем feedback_reply_router первым, чтобы он обрабатывал сообщения в FEEDBACK_CHAT_ID
     dp.include_router(feedback_reply_router)
-    
+
     all_dialogs = [
-        main_menu_dialog, schedule_dialog, settings_dialog, find_dialog,
-        about_dialog, feedback_dialog, admin_dialog, events_dialog
+        main_menu_dialog,
+        schedule_dialog,
+        settings_dialog,
+        find_dialog,
+        about_dialog,
+        feedback_dialog,
+        admin_dialog,
+        events_dialog,
     ]
     for dialog in all_dialogs:
         dp.include_router(dialog)
@@ -280,9 +313,10 @@ async def main():
 
     # DEBUG: Print registered dialogs and windows
     from aiogram_dialog import Dialog
+
     print("--- DEBUG DIALOGS ---")
     # Access routers through the dispatcher's sub_routers attribute
-    if hasattr(dp, 'sub_routers'):
+    if hasattr(dp, "sub_routers"):
         for router in dp.sub_routers:
             if isinstance(router, Dialog):
                 print(f"Registered Dialog: {router.states_group_name}")
@@ -292,7 +326,7 @@ async def main():
         # Fallback: try to access through different methods
         try:
             # In newer aiogram versions, routers might be stored differently
-            routers = getattr(dp, '_sub_routers', []) or getattr(dp, 'routers', [])
+            routers = getattr(dp, "_sub_routers", []) or getattr(dp, "routers", [])
             for router in routers:
                 if isinstance(router, Dialog):
                     print(f"Registered Dialog: {router.states_group_name}")
@@ -373,7 +407,8 @@ async def main():
             pass
         logging.info("Планировщик, бот и ресурсы рендеринга изображений остановлены.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):

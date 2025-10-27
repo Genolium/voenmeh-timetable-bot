@@ -1,19 +1,18 @@
 import logging
-from aiogram.types import CallbackQuery
+
 from aiogram.exceptions import TelegramBadRequest
-from aiogram_dialog import Dialog, Window, DialogManager, StartMode
-from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo, Back
-from aiogram_dialog.widgets.media import StaticMedia
+from aiogram.types import CallbackQuery
+from aiogram_dialog import Dialog, DialogManager, StartMode, Window
+from aiogram_dialog.widgets.kbd import Back, Button, Row, SwitchTo
 from aiogram_dialog.widgets.link_preview import LinkPreview
+from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const
 
+from core.config import ABOUT_INLINE_IMG, ABOUT_MAIN_SCREEN_IMG, ABOUT_NOTIFICATIONS_IMG, ABOUT_SEARCH_IMG, ABOUT_WELCOME_IMG
 from core.user_data import UserDataManager
-from core.config import (
-    ABOUT_WELCOME_IMG, ABOUT_MAIN_SCREEN_IMG, ABOUT_SEARCH_IMG,
-    ABOUT_NOTIFICATIONS_IMG, ABOUT_INLINE_IMG
-)
-from .states import About, Schedule
+
 from .constants import WidgetIds
+from .states import About, Schedule
 
 # --- Тексты для страниц ---
 TEXT_PAGE_1 = (
@@ -59,10 +58,11 @@ TEXT_PAGE_5 = (
 # --- Навигация и завершение ---
 TOTAL_PAGES = 5
 
+
 async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_group = await user_data_manager.get_user_group(callback.from_user.id)
-    
+
     try:
         await callback.message.delete()
     except TelegramBadRequest as e:
@@ -71,12 +71,13 @@ async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: Di
         else:
             logging.error(f"Неожиданная ошибка при удалении сообщения: {e}")
             raise
-    
+
     if user_group:
         await manager.start(Schedule.view, data={"group": user_group}, mode=StartMode.RESET_STACK)
     else:
         await manager.done()
-        
+
+
 about_dialog = Dialog(
     Window(
         StaticMedia(path=ABOUT_WELCOME_IMG),
@@ -85,7 +86,9 @@ about_dialog = Dialog(
             Button(Const(f"1/{TOTAL_PAGES}"), id="pager_1"),
             SwitchTo(Const("Далее ▶️"), id="next_1", state=About.page_2),
         ),
-        LinkPreview(is_disabled=True), state=About.page_1, parse_mode="HTML"
+        LinkPreview(is_disabled=True),
+        state=About.page_1,
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(path=ABOUT_MAIN_SCREEN_IMG),
@@ -95,7 +98,9 @@ about_dialog = Dialog(
             Button(Const(f"2/{TOTAL_PAGES}"), id="pager_2"),
             SwitchTo(Const("Далее ▶️"), id="next_2", state=About.page_3),
         ),
-        LinkPreview(is_disabled=True), state=About.page_2, parse_mode="HTML"
+        LinkPreview(is_disabled=True),
+        state=About.page_2,
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(path=ABOUT_SEARCH_IMG),
@@ -105,7 +110,9 @@ about_dialog = Dialog(
             Button(Const(f"3/{TOTAL_PAGES}"), id="pager_3"),
             SwitchTo(Const("Далее ▶️"), id="next_3", state=About.page_4),
         ),
-        LinkPreview(is_disabled=True), state=About.page_3, parse_mode="HTML"
+        LinkPreview(is_disabled=True),
+        state=About.page_3,
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(path=ABOUT_NOTIFICATIONS_IMG),
@@ -115,7 +122,9 @@ about_dialog = Dialog(
             Button(Const(f"4/{TOTAL_PAGES}"), id="pager_4"),
             SwitchTo(Const("Далее ▶️"), id="next_4", state=About.page_5),
         ),
-        LinkPreview(is_disabled=True), state=About.page_4, parse_mode="HTML"
+        LinkPreview(is_disabled=True),
+        state=About.page_4,
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(path=ABOUT_INLINE_IMG),
@@ -123,8 +132,14 @@ about_dialog = Dialog(
         Row(
             Back(Const("◀️ Назад")),
             Button(Const(f"5/{TOTAL_PAGES}"), id="pager_5"),
-            Button(Const("✅ Понятно"), id=WidgetIds.FINISH_TUTORIAL, on_click=on_finish_clicked),
+            Button(
+                Const("✅ Понятно"),
+                id=WidgetIds.FINISH_TUTORIAL,
+                on_click=on_finish_clicked,
+            ),
         ),
-        LinkPreview(is_disabled=True), state=About.page_5, parse_mode="HTML"
-    ),    
+        LinkPreview(is_disabled=True),
+        state=About.page_5,
+        parse_mode="HTML",
+    ),
 )

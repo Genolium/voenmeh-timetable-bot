@@ -1,7 +1,10 @@
-import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from core.weather_api import WeatherAPI
+
 
 @pytest.fixture
 def mock_aiohttp_get(mocker):
@@ -13,13 +16,14 @@ def mock_aiohttp_get(mocker):
                 "dt": 1672560000,
                 "main": {"temp": -5.5, "humidity": 80},
                 "weather": [{"description": "пасмурно", "icon": "04d"}],
-                "wind": {"speed": 3.1}
+                "wind": {"speed": 3.1},
             }
         ]
     }
     mock_session_get = AsyncMock()
     mock_session_get.__aenter__.return_value = mock_response
-    return mocker.patch('aiohttp.ClientSession.get', return_value=mock_session_get)
+    return mocker.patch("aiohttp.ClientSession.get", return_value=mock_session_get)
+
 
 def test_weather_api_emoji_mapping():
     api = WeatherAPI(api_key="k", city_id="1")
@@ -33,6 +37,7 @@ def test_weather_api_emoji_mapping():
     assert api._get_weather_emoji("50d") == "🌫️"
     assert api._get_weather_emoji("xx") == "❓"
 
+
 @pytest.mark.asyncio
 async def test_weather_api_success(monkeypatch):
     # Очистка кэша, чтобы не влиял
@@ -44,10 +49,13 @@ async def test_weather_api_success(monkeypatch):
     class GoodResp:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         def raise_for_status(self):
             return None
+
         async def json(self):
             return {
                 "list": [
@@ -59,20 +67,24 @@ async def test_weather_api_success(monkeypatch):
                     }
                 ]
             }
+
         status = 200
 
     class Session:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         def get(self, *a, **k):
             return GoodResp()
 
-    monkeypatch.setattr('aiohttp.ClientSession', lambda *a, **k: Session())
+    monkeypatch.setattr("aiohttp.ClientSession", lambda *a, **k: Session())
 
     res = await api.get_forecast_for_time(now)
     assert res is not None and res["emoji"]
+
 
 @pytest.mark.asyncio
 async def test_weather_api_http_error(monkeypatch):
@@ -83,25 +95,31 @@ async def test_weather_api_http_error(monkeypatch):
     class BadResp:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         def raise_for_status(self):
             raise Exception("boom")
+
         async def json(self):
             return {}
 
     class Session:
         async def __aenter__(self):
             return self
+
         async def __aexit__(self, *a):
             return False
+
         def get(self, *a, **k):
             return BadResp()
 
-    monkeypatch.setattr('aiohttp.ClientSession', lambda *a, **k: Session())
+    monkeypatch.setattr("aiohttp.ClientSession", lambda *a, **k: Session())
 
     res = await api.get_forecast_for_time(datetime.now(timezone.utc))
     assert res is None
+
 
 @pytest.mark.asyncio
 async def test_weather_api_cache_hit(monkeypatch):
@@ -110,8 +128,15 @@ async def test_weather_api_cache_hit(monkeypatch):
     target = datetime.now(timezone.utc)
     key = f"{target.date().isoformat()}_{(target.hour // 3)*3:02d}h"
     WeatherAPI._cache[key] = {
-        'timestamp': datetime.now(timezone.utc).replace(tzinfo=None),
-        'data': {"temperature": 1, "description": "ok", "emoji": "☀️", "humidity": 1, "wind_speed": 1, "forecast_time": "12:00"}
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
+        "data": {
+            "temperature": 1,
+            "description": "ok",
+            "emoji": "☀️",
+            "humidity": 1,
+            "wind_speed": 1,
+            "forecast_time": "12:00",
+        },
     }
     result = await api.get_forecast_for_time(target)
     assert result is not None

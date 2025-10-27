@@ -1,5 +1,6 @@
-import pytest
 from datetime import date
+
+import pytest
 
 from core.manager import TimetableManager
 
@@ -79,5 +80,3 @@ async def test_get_teacher_schedule_unknown_returns_error():
     manager = _build_manager()
     info = await manager.get_teacher_schedule("Несуществующий Преподаватель", date(2025, 8, 28))
     assert "error" in info
-
-

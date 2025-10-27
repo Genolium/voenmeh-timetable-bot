@@ -1,29 +1,65 @@
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date, timedelta
-from aiogram.types import CallbackQuery, Message, User, ContentType
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from aiogram.types import CallbackQuery, ContentType, Message, User
 from aiogram_dialog import DialogManager
 from aiogram_dialog.widgets.kbd import Button
 
 from bot.dialogs.admin_menu import (
-    on_test_morning, on_test_evening, on_test_reminders_for_week,
-    on_test_alert, on_semester_settings, on_edit_fall_semester,
-    on_edit_spring_semester, on_fall_semester_input, on_spring_semester_input,
-    on_broadcast_received, on_segment_criteria_input, on_template_input_message,
-    on_confirm_segment_send, on_clear_cache,
+    active_generations,
+    build_segment_users,
+    get_create_preview,
+    get_events_list,
+    get_preview_data,
+    get_semester_settings_data,
+    get_stats_data,
+    get_user_manage_data,
+    on_admin_events,
+    on_broadcast_received,
     on_cancel_generation,
-    get_stats_data, get_preview_data, active_generations,
-    on_generate_full_schedule, on_check_graduated_groups,
-    on_admin_events, get_events_list,
-    on_events_prev, on_events_next, on_event_selected, on_events_set_filter,
-    on_event_delete, on_event_toggle_publish, on_event_edit_menu,
-    on_event_edit_title, on_event_edit_datetime, on_event_edit_location,
-    on_event_edit_description, on_event_edit_link, on_event_edit_image,
-    on_event_create, on_cr_title, on_cr_date, on_cr_location,
-    on_cr_desc, on_cr_link, on_cr_time, on_cr_confirm, on_event_show_image,
-    get_create_preview, on_user_id_input, on_new_group_input, get_user_manage_data,
-    get_semester_settings_data, build_segment_users, on_period_selected
+    on_check_graduated_groups,
+    on_clear_cache,
+    on_confirm_segment_send,
+    on_cr_confirm,
+    on_cr_date,
+    on_cr_desc,
+    on_cr_link,
+    on_cr_location,
+    on_cr_time,
+    on_cr_title,
+    on_edit_fall_semester,
+    on_edit_spring_semester,
+    on_event_create,
+    on_event_delete,
+    on_event_edit_datetime,
+    on_event_edit_description,
+    on_event_edit_image,
+    on_event_edit_link,
+    on_event_edit_location,
+    on_event_edit_menu,
+    on_event_edit_title,
+    on_event_selected,
+    on_event_show_image,
+    on_event_toggle_publish,
+    on_events_next,
+    on_events_prev,
+    on_events_set_filter,
+    on_fall_semester_input,
+    on_generate_full_schedule,
+    on_new_group_input,
+    on_period_selected,
+    on_segment_criteria_input,
+    on_semester_settings,
+    on_spring_semester_input,
+    on_template_input_message,
+    on_test_alert,
+    on_test_evening,
+    on_test_morning,
+    on_test_reminders_for_week,
+    on_user_id_input,
 )
+
 
 @pytest.fixture
 def mock_callback():
@@ -35,6 +71,7 @@ def mock_callback():
     callback.message.answer = AsyncMock()
     return callback
 
+
 @pytest.fixture
 def mock_manager():
     manager = AsyncMock(spec=DialogManager)
@@ -42,9 +79,10 @@ def mock_manager():
         "bot": AsyncMock(),
         "user_data_manager": AsyncMock(),
         "manager": AsyncMock(),
-        "session_factory": AsyncMock()
+        "session_factory": AsyncMock(),
     }
     return manager
+
 
 @pytest.fixture
 def mock_message():
@@ -58,12 +96,14 @@ def mock_message():
     message.content_type = "text"
     return message
 
+
 class TestAdminMenuHelpers:
     """Тесты для вспомогательных функций admin_menu"""
 
     def test_is_empty_field_empty_string(self):
         """Тест проверки пустой строки"""
         from bot.dialogs.admin_menu import _is_empty_field
+
         assert _is_empty_field("") is True
         assert _is_empty_field("   ") is True
         assert _is_empty_field(None) is True
@@ -71,7 +111,25 @@ class TestAdminMenuHelpers:
     def test_is_empty_field_skip_words(self):
         """Тест проверки слов для пропуска"""
         from bot.dialogs.admin_menu import _is_empty_field
-        skip_words = ['Пропустить', 'Пропуск', 'skip', 'Отмена', 'отменить', 'cancel', 'нет', 'no', 'none', '-', '—', '–', '.', 'пусто', 'empty', 'null']
+
+        skip_words = [
+            "Пропустить",
+            "Пропуск",
+            "skip",
+            "Отмена",
+            "отменить",
+            "cancel",
+            "нет",
+            "no",
+            "none",
+            "-",
+            "—",
+            "–",
+            ".",
+            "пусто",
+            "empty",
+            "null",
+        ]
         for word in skip_words:
             assert _is_empty_field(word) is True
             assert _is_empty_field(word.upper()) is True
@@ -80,6 +138,7 @@ class TestAdminMenuHelpers:
     def test_is_empty_field_normal_text(self):
         """Тест проверки обычного текста"""
         from bot.dialogs.admin_menu import _is_empty_field
+
         assert _is_empty_field("Обычный текст") is False
         assert _is_empty_field("Some text") is False
         assert _is_empty_field("123") is False
@@ -87,6 +146,7 @@ class TestAdminMenuHelpers:
     def test_is_cancel(self):
         """Тест проверки отмены"""
         from bot.dialogs.admin_menu import _is_cancel
+
         assert _is_cancel("отмена") is True
         assert _is_cancel("Отмена") is True
         assert _is_cancel("cancel") is True
@@ -100,6 +160,7 @@ class TestAdminMenuHelpers:
     def test_is_skip(self):
         """Тест проверки пропуска"""
         from bot.dialogs.admin_menu import _is_skip
+
         assert _is_skip("Пропустить") is True
         assert _is_skip("пропустить") is True
         assert _is_skip("skip") is True
@@ -113,12 +174,11 @@ class TestAdminMenuHelpers:
 
 
 class TestAdminMenuHandlers:
-
     @pytest.mark.asyncio
     async def test_on_test_morning(self, mock_callback, mock_manager):
         """Тест функции тестирования утренней рассылки."""
         await on_test_morning(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once_with("🚀 Запускаю постановку задач на утреннюю рассылку...")
         mock_callback.message.answer.assert_called_once_with("✅ Задачи для утренней рассылки поставлены в очередь.")
 
@@ -126,7 +186,7 @@ class TestAdminMenuHandlers:
     async def test_on_test_evening(self, mock_callback, mock_manager):
         """Тест функции тестирования вечерней рассылки."""
         await on_test_evening(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once_with("🚀 Запускаю постановку задач на вечернюю рассылку...")
         mock_callback.message.answer.assert_called_once_with("✅ Задачи для вечерней рассылки поставлены в очередь.")
 
@@ -140,9 +200,9 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["manager"].get_schedule_for_day.return_value = {
             "lessons": [{"subject": "TEST", "time": "9:00-10:30"}]
         }
-        
+
         await on_test_reminders_for_week(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once_with("🚀 Начинаю тест планировщика напоминаний...")
         # Проверяем, что бот отправил сообщения
         assert mock_manager.middleware_data["bot"].send_message.call_count > 0
@@ -151,19 +211,20 @@ class TestAdminMenuHandlers:
     async def test_on_test_reminders_for_week_no_users(self, mock_callback, mock_manager):
         """Тест функции тестирования напоминаний без пользователей."""
         mock_manager.middleware_data["user_data_manager"].get_users_for_lesson_reminders.return_value = []
-        
+
         await on_test_reminders_for_week(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once_with("🚀 Начинаю тест планировщика напоминаний...")
         mock_manager.middleware_data["bot"].send_message.assert_called_once_with(
-            123456789, "❌ Не найдено ни одного пользователя с подпиской на напоминания для теста."
+            123456789,
+            "❌ Не найдено ни одного пользователя с подпиской на напоминания для теста.",
         )
 
     @pytest.mark.asyncio
     async def test_on_test_alert(self, mock_callback, mock_manager):
         """Тест функции тестирования алерта."""
         await on_test_alert(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once_with("🧪 Отправляю тестовый алёрт...")
         mock_manager.middleware_data["bot"].send_message.assert_called_once()
 
@@ -171,37 +232,40 @@ class TestAdminMenuHandlers:
     async def test_on_semester_settings(self, mock_callback, mock_manager):
         """Тест перехода к настройкам семестров."""
         await on_semester_settings(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_edit_fall_semester(self, mock_callback, mock_manager):
         """Тест перехода к редактированию осеннего семестра."""
         await on_edit_fall_semester(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_edit_spring_semester(self, mock_callback, mock_manager):
         """Тест перехода к редактированию весеннего семестра."""
         await on_edit_spring_semester(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_fall_semester_input_success(self, mock_message, mock_manager):
         """Тест успешного ввода даты осеннего семестра."""
         mock_message.text = "01.09.2024"
-        
+
         # Мокаем SemesterSettingsManager
-        with patch('bot.dialogs.admin_menu.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.dialogs.admin_menu.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
-            mock_instance.get_semester_settings.return_value = [date(2024, 9, 1), date(2025, 2, 9)]
+            mock_instance.get_semester_settings.return_value = [
+                date(2024, 9, 1),
+                date(2025, 2, 9),
+            ]
             mock_instance.update_semester_settings.return_value = True
-            
+
             await on_fall_semester_input(mock_message, MagicMock(), mock_manager, "01.09.2024")
-            
+
             mock_message.answer.assert_called_with("✅ Дата начала осеннего семестра успешно обновлена!")
             mock_manager.switch_to.assert_called_once()
 
@@ -209,9 +273,9 @@ class TestAdminMenuHandlers:
     async def test_on_fall_semester_input_invalid_format(self, mock_message, mock_manager):
         """Тест ввода неверного формата даты осеннего семестра."""
         mock_message.text = "invalid_date"
-        
+
         await on_fall_semester_input(mock_message, MagicMock(), mock_manager, "invalid_date")
-        
+
         mock_message.answer.assert_called_with("❌ Неверный формат даты. Используйте формат ДД.ММ.ГГГГ (например, 01.09.2024)")
         mock_manager.switch_to.assert_called_once()
 
@@ -219,52 +283,57 @@ class TestAdminMenuHandlers:
     async def test_on_spring_semester_input_success(self, mock_message, mock_manager):
         """Тест успешного ввода даты весеннего семестра."""
         mock_message.text = "09.02.2025"
-        
-        with patch('bot.dialogs.admin_menu.SemesterSettingsManager') as mock_settings_manager:
+
+        with patch("bot.dialogs.admin_menu.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
-            mock_instance.get_semester_settings.return_value = [date(2024, 9, 1), date(2025, 2, 9)]
+            mock_instance.get_semester_settings.return_value = [
+                date(2024, 9, 1),
+                date(2025, 2, 9),
+            ]
             mock_instance.update_semester_settings.return_value = True
-            
+
             await on_spring_semester_input(mock_message, MagicMock(), mock_manager, "09.02.2025")
-            
+
             mock_message.answer.assert_called_with("✅ Дата начала весеннего семестра успешно обновлена!")
             mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_broadcast_received_success(self, mock_message, mock_manager):
         """Тест успешной обработки текстовой рассылки.
-        
+
         Проверяет, что:
         1. Рассылка запускается в фоне (через asyncio.create_task)
         2. Бот сразу возвращается в меню (не блокирует event loop)
         3. Задачи ставятся в очередь Dramatiq
         """
         from bot.dialogs.states import Admin
-        
+
         mock_message.content_type = ContentType.TEXT
         mock_message.text = "Test broadcast message"
         mock_message.reply = AsyncMock()
-        
+
         # Мокаем user_data_manager
         mock_manager.middleware_data["user_data_manager"].get_all_user_ids = AsyncMock(return_value=[111, 222, 333])
-        mock_manager.middleware_data["user_data_manager"].get_full_user_info = AsyncMock(return_value=MagicMock(user_id=111, username="test", group="TEST"))
-        
+        mock_manager.middleware_data["user_data_manager"].get_full_user_info = AsyncMock(
+            return_value=MagicMock(user_id=111, username="test", group="TEST")
+        )
+
         # Мокаем bot
         mock_manager.middleware_data["bot"].send_message = AsyncMock()
 
-        with patch('bot.dialogs.admin_menu.send_message_task') as mock_task:
+        with patch("bot.dialogs.admin_menu.send_message_task") as mock_task:
             mock_task.send = MagicMock()
-            
-            with patch('asyncio.create_task') as mock_create_task:
+
+            with patch("asyncio.create_task") as mock_create_task:
                 await on_broadcast_received(mock_message, mock_manager)
 
                 # Проверяем, что рассылка поставлена в очередь
                 mock_message.reply.assert_called_once_with("🚀 Рассылка поставлена в очередь...")
-                
+
                 # ВАЖНО: Проверяем, что рассылка запускается в фоне (не блокирует event loop)
                 mock_create_task.assert_called_once()
-                
+
                 # ВАЖНО: Проверяем, что бот СРАЗУ возвращается в меню (до завершения рассылки)
                 mock_manager.switch_to.assert_called_once_with(Admin.menu)
 
@@ -272,25 +341,25 @@ class TestAdminMenuHandlers:
     async def test_on_segment_criteria_input(self, mock_message, mock_manager):
         """Тест ввода критериев сегментации."""
         mock_message.text = "TEST|7"
-        
+
         await on_segment_criteria_input(mock_message, MagicMock(), mock_manager, "TEST|7")
-        
+
         mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_template_input_message(self, mock_message, mock_manager):
         """Тест ввода шаблона сообщения."""
         mock_message.text = "Hello {username}!"
-        
+
         await on_template_input_message(mock_message, MagicMock(), mock_manager)
-        
+
         mock_manager.switch_to.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_on_confirm_segment_send(self, mock_callback, mock_manager):
         """Тест подтверждения сегментированной рассылки."""
         await on_confirm_segment_send(mock_callback, MagicMock(), mock_manager)
-        
+
         mock_callback.answer.assert_called_once()
 
     @pytest.mark.asyncio
@@ -300,22 +369,17 @@ class TestAdminMenuHandlers:
 
         mock_callback.answer.assert_called_once_with("🧹 Очищаю кэш картинок...")
 
-
-
     @pytest.mark.asyncio
     async def test_on_cancel_generation_success(self, mock_callback, mock_manager):
         """Тест успешной отмены генерации."""
         # Импортируем active_generations из модуля
         from bot.dialogs.admin_menu import active_generations
-        
+
         # Очищаем перед тестом
         active_generations.clear()
-        
+
         # Устанавливаем активную генерацию
-        active_generations[123456789] = {
-            "cancelled": False,
-            "status_msg_id": 1
-        }
+        active_generations[123456789] = {"cancelled": False, "status_msg_id": 1}
 
         await on_cancel_generation(mock_callback)
 
@@ -327,12 +391,10 @@ class TestAdminMenuHandlers:
     async def test_on_cancel_generation_no_active(self, mock_callback, mock_manager):
         """Тест попытки отмены несуществующей генерации."""
         active_generations.clear()
-        
+
         await on_cancel_generation(mock_callback)
-        
+
         mock_callback.answer.assert_called_once_with("❌ Нет активной генерации для отмены")
-
-
 
     @pytest.mark.asyncio
     async def test_get_stats_data(self, mock_manager):
@@ -341,9 +403,9 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["user_data_manager"].get_users_for_lesson_reminders.return_value = []
         mock_manager.middleware_data["user_data_manager"].get_subscription_breakdown.return_value = {}
         mock_manager.middleware_data["user_data_manager"].get_group_distribution.return_value = {}
-        
+
         result = await get_stats_data(mock_manager)
-        
+
         assert "stats_text" in result
         assert "periods" in result
 
@@ -356,7 +418,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["user_data_manager"].get_users_count.return_value = 0
         mock_manager.middleware_data["user_data_manager"].get_all_user_ids.return_value = []
         mock_manager.middleware_data["user_data_manager"].get_full_user_info.return_value = None
-        
+
         # Создаем простой мок для dialog_data
         ctx = AsyncMock()
         ctx.dialog_data = MagicMock()
@@ -389,60 +451,69 @@ class TestAdminMenuHandlers:
     async def test_events_filter_all_shows_future_events(self, mock_manager):
         """Тест что кнопка 'Все' показывает только будущие мероприятия (с сегодняшнего дня, включая 00:00)"""
         # Устанавливаем фильтр "Все" (time_filter = None)
-        mock_manager.dialog_data = {'time_filter': None, 'page': 0}
+        mock_manager.dialog_data = {"time_filter": None, "page": 0}
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.events_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.events_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
-            mock_instance.list_events.return_value = ([], 0)  # Пустой список для простоты
+            mock_instance.list_events.return_value = (
+                [],
+                0,
+            )  # Пустой список для простоты
 
             from bot.dialogs.events_menu import get_events_for_user
+
             result = await get_events_for_user(mock_manager)
 
             # Проверяем что list_events был вызван с from_now_only=True для всех фильтров
             mock_instance.list_events.assert_called_once()
             call_args = mock_instance.list_events.call_args
-            assert call_args[1]['from_now_only'] is True  # Для всех фильтров должно быть True
+            assert call_args[1]["from_now_only"] is True  # Для всех фильтров должно быть True
 
     @pytest.mark.asyncio
     async def test_events_filter_today_shows_future_only(self, mock_manager):
         """Тест что кнопки 'Сегодня'/'Неделя' показывают только будущие мероприятия"""
         # Устанавливаем фильтр "Сегодня" (time_filter = 'today')
-        mock_manager.dialog_data = {'time_filter': 'today', 'page': 0}
+        mock_manager.dialog_data = {"time_filter": "today", "page": 0}
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.events_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.events_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
-            mock_instance.list_events.return_value = ([], 0)  # Пустой список для простоты
+            mock_instance.list_events.return_value = (
+                [],
+                0,
+            )  # Пустой список для простоты
 
             from bot.dialogs.events_menu import get_events_for_user
+
             result = await get_events_for_user(mock_manager)
 
             # Проверяем что list_events был вызван с from_now_only=True для кнопки "Сегодня"
             mock_instance.list_events.assert_called_once()
             call_args = mock_instance.list_events.call_args
-            assert call_args[1]['from_now_only'] is True  # Для "Сегодня" должно быть True
+            assert call_args[1]["from_now_only"] is True  # Для "Сегодня" должно быть True
 
     @pytest.mark.asyncio
     async def test_events_midnight_today_shows_in_all(self, mock_manager):
         """Тест что мероприятия на 00:00 сегодняшнего дня показываются в 'Все'"""
-        from bot.dialogs.events_menu import get_events_for_user
-        from unittest.mock import MagicMock
         from datetime import datetime
+        from unittest.mock import MagicMock
+
+        from bot.dialogs.events_menu import get_events_for_user
 
         # Устанавливаем фильтр "Все" (time_filter = None)
-        mock_manager.dialog_data = {'time_filter': None, 'page': 0}
+        mock_manager.dialog_data = {"time_filter": None, "page": 0}
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.events_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.events_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
 
             # Создаем мероприятие на 00:00 сегодняшнего дня
             mock_event = MagicMock()
-            mock_event.title = 'Мероприятие в полночь'
+            mock_event.title = "Мероприятие в полночь"
             mock_event.start_at = datetime(2025, 8, 24, 0, 0, 0)  # Сегодня в 00:00
             mock_event.location = None
             mock_event.id = 1
@@ -452,20 +523,21 @@ class TestAdminMenuHandlers:
             result = await get_events_for_user(mock_manager)
 
             # Проверяем что мероприятие показалось
-            events = result['events']
+            events = result["events"]
             assert len(events) == 1
             title, event_id = events[0]
-            assert 'Мероприятие в полночь' in title
+            assert "Мероприятие в полночь" in title
             print(f"✅ Мероприятие на 00:00 показалось: {title}")
 
     @pytest.mark.asyncio
     async def test_events_title_filter_skip_words(self, mock_manager):
         """Тест что служебные слова фильтруются из заголовка мероприятия"""
-        from bot.dialogs.events_menu import get_events_for_user
         from unittest.mock import MagicMock
 
+        from bot.dialogs.events_menu import get_events_for_user
+
         # Мокаем EventsManager
-        with patch('bot.dialogs.events_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.events_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
 
@@ -479,11 +551,11 @@ class TestAdminMenuHandlers:
             mock_instance.list_events.return_value = ([mock_event], 1)
 
             # Устанавливаем фильтр
-            mock_manager.dialog_data = {'time_filter': None, 'page': 0}
+            mock_manager.dialog_data = {"time_filter": None, "page": 0}
             result = await get_events_for_user(mock_manager)
 
             # Проверяем что служебное слово "Пропустить" было отфильтровано
-            events = result['events']
+            events = result["events"]
             assert len(events) == 1
             title, event_id = events[0]
             assert "Пропустить" not in title
@@ -495,40 +567,39 @@ class TestAdminMenuHandlers:
         from bot.dialogs.events_menu import get_events_for_user
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.events_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.events_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.list_events.return_value = ([], 0)
 
             # Тестируем кнопку "Все" (time_filter = None)
-            mock_manager.dialog_data = {'time_filter': None, 'page': 0}
+            mock_manager.dialog_data = {"time_filter": None, "page": 0}
             await get_events_for_user(mock_manager)
 
             # Проверяем что from_now_only=True даже для кнопки "Все"
             call_args = mock_instance.list_events.call_args
-            assert call_args[1]['from_now_only'] is True
+            assert call_args[1]["from_now_only"] is True
 
             # Тестируем кнопку "Сегодня" (time_filter = 'today')
-            mock_manager.dialog_data = {'time_filter': 'today', 'page': 0}
+            mock_manager.dialog_data = {"time_filter": "today", "page": 0}
             await get_events_for_user(mock_manager)
 
             # Проверяем что from_now_only=True для кнопки "Сегодня"
             call_args = mock_instance.list_events.call_args
-            assert call_args[1]['from_now_only'] is True
+            assert call_args[1]["from_now_only"] is True
 
     @pytest.mark.asyncio
     async def test_get_events_list(self, mock_manager):
         """Тест получения списка мероприятий."""
 
-
         # Настраиваем dialog_data с side_effect для разных ключей
         def mock_get_side_effect(key, default=0):
-            if key == 'events_page':
+            if key == "events_page":
                 return 0
-            elif key == 'events_pub_filter':
-                return 'all'
-            elif key == 'events_search':
-                return ''
+            elif key == "events_pub_filter":
+                return "all"
+            elif key == "events_search":
+                return ""
             else:
                 return default
 
@@ -536,7 +607,7 @@ class TestAdminMenuHandlers:
         mock_manager.dialog_data.get.side_effect = mock_get_side_effect
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.list_events.return_value = ([], 0)
@@ -599,7 +670,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.delete_event.return_value = True
@@ -617,7 +688,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_event = AsyncMock()
@@ -647,7 +718,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.update_event.return_value = True
@@ -666,7 +737,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.update_event.return_value = True
@@ -676,8 +747,6 @@ class TestAdminMenuHandlers:
             mock_message.answer.assert_called_once()
             mock_manager.switch_to.assert_called_once()
 
-
-
     @pytest.mark.asyncio
     async def test_on_event_create(self, mock_message, mock_manager):
         """Тест создания мероприятия."""
@@ -686,7 +755,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.create_event.return_value = 123
@@ -742,12 +811,12 @@ class TestAdminMenuHandlers:
             "cr_time": "19:00",
             "cr_location": "Test Place",
             "cr_desc": "Test Description",
-            "cr_link": "https://example.com"
+            "cr_link": "https://example.com",
         }
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем EventsManager
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.create_event.return_value = 123
@@ -764,7 +833,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["session_factory"] = AsyncMock()
 
         # Мокаем SemesterSettingsManager
-        with patch('bot.dialogs.admin_menu.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.dialogs.admin_menu.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
             mock_instance.get_formatted_settings.return_value = "Настройки семестров"
@@ -798,7 +867,9 @@ class TestAdminMenuHandlers:
         await on_new_group_input(mock_message, MagicMock(), mock_manager, "NEW_GROUP")
 
         mock_manager.switch_to.assert_called_once()
-        mock_message.answer.assert_called_with("✅ Группа для пользователя <code>123</code> успешно изменена на <b>NEW_GROUP</b>.")
+        mock_message.answer.assert_called_with(
+            "✅ Группа для пользователя <code>123</code> успешно изменена на <b>NEW_GROUP</b>."
+        )
 
     @pytest.mark.asyncio
     async def test_build_segment_users(self, mock_manager):
@@ -834,7 +905,7 @@ class TestAdminMenuHandlers:
 
         await on_period_selected(mock_callback, MagicMock(spec=Select), mock_manager, "7")
 
-        mock_dialog_data.__setitem__.assert_called_with('stats_period', 7)
+        mock_dialog_data.__setitem__.assert_called_with("stats_period", 7)
 
     @pytest.mark.asyncio
     async def test_on_check_graduated_groups(self, mock_callback, mock_manager):
@@ -844,7 +915,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["manager"] = AsyncMock()
         mock_manager.middleware_data["redis_client"] = AsyncMock()
 
-        with patch('bot.scheduler.handle_graduated_groups') as mock_check:
+        with patch("bot.scheduler.handle_graduated_groups") as mock_check:
             await on_check_graduated_groups(mock_callback, MagicMock(), mock_manager)
 
             mock_callback.answer.assert_called_once_with("🔍 Запускаю проверку выпустившихся групп...")
@@ -855,6 +926,7 @@ class TestAdminMenuHandlers:
     async def test_build_segment_users_empty(self, mock_manager):
         """Тест построения сегмента пользователей с пустым результатом."""
         from datetime import datetime
+
         from bot.dialogs.admin_menu import build_segment_users
 
         # Настраиваем моки
@@ -871,6 +943,7 @@ class TestAdminMenuHandlers:
     async def test_build_segment_users_with_group_prefix(self, mock_manager):
         """Тест построения сегмента с префиксом группы."""
         from datetime import datetime
+
         from bot.dialogs.admin_menu import build_segment_users
 
         # Настраиваем моки
@@ -893,6 +966,7 @@ class TestAdminMenuHandlers:
     async def test_build_segment_users_with_days_filter(self, mock_manager):
         """Тест построения сегмента с фильтром по дням активности."""
         from datetime import datetime, timedelta
+
         from bot.dialogs.admin_menu import build_segment_users
 
         # Настраиваем моки
@@ -915,10 +989,10 @@ class TestAdminMenuHandlers:
         """Тест получения данных предпросмотра для текстового сообщения."""
         # Настраиваем моки
         mock_manager.dialog_data.get.side_effect = lambda key: {
-            'segment_group_prefix': 'О7',
-            'segment_days_active': 7,
-            'segment_template': 'Привет {username}!',
-            'segment_message_type': 'text'
+            "segment_group_prefix": "О7",
+            "segment_days_active": 7,
+            "segment_template": "Привет {username}!",
+            "segment_message_type": "text",
         }.get(key)
 
         mock_user_data_manager = AsyncMock()
@@ -934,7 +1008,7 @@ class TestAdminMenuHandlers:
         mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
 
         # Мокаем build_segment_users
-        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[1]) as mock_build:
+        with patch("bot.dialogs.admin_menu.build_segment_users", return_value=[1]) as mock_build:
             result = await get_preview_data(mock_manager)
 
             assert "preview_text" in result
@@ -946,19 +1020,19 @@ class TestAdminMenuHandlers:
         """Тест получения данных предпросмотра для медиа сообщения."""
         # Настраиваем моки
         mock_manager.dialog_data.get.side_effect = lambda key: {
-            'segment_group_prefix': None,
-            'segment_days_active': None,
-            'segment_template': '',
-            'segment_message_type': 'media',
-            'segment_message_chat_id': -123,
-            'segment_message_id': 456
+            "segment_group_prefix": None,
+            "segment_days_active": None,
+            "segment_template": "",
+            "segment_message_type": "media",
+            "segment_message_chat_id": -123,
+            "segment_message_id": 456,
         }.get(key)
 
         mock_user_data_manager = AsyncMock()
         mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
 
         # Мокаем build_segment_users
-        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[1, 2]) as mock_build:
+        with patch("bot.dialogs.admin_menu.build_segment_users", return_value=[1, 2]) as mock_build:
             result = await get_preview_data(mock_manager)
 
             assert "preview_text" in result
@@ -971,17 +1045,17 @@ class TestAdminMenuHandlers:
         """Тест получения данных предпросмотра без пользователей."""
         # Настраиваем моки
         mock_manager.dialog_data.get.side_effect = lambda key: {
-            'segment_group_prefix': 'О7',
-            'segment_days_active': 7,
-            'segment_template': 'Привет {username}!',
-            'segment_message_type': 'text'
+            "segment_group_prefix": "О7",
+            "segment_days_active": 7,
+            "segment_template": "Привет {username}!",
+            "segment_message_type": "text",
         }.get(key)
 
         mock_user_data_manager = AsyncMock()
         mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
 
         # Мокаем build_segment_users с пустым результатом
-        with patch('bot.dialogs.admin_menu.build_segment_users', return_value=[]) as mock_build:
+        with patch("bot.dialogs.admin_menu.build_segment_users", return_value=[]) as mock_build:
             result = await get_preview_data(mock_manager)
 
             assert "preview_text" in result
@@ -999,7 +1073,7 @@ class TestAdminMenuHandlers:
 
         await on_period_selected(mock_callback, MagicMock(spec=Select), mock_manager, "1")
 
-        mock_dialog_data.__setitem__.assert_called_with('stats_period', 1)
+        mock_dialog_data.__setitem__.assert_called_with("stats_period", 1)
 
     @pytest.mark.asyncio
     async def test_on_period_selected_30_days(self, mock_callback, mock_manager):
@@ -1012,7 +1086,7 @@ class TestAdminMenuHandlers:
 
         await on_period_selected(mock_callback, MagicMock(spec=Select), mock_manager, "30")
 
-        mock_dialog_data.__setitem__.assert_called_with('stats_period', 30)
+        mock_dialog_data.__setitem__.assert_called_with("stats_period", 30)
 
     @pytest.mark.asyncio
     async def test_get_event_admin_details_found(self, mock_manager):
@@ -1033,7 +1107,7 @@ class TestAdminMenuHandlers:
         mock_event.link = None
         mock_event.description = "Test Description"
 
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.get_event.return_value = mock_event
@@ -1053,7 +1127,7 @@ class TestAdminMenuHandlers:
         mock_session_factory = AsyncMock()
         mock_manager.middleware_data["session_factory"] = mock_session_factory
 
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.get_event.return_value = None
@@ -1081,7 +1155,7 @@ class TestAdminMenuHandlers:
         mock_event.link = "https://example.com"
         mock_event.description = "Test Description"
 
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
             mock_instance.get_event.return_value = mock_event
@@ -1126,21 +1200,22 @@ class TestAdminMenuHandlers:
     @pytest.mark.asyncio
     async def test_get_events_list_with_search(self, mock_manager):
         """Тест получения списка мероприятий с поиском."""
+
         # Настраиваем dialog_data
         def mock_get_side_effect(key, default=0):
-            if key == 'events_page':
+            if key == "events_page":
                 return 0
-            elif key == 'events_pub_filter':
-                return 'all'
-            elif key == 'events_search':
-                return 'test search'
+            elif key == "events_pub_filter":
+                return "all"
+            elif key == "events_search":
+                return "test search"
             else:
                 return default
 
         mock_manager.dialog_data.get.side_effect = mock_get_side_effect
         mock_manager.dialog_data.__setitem__ = MagicMock()
 
-        with patch('bot.dialogs.admin_menu.EventsManager') as mock_events_manager:
+        with patch("bot.dialogs.admin_menu.EventsManager") as mock_events_manager:
             mock_instance = AsyncMock()
             mock_events_manager.return_value = mock_instance
 

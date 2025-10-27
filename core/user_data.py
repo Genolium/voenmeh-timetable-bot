@@ -1,18 +1,19 @@
-import logging
 import json
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Tuple, Callable, TypeVar, Awaitable
 from functools import wraps
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar
 
-from sqlalchemy import select, update, func, or_, case, event
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from redis.asyncio.client import Redis
-from core.config import MOSCOW_TZ
+from sqlalchemy import case, event, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.config import MOSCOW_TZ
 from core.db import User
 
 logger = logging.getLogger(__name__)
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 def cached(ttl: int = 3600) -> Callable:
     """
@@ -24,6 +25,7 @@ def cached(ttl: int = 3600) -> Callable:
     Returns:
         Декоратор для кэширования
     """
+
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @wraps(func)
         async def wrapper(self: "UserDataManager", *args: Any, **kwargs: Any) -> T:
@@ -38,7 +40,7 @@ def cached(ttl: int = 3600) -> Callable:
                 cached_data = await redis_client.get(cache_key)
                 if cached_data:
                     logger.debug(f"Cache hit for {func.__name__}")
-                    return json.loads(cached_data.decode('utf-8'))
+                    return json.loads(cached_data.decode("utf-8"))
                 else:
                     logger.debug(f"Cache miss for {func.__name__}")
             except Exception as e:
@@ -49,17 +51,15 @@ def cached(ttl: int = 3600) -> Callable:
 
             # Сохраняем результат в кэш
             try:
-                await redis_client.setex(
-                    cache_key,
-                    ttl,
-                    json.dumps(result, default=str, ensure_ascii=False)
-                )
+                await redis_client.setex(cache_key, ttl, json.dumps(result, default=str, ensure_ascii=False))
                 logger.debug(f"Cached result for {func.__name__}")
             except Exception as e:
                 logger.warning(f"Failed to cache result for {func.__name__}: {e}")
 
             return result
+
         return wrapper
+
     return decorator
 
 
@@ -67,6 +67,7 @@ class UserDataManager:
     """
     Класс для управления данными пользователей через SQLAlchemy.
     """
+
     def __init__(self, db_url: str, redis_url: Optional[str] = None) -> None:
         tz_name: str = str(MOSCOW_TZ)
 
@@ -75,9 +76,7 @@ class UserDataManager:
         try:
             if db_url.startswith("postgresql") and "+asyncpg" in db_url:
                 # Для asyncpg используем server_settings
-                engine_kwargs["connect_args"] = {
-                    "server_settings": {"TimeZone": tz_name}
-                }
+                engine_kwargs["connect_args"] = {"server_settings": {"TimeZone": tz_name}}
         except Exception:
             # На всякий случай не блокируем инициализацию
             engine_kwargs = {}
@@ -87,6 +86,7 @@ class UserDataManager:
         # Для sync-адаптеров (psycopg2) или если server_settings недоступно
         try:
             if db_url.startswith("postgresql") and "+asyncpg" not in db_url:
+
                 @event.listens_for(self.engine.sync_engine, "connect")
                 def _set_timezone(dbapi_connection, connection_record):
                     try:
@@ -96,6 +96,7 @@ class UserDataManager:
                     except Exception:
                         # Не прерываем подключение, если установка TZ не удалась
                         pass
+
         except Exception:
             pass
 
@@ -112,6 +113,7 @@ class UserDataManager:
         elif self._redis_client is None:
             # Fallback: получить из config если URL не передан
             from core.config import get_redis_client
+
             self._redis_client = await get_redis_client()
         return self._redis_client
 
@@ -125,7 +127,7 @@ class UserDataManager:
             cache_patterns: List[str] = [
                 "cache:get_users_for_evening_notify:*",
                 "cache:get_users_for_morning_summary:*",
-                "cache:get_users_for_lesson_reminders:*"
+                "cache:get_users_for_lesson_reminders:*",
             ]
 
             for pattern in cache_patterns:
@@ -199,13 +201,23 @@ class UserDataManager:
                     "morning_summary": user.morning_summary,
                     "lesson_reminders": user.lesson_reminders,
                     "reminder_time_minutes": user.reminder_time_minutes,
-                    "theme": user.theme
+                    "theme": user.theme,
                 }
-            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 60, "theme": "standard"}
+            return {
+                "evening_notify": False,
+                "morning_summary": False,
+                "lesson_reminders": False,
+                "reminder_time_minutes": 60,
+                "theme": "standard",
+            }
 
     async def update_setting(self, user_id: int, setting_name: str, status: bool) -> None:
         """Обновляет конкретную настройку уведомлений для пользователя."""
-        if setting_name not in ["evening_notify", "morning_summary", "lesson_reminders"]:
+        if setting_name not in [
+            "evening_notify",
+            "morning_summary",
+            "lesson_reminders",
+        ]:
             logging.warning(f"Attempt to update invalid setting: {setting_name}")
             return
         async with self.async_session_maker() as session:
@@ -236,15 +248,15 @@ class UserDataManager:
         """Возвращает тему пользователя (standard, light, dark, classic, coffee)."""
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
-            return user.theme if user else 'standard'
+            return user.theme if user else "standard"
 
     async def set_user_theme(self, user_id: int, theme: str) -> None:
         """Устанавливает тему пользователя."""
         # Проверяем, что тема валидная
-        valid_themes = ['standard', 'light', 'dark', 'classic', 'coffee']
+        valid_themes = ["standard", "light", "dark", "classic", "coffee"]
         if theme not in valid_themes:
             logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using 'standard'.")
-            theme = 'standard'
+            theme = "standard"
 
         async with self.async_session_maker() as session:
             stmt = update(User).where(User.user_id == user_id).values(theme=theme)
@@ -308,7 +320,7 @@ class UserDataManager:
             stmt = select(func.count(User.user_id)).where(
                 User.evening_notify == False,
                 User.morning_summary == False,
-                User.lesson_reminders == False
+                User.lesson_reminders == False,
             )
             result = await session.scalar(stmt)
             return result or 0
@@ -319,7 +331,7 @@ class UserDataManager:
             stmt = select(
                 func.count(User.user_id).filter(User.evening_notify == True).label("evening"),
                 func.count(User.user_id).filter(User.morning_summary == True).label("morning"),
-                func.count(User.user_id).filter(User.lesson_reminders == True).label("reminders")
+                func.count(User.user_id).filter(User.lesson_reminders == True).label("reminders"),
             )
             result = await session.execute(stmt)
             row = result.one_or_none()
@@ -334,15 +346,19 @@ class UserDataManager:
                 .group_by(User.group)
                 .subquery()
             )
-            stmt = select(
-                case(
-                    (subquery.c.students_in_group == 1, "1 студент"),
-                    (subquery.c.students_in_group.between(2, 5), "2-5 студентов"),
-                    (subquery.c.students_in_group.between(6, 10), "6-10 студентов"),
-                    else_="11+ студентов"
-                ).label("group_size_category"),
-                func.count().label("number_of_groups")
-            ).group_by("group_size_category").order_by("group_size_category")
+            stmt = (
+                select(
+                    case(
+                        (subquery.c.students_in_group == 1, "1 студент"),
+                        (subquery.c.students_in_group.between(2, 5), "2-5 студентов"),
+                        (subquery.c.students_in_group.between(6, 10), "6-10 студентов"),
+                        else_="11+ студентов",
+                    ).label("group_size_category"),
+                    func.count().label("number_of_groups"),
+                )
+                .group_by("group_size_category")
+                .order_by("group_size_category")
+            )
 
             result = await session.execute(stmt)
             return {row.group_size_category: row.number_of_groups for row in result}
@@ -374,7 +390,9 @@ class UserDataManager:
     async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int]]:
         """Получает пользователей для напоминаний о парах, включая время напоминания с кэшированием."""
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(User.lesson_reminders == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(
+                User.lesson_reminders == True, User.group.isnot(None)
+            )
             result = await session.execute(stmt)
             rows = result.all()
             adjusted: List[Tuple[int, str, int]] = []
@@ -390,13 +408,24 @@ class UserDataManager:
     async def get_admin_users(self) -> List[int]:
         """Получает список ID администраторов бота."""
         from core.config import ADMIN_IDS
+
         return ADMIN_IDS
 
     async def gather_stats(self) -> tuple:
         """Собирает всю статистику для отчётов."""
         import asyncio
 
-        total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist = await asyncio.gather(
+        (
+            total_users,
+            dau,
+            wau,
+            mau,
+            subscribed_total,
+            unsubscribed_total,
+            subs_breakdown,
+            top_groups,
+            group_dist,
+        ) = await asyncio.gather(
             self.get_total_users_count(),
             self.get_active_users_by_period(days=1),
             self.get_active_users_by_period(days=7),
@@ -405,7 +434,17 @@ class UserDataManager:
             self.get_unsubscribed_count(),
             self.get_subscription_breakdown(),
             self.get_top_groups(limit=5),
-            self.get_group_distribution()
+            self.get_group_distribution(),
         )
 
-        return total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist
+        return (
+            total_users,
+            dau,
+            wau,
+            mau,
+            subscribed_total,
+            unsubscribed_total,
+            subs_breakdown,
+            top_groups,
+            group_dist,
+        )

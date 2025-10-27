@@ -3,7 +3,7 @@
 *.tmp
 *.cache
 
-# Конфигурационные файлы с паролями 
+# Конфигурационные файлы с паролями
 config_local.json
 servers_local.json
 

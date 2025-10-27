@@ -1,10 +1,11 @@
-import pytest
-from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from core.feedback_manager import FeedbackManager
 from core.db.models import Feedback
+from core.feedback_manager import FeedbackManager
 
 
 @pytest.fixture
@@ -32,7 +33,7 @@ def sample_feedback():
         message_type="text",
         file_id=None,
         is_answered=False,
-        created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
 
@@ -56,7 +57,7 @@ class TestFeedbackManager:
             message_type="text",
             file_id=None,
             is_answered=False,
-            created_at=datetime.now(timezone.utc).replace(tzinfo=None)
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
         )
         mock_session.add = MagicMock()
         mock_session.refresh = AsyncMock(return_value=test_feedback)
@@ -71,7 +72,7 @@ class TestFeedbackManager:
             user_full_name="Test User",
             message_text="Test message",
             message_type="text",
-            file_id=None
+            file_id=None,
         )
 
         # Проверяем результаты
@@ -100,7 +101,7 @@ class TestFeedbackManager:
             user_full_name="Test User",
             message_text="Photo caption",
             message_type="photo",
-            file_id="photo_file_id_123"
+            file_id="photo_file_id_123",
         )
 
         # Проверяем результаты
@@ -128,7 +129,7 @@ class TestFeedbackManager:
             user_full_name="Test User",
             message_text="Video caption",
             message_type="video",
-            file_id="video_file_id_123"
+            file_id="video_file_id_123",
         )
 
         # Проверяем результаты
@@ -156,7 +157,7 @@ class TestFeedbackManager:
             user_full_name="Test User",
             message_text="Document: test.pdf",
             message_type="document",
-            file_id="document_file_id_123"
+            file_id="document_file_id_123",
         )
 
         # Проверяем результаты
@@ -356,11 +357,7 @@ class TestFeedbackManager:
         manager = FeedbackManager(mock_session_factory)
 
         # Вызываем метод
-        success = await manager.answer_feedback(
-            feedback_id=1,
-            admin_id=987654321,
-            response_text="Спасибо за ваш отзыв!"
-        )
+        success = await manager.answer_feedback(feedback_id=1, admin_id=987654321, response_text="Спасибо за ваш отзыв!")
 
         # Проверяем результаты
         assert success is True
@@ -386,7 +383,7 @@ class TestFeedbackManager:
         success = await manager.answer_feedback(
             feedback_id=999,
             admin_id=987654321,
-            response_text="Ответ на несуществующий фидбек"
+            response_text="Ответ на несуществующий фидбек",
         )
 
         # Проверяем результаты
@@ -462,10 +459,10 @@ class TestFeedbackManager:
         stats = await manager.get_feedback_stats()
 
         # Проверяем результаты
-        assert stats['total'] == 10
-        assert stats['unanswered'] == 3
-        assert stats['answered'] == 7  # 10 - 3
-        assert stats['recent_7_days'] == 2
+        assert stats["total"] == 10
+        assert stats["unanswered"] == 3
+        assert stats["answered"] == 7  # 10 - 3
+        assert stats["recent_7_days"] == 2
 
     @pytest.mark.asyncio
     async def test_get_feedback_stats_empty(self, mock_session_factory, mock_session):
@@ -485,10 +482,10 @@ class TestFeedbackManager:
         stats = await manager.get_feedback_stats()
 
         # Проверяем результаты
-        assert stats['total'] == 0
-        assert stats['unanswered'] == 0
-        assert stats['answered'] == 0
-        assert stats['recent_7_days'] == 0
+        assert stats["total"] == 0
+        assert stats["unanswered"] == 0
+        assert stats["answered"] == 0
+        assert stats["recent_7_days"] == 0
 
     @pytest.mark.asyncio
     async def test_list_feedback_exception_handling(self, mock_session_factory, mock_session):

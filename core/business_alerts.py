@@ -1,24 +1,32 @@
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, Any
-from dataclasses import dataclass
-from enum import Enum
 import os
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
+from typing import Any, Dict
+
+from core.alert_sender import AlertSender
+from core.config import MOSCOW_TZ
 
 # Keep imports for type hints; do not introspect metric internals
 from core.metrics import (
-    USER_ACTIVITY_DAILY, GROUP_POPULARITY, USER_CONVERSION,
-    IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, IMAGE_CACHE_SIZE,
-    SCHEDULE_GENERATION_TIME, NOTIFICATION_DELIVERY
+    GROUP_POPULARITY,
+    IMAGE_CACHE_HITS,
+    IMAGE_CACHE_MISSES,
+    IMAGE_CACHE_SIZE,
+    NOTIFICATION_DELIVERY,
+    SCHEDULE_GENERATION_TIME,
+    USER_ACTIVITY_DAILY,
+    USER_CONVERSION,
 )
-from core.alert_sender import AlertSender
-from core.config import MOSCOW_TZ
+
 
 class AlertSeverity(Enum):
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
+
 
 @dataclass
 class BusinessAlert:
@@ -30,6 +38,7 @@ class BusinessAlert:
     threshold: Any
     timestamp: datetime
     tags: Dict[str, Any]
+
 
 class BusinessMetricsMonitor:
     def __init__(self):
@@ -67,16 +76,30 @@ class BusinessMetricsMonitor:
         # Example: Query Prometheus for metrics
         try:
             import aiohttp
+
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{self.prometheus_url}/api/v1/query?query=up") as resp:
                     data = await resp.json()
                     # Check and alert if needed
-                    if data['status'] != 'success':
-                        await self._send_alert("Prometheus Query Failed", "Error querying metrics", AlertSeverity.CRITICAL, "prometheus", {})
+                    if data["status"] != "success":
+                        await self._send_alert(
+                            "Prometheus Query Failed",
+                            "Error querying metrics",
+                            AlertSeverity.CRITICAL,
+                            "prometheus",
+                            {},
+                        )
         except Exception as e:
             logging.error(f"Metrics check failed: {e}")
 
-    async def _send_alert(self, title: str, message: str, severity: AlertSeverity, metric_name: str, additional_data: Dict[str, Any]):
+    async def _send_alert(
+        self,
+        title: str,
+        message: str,
+        severity: AlertSeverity,
+        metric_name: str,
+        additional_data: Dict[str, Any],
+    ):
         alert_key = f"{metric_name}_{severity.value}"
         now = datetime.now(MOSCOW_TZ)
         last = self.alert_cooldown.get(alert_key)
@@ -97,7 +120,9 @@ class BusinessMetricsMonitor:
         except Exception as e:
             logging.error(f"Alert send failed: {e}")
 
+
 business_monitor = BusinessMetricsMonitor()
+
 
 async def start_business_monitoring():
     await business_monitor.start_monitoring()

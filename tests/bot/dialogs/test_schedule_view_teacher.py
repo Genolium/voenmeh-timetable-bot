@@ -1,9 +1,10 @@
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from bot.dialogs.schedule_view import get_schedule_data
+import pytest
+
 from bot.dialogs.constants import DialogDataKeys
+from bot.dialogs.schedule_view import get_schedule_data
 
 
 @pytest.fixture
@@ -82,4 +83,3 @@ async def test_get_schedule_data_teacher_calls_get_teacher_schedule(dm_teacher):
     # Просто проверяем, что функция вернула результат
     assert res is not None
     assert "schedule_text" in res
-

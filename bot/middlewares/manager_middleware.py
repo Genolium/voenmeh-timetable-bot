@@ -1,7 +1,10 @@
-from typing import Callable, Dict, Any, Awaitable
+from typing import Any, Awaitable, Callable, Dict
+
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
+
 from core.manager import TimetableManager
+
 
 class ManagerMiddleware(BaseMiddleware):
     def __init__(self, manager: TimetableManager):
@@ -11,7 +14,7 @@ class ManagerMiddleware(BaseMiddleware):
         self,
         handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
         event: TelegramObject,
-        data: Dict[str, Any]
+        data: Dict[str, Any],
     ) -> Any:
         data["manager"] = self.manager
         return await handler(event, data)
