@@ -10,6 +10,8 @@ class DialogDataKeys(str, Enum):
     FOUND_ITEMS = "found_items"
     CURRENT_DATE_ISO = "current_date_iso"
 
+ 
+
 class WidgetIds(str, Enum):
     """Идентификаторы (ID) для виджетов в диалогах."""
     # Settings

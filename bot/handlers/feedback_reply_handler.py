@@ -12,22 +12,28 @@ from core.feedback_manager import FeedbackManager
 logger = logging.getLogger(__name__)
 feedback_reply_router = Router()
 
+# Безопасно парсим FEEDBACK_CHAT_ID, чтобы не падать при None/пустом значении в тестах или CI
+try:
+    FEEDBACK_CHAT_ID_INT = int(FEEDBACK_CHAT_ID) if FEEDBACK_CHAT_ID is not None else None
+except Exception:
+    FEEDBACK_CHAT_ID_INT = None
 
-@feedback_reply_router.message(
-    F.chat.id == int(FEEDBACK_CHAT_ID),
-    F.reply_to_message
-)
-async def handle_feedback_reply(message: Message, bot: Bot, session_factory):
+
+if FEEDBACK_CHAT_ID_INT is not None:
+    @feedback_reply_router.message(
+        F.chat.id == FEEDBACK_CHAT_ID_INT,
+        F.reply_to_message,
+    )
+    async def handle_feedback_reply(message: Message, bot: Bot, session_factory):
     """
     Обрабатывает ответы на фидбек в чате FEEDBACK_CHAT_ID.
     
     Когда администратор отвечает на пересланное сообщение фидбека или на сообщение с информацией о пользователе,
     бот отправляет ответ пользователю.
     """
-    
-    # Проверяем, что это reply на сообщение
-    if not message.reply_to_message:
-        return
+        # Проверяем, что это reply на сообщение
+        if not message.reply_to_message:
+            return
     
     replied_msg = message.reply_to_message
     user_id = None
@@ -138,4 +144,6 @@ async def handle_feedback_reply(message: Message, bot: Bot, session_factory):
             f"Ошибка: {str(e)}",
             parse_mode="HTML"
         )
-
+else:
+    # Если FEEDBACK_CHAT_ID не задан, обработчик не регистрируется — это допустимо для тестов/CI
+    pass

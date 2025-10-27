@@ -8,6 +8,7 @@ from .states import Feedback
 from core.config import FEEDBACK_CHAT_ID
 from core.feedback_manager import FeedbackManager
 
+
 async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager):
     """
     Получает фидбэк, сохраняет в БД, пересылает и завершает диалог.
