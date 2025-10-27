@@ -23,30 +23,42 @@ except Exception:
     # Нет секций loggers/handlers/formatters — логирование Alembic пропускаем
     pass
 
-# Используем DATABASE_URL из core.config, если он доступен
-try:
-    from core.config import settings
-    # Alembic требует синхронный драйвер psycopg2, а не asyncpg
-    db_url = settings.DATABASE_URL
-    if db_url.startswith("postgresql+asyncpg://"):
-        # Заменяем asyncpg на psycopg2 для Alembic
-        sync_db_url = db_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
-    elif db_url.startswith("postgresql://"):
-        # Если драйвер не указан, добавляем psycopg2
-        sync_db_url = db_url.replace("postgresql://", "postgresql+psycopg2://")
-    else:
-        sync_db_url = db_url
-    config.set_main_option('sqlalchemy.url', sync_db_url)
-except Exception:
-    # Fallback на переменные окружения для совместимости
-    DB_HOST = os.getenv("POSTGRES_HOST")
-    DB_PORT = os.getenv("POSTGRES_PORT")
-    DB_NAME = os.getenv("POSTGRES_DB")
-    DB_USER = os.getenv("POSTGRES_USER")
-    DB_PASS = os.getenv("POSTGRES_PASSWORD")
+"""Инициализация URL подключения для Alembic.
 
-    sync_db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    config.set_main_option('sqlalchemy.url', sync_db_url)
+Порядок источников:
+1) DATABASE_URL из переменных окружения (CI передаёт его шагу миграций)
+2) settings.DATABASE_URL из core.config (если доступны все обязательные переменные)
+3) Конструктор из POSTGRES_* переменных окружения (с безопасными значениями по умолчанию)
+"""
+
+def _to_sync_driver(url: str) -> str:
+    if url.startswith("postgresql+asyncpg://"):
+        return url.replace("postgresql+asyncpg://", "postgresql+psycopg2://")
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://")
+    return url
+
+
+# 1) Пробуем взять из окружения (приоритетно для CI)
+db_url_env = os.getenv("DATABASE_URL")
+if db_url_env:
+    config.set_main_option("sqlalchemy.url", _to_sync_driver(db_url_env))
+else:
+    # 2) Пробуем загрузить из настроек приложения
+    try:
+        from core.config import settings
+
+        config.set_main_option("sqlalchemy.url", _to_sync_driver(settings.DATABASE_URL))
+    except Exception:
+        # 3) Собираем из POSTGRES_* с дефолтами, избегая 'None' в URL
+        DB_HOST = os.getenv("POSTGRES_HOST", "localhost")
+        DB_PORT = os.getenv("POSTGRES_PORT") or "5432"
+        DB_NAME = os.getenv("POSTGRES_DB", "test_db")
+        DB_USER = os.getenv("POSTGRES_USER", "test")
+        DB_PASS = os.getenv("POSTGRES_PASSWORD", "test")
+
+        sync_db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        config.set_main_option("sqlalchemy.url", sync_db_url)
 
 target_metadata = Base.metadata
 

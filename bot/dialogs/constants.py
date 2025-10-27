@@ -1,5 +1,6 @@
 from enum import Enum
 
+
 class DialogDataKeys(str, Enum):
     """Ключи для хранения данных в `dialog_data`."""
     GROUP = "group"
@@ -33,7 +34,7 @@ class WidgetIds(str, Enum):
     BACK_TO_MAIN_SCHEDULE = "back_to_main_schedule"
     BACK_TO_CHOICE = "back_to_choice"
     SELECT_FOUND_ITEM = "select_found_item"
-    
+
     # About Menu
     FINISH_TUTORIAL = "finish"
 

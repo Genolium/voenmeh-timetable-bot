@@ -264,7 +264,7 @@ settings_dialog = Dialog(
               "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
               "<i>Доступно только по подписке на канал разработки</i>"),
         Button(Const("✅ Проверить подписку"), id="check_subscription", on_click=lambda c, b, m: m.switch_to(SettingsMenu.choose_theme)),
-        Back(Const("◀️ Назад"), on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
+        Button(Const("◀️ Назад"), id="back_to_main_from_gate", on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
         state=SettingsMenu.theme_subscription_gate,
         parse_mode="HTML"
     ),
@@ -288,7 +288,7 @@ settings_dialog = Dialog(
                 on_click=on_theme_selected
             )
         ),
-        Back(Const("◀️ Назад"), on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
+        Button(Const("◀️ Назад"), id="back_to_main_from_theme", on_click=lambda c, b, m: m.switch_to(SettingsMenu.main)),
         state=SettingsMenu.choose_theme,
         getter=get_theme_data,
         parse_mode="HTML"
