@@ -42,6 +42,8 @@ class Admin(StatesGroup):
     broadcast_menu = State()
     diagnostics_menu = State()
     cache_menu = State()
+    backup_menu = State()
+    backup_upload_wait = State()
     enter_user_id = State()
     user_manage = State()
     change_group_confirm = State()

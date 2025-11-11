@@ -25,6 +25,10 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
     command: python main.py
     healthcheck:
       test: ["CMD", "pgrep", "python"]
@@ -40,6 +44,10 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
     # Safer defaults to avoid RAM spikes; override via .env if needed
     command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-1} --threads ${DRAMATIQ_THREADS:-2} bot.tasks
 
@@ -52,6 +60,10 @@ services:
       redis: { condition: service_healthy }
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro 
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
 
   db:
     image: postgres:15-alpine
@@ -147,6 +159,19 @@ services:
     command: [ '--config.file=/etc/alertmanager/alertmanager.yml' ]
     restart: unless-stopped
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: voenmeh_otel_collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      - loki
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    restart: unless-stopped
+
   loki:
     image: grafana/loki:2.9.0
     container_name: voenmeh_loki
@@ -156,18 +181,6 @@ services:
     volumes:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
-    restart: unless-stopped
-
-  promtail:
-    image: grafana/promtail:2.9.0
-    container_name: voenmeh_promtail
-    command: ["-config.file=/etc/promtail/config.yml", "-config.expand-env=true"]
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro # Даем доступ к логам Docker
-      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
-      - promtail_data:/var/lib/promtail/positions # Сохраняем позицию чтения логов
-    depends_on:
-      - loki
     restart: unless-stopped
 
   node-exporter:
@@ -227,6 +240,5 @@ volumes:
   prometheus_data:
   grafana_data:
   loki_data:       
-  promtail_data:
   pgadmin_data:
   rabbitmq_data:

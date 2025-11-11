@@ -11,6 +11,7 @@ from bot.scheduler import (
     auto_backup, handle_graduated_groups
 )
 from core.config import MOSCOW_TZ
+from core.db.backups import BackupError
 
 
 @pytest.fixture
@@ -1122,23 +1123,13 @@ async def test_auto_backup_with_json_data(mock_redis, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_backup_database_success(mock_redis, monkeypatch):
+async def test_auto_backup_database_success(mock_redis, monkeypatch, tmp_path):
     """Тест успешного резервного копирования базы данных."""
-    import os
-    from datetime import datetime as dt
+    backup_file = tmp_path / "db_backup.sql"
+    backup_file.write_text("-- dump --", encoding="utf-8")
 
-    # Мокаем переменные окружения
-    monkeypatch.setattr('os.getenv', lambda key: 'postgresql://user:pass@localhost:5432/test_db')
-    monkeypatch.setattr('bot.scheduler.os', os)
-
-    # Мокаем subprocess
-    mock_process = MagicMock()
-    mock_process.returncode = 0
-    mock_process.stderr = ""
-
-    mock_subprocess = MagicMock()
-    mock_subprocess.run.return_value = mock_process
-    monkeypatch.setattr('bot.scheduler.subprocess', mock_subprocess)
+    mock_create_backup = AsyncMock(return_value=backup_file)
+    monkeypatch.setattr('bot.scheduler.create_db_backup', mock_create_backup)
 
     # Мокаем datetime
     mock_dt_class = MagicMock()
@@ -1147,24 +1138,15 @@ async def test_auto_backup_database_success(mock_redis, monkeypatch):
 
     await auto_backup(mock_redis)
 
-    # Проверяем, что pg_dump был вызван
-    mock_subprocess.run.assert_called()
+    mock_create_backup.assert_called_once()
+    assert not backup_file.exists()
 
 
 @pytest.mark.asyncio
 async def test_auto_backup_database_timeout(mock_redis, monkeypatch):
     """Тест таймаута при резервном копировании базы данных."""
-    import os
-    from datetime import datetime as dt
-
-    # Мокаем переменные окружения
-    monkeypatch.setattr('os.getenv', lambda key: 'postgresql://user:pass@localhost:5432/test_db')
-    monkeypatch.setattr('bot.scheduler.os', os)
-
-    # Мокаем subprocess с таймаутом
-    mock_subprocess = MagicMock()
-    mock_subprocess.run.side_effect = Exception("Timeout")
-    monkeypatch.setattr('bot.scheduler.subprocess', mock_subprocess)
+    mock_create_backup = AsyncMock(side_effect=BackupError("Timeout"))
+    monkeypatch.setattr('bot.scheduler.create_db_backup', mock_create_backup)
 
     # Мокаем datetime
     mock_dt_class = MagicMock()
@@ -1173,6 +1155,7 @@ async def test_auto_backup_database_timeout(mock_redis, monkeypatch):
 
     # Не должно падать при таймауте
     await auto_backup(mock_redis)
+    mock_create_backup.assert_called_once()
 
 
 # --- Тесты для render_template в admin_menu ---

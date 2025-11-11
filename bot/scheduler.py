@@ -29,6 +29,7 @@ from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.admin_reports import send_daily_reports, send_weekly_reports, send_monthly_reports
 from aiogram.types import CallbackQuery
+from core.db.backups import create_db_backup, BackupError
 
 logger = logging.getLogger(__name__)
 
@@ -413,44 +414,21 @@ async def cleanup_image_cache(redis_client: Redis):
 
 async def auto_backup(redis_client: Redis):
     try:
-        # Backup DB using Docker (safer approach)
-        db_url = os.getenv("DATABASE_URL")
-        if db_url:
-            backup_file = f"db_backup_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.sql"
-            backup_path = f"/app/data/{backup_file}"
-            
-            # Extract connection details from DATABASE_URL
-            import re
-            match = re.match(r'postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)', db_url)
-            if match:
-                user, password, host, port, dbname = match.groups()
-                
-                # Use docker exec to run pg_dump inside PostgreSQL container
-                cmd = [
-                    "docker", "exec", "-i", "voenmeh_postgres",
-                    "pg_dump", "-h", "localhost", "-U", user, "-d", dbname
-                ]
-                
-                try:
-                    import subprocess
-                    with open(backup_path, 'w') as f:
-                        result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, 
-                                              text=True, timeout=300, 
-                                              env={**os.environ, 'PGPASSWORD': password})
-                    
-                    if result.returncode == 0:
-                        logger.info(f"Database backup created: {backup_file}")
-                    else:
-                        logger.error(f"Failed to create database backup: {backup_file}")
-                        logger.error(f"Error: {result.stderr}")
-                except subprocess.TimeoutExpired:
-                    logger.error(f"Database backup timed out: {backup_file}")
-                except Exception as e:
-                    logger.error(f"Exception during database backup: {e}")
-            else:
-                logger.error("Could not parse DATABASE_URL for backup")
+        backup_path = None
+        try:
+            backup_path = await create_db_backup()
+        except BackupError as exc:
+            logger.error("Failed to create database backup: %s", exc)
+        except Exception as exc:  # pragma: no cover - unexpected errors
+            logger.error(f"Unexpected error during database backup: {exc}")
         else:
-            logger.warning("DATABASE_URL not found, skipping database backup")
+            logger.info("Database backup created: %s", backup_path.name)
+        finally:
+            if backup_path and backup_path.exists():
+                try:
+                    backup_path.unlink()
+                except Exception:  # pragma: no cover - cleanup best effort
+                    logger.warning("Could not remove temporary backup file %s", backup_path)
 
         # Backup schedules from Redis
         from core.config import REDIS_SCHEDULE_CACHE_KEY

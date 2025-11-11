@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     IMAGE_GENERATION_SEMAPHORE: int = 4
     IMAGE_SERVICE_SEMAPHORE: int = 2
     IMAGE_CACHE_MAX_MB: int = 750  # Increased for 8GB RAM
+    # OpenTelemetry settings
+    OTEL_SERVICE_NAME: str = "voenmeh-timetable-bot"
+    OTEL_ENVIRONMENT: str | None = None
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
+    OTEL_EXPORTER_OTLP_HEADERS: str | None = None
+    OTEL_ENABLED: bool = True
     model_config = {
         "env_file": ".env",
         "extra": "ignore"

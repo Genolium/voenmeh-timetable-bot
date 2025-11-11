@@ -17,3 +17,7 @@ scrape_configs:
   - job_name: "node-exporter"
     static_configs:
       - targets: ["node-exporter:9100"] # Системные метрики с node-exporter
+
+  - job_name: "otel-collector"
+    static_configs:
+      - targets: ["otel-collector:9464"]

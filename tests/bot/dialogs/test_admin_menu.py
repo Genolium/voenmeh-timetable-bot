@@ -1,6 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
+from pathlib import Path
 from aiogram.types import CallbackQuery, Message, User, ContentType
 from aiogram_dialog import DialogManager
 from aiogram_dialog.widgets.kbd import Button
@@ -10,11 +11,11 @@ from bot.dialogs.admin_menu import (
     on_test_alert, on_semester_settings, on_edit_fall_semester,
     on_edit_spring_semester, on_fall_semester_input, on_spring_semester_input,
     on_broadcast_received, on_segment_criteria_input, on_template_input_message,
-    on_confirm_segment_send, on_clear_cache,
+    on_confirm_segment_send, on_clear_cache, on_backup_create, on_backup_file_received,
     on_cancel_generation,
-    get_stats_data, get_preview_data, active_generations,
+    get_stats_data, get_preview_data, active_generations, _is_supported_backup_file,
     on_generate_full_schedule, on_check_graduated_groups,
-    on_admin_events, get_events_list,
+    on_admin_events, get_events_list, get_event_admin_details,
     on_events_prev, on_events_next, on_event_selected, on_events_set_filter,
     on_event_delete, on_event_toggle_publish, on_event_edit_menu,
     on_event_edit_title, on_event_edit_datetime, on_event_edit_location,
@@ -24,6 +25,7 @@ from bot.dialogs.admin_menu import (
     get_create_preview, on_user_id_input, on_new_group_input, get_user_manage_data,
     get_semester_settings_data, build_segment_users, on_period_selected
 )
+from bot.dialogs.states import Admin
 
 @pytest.fixture
 def mock_callback():
@@ -44,6 +46,7 @@ def mock_manager():
         "manager": AsyncMock(),
         "session_factory": AsyncMock()
     }
+    manager.dialog_data = MagicMock()
     return manager
 
 @pytest.fixture
@@ -111,6 +114,12 @@ class TestAdminMenuHelpers:
         assert _is_skip("normal text") is False
         assert _is_skip("123") is False
 
+    def test_is_supported_backup_file(self):
+        assert _is_supported_backup_file("backup.sql") is True
+        assert _is_supported_backup_file("backup.SQL.GZ") is True
+        assert _is_supported_backup_file("archive.dump") is False
+        assert _is_supported_backup_file(None) is False
+
 
 class TestAdminMenuHandlers:
 
@@ -166,6 +175,44 @@ class TestAdminMenuHandlers:
         
         mock_callback.answer.assert_called_once_with("🧪 Отправляю тестовый алёрт...")
         mock_manager.middleware_data["bot"].send_message.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_backup_create_success(self, mock_callback, mock_manager, monkeypatch, tmp_path):
+        """Тест успешного создания резервной копии."""
+        backup_path = tmp_path / "db_backup.sql"
+        backup_path.write_text("-- dump --", encoding="utf-8")
+
+        mock_create = AsyncMock(return_value=backup_path)
+        monkeypatch.setattr('bot.dialogs.admin_menu.create_db_backup', mock_create)
+
+        await on_backup_create(mock_callback, MagicMock(), mock_manager)
+
+        mock_create.assert_called_once()
+        mock_manager.middleware_data["bot"].send_document.assert_called_once()
+        assert not backup_path.exists()
+
+    @pytest.mark.asyncio
+    async def test_on_backup_file_received_success(self, mock_message, mock_manager, monkeypatch):
+        """Тест успешного восстановления резервной копии."""
+        mock_message.content_type = ContentType.DOCUMENT
+        document = MagicMock()
+        document.file_name = "backup.sql"
+        document.file_size = 1024
+        mock_message.document = document
+
+        async def fake_download(file, destination=None, **kwargs):
+            Path(destination).write_text("-- dump --", encoding="utf-8")
+
+        mock_manager.middleware_data["bot"].download = AsyncMock(side_effect=fake_download)
+        mock_restore = AsyncMock()
+        monkeypatch.setattr('bot.dialogs.admin_menu.restore_db_backup', mock_restore)
+
+        await on_backup_file_received(mock_message, MagicMock(), mock_manager)
+
+        mock_manager.middleware_data["bot"].download.assert_called_once()
+        mock_restore.assert_called_once()
+        mock_manager.switch_to.assert_called_with(Admin.backup_menu)
+        mock_message.answer.assert_any_call("✅ Резервная копия успешно применена. Убедитесь, что все сервисы работают корректно.")
 
     @pytest.mark.asyncio
     async def test_on_semester_settings(self, mock_callback, mock_manager):
@@ -889,15 +936,16 @@ class TestAdminMenuHandlers:
     async def test_get_preview_data_text_message(self, mock_manager):
         """Тест получения данных предпросмотра для текстового сообщения."""
         # Настраиваем моки
-        mock_manager.dialog_data.get.side_effect = lambda key: {
+        mock_manager.dialog_data.get.side_effect = lambda key, default=None: {
             'segment_group_prefix': 'О7',
             'segment_days_active': 7,
             'segment_template': 'Привет {username}!',
             'segment_message_type': 'text'
-        }.get(key)
+        }.get(key, default)
 
         mock_user_data_manager = AsyncMock()
         mock_user_data_manager.get_all_user_ids.return_value = [1]
+        mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
 
         mock_user_info = MagicMock()
         mock_user_info.user_id = 1
@@ -920,14 +968,14 @@ class TestAdminMenuHandlers:
     async def test_get_preview_data_media_message(self, mock_manager):
         """Тест получения данных предпросмотра для медиа сообщения."""
         # Настраиваем моки
-        mock_manager.dialog_data.get.side_effect = lambda key: {
+        mock_manager.dialog_data.get.side_effect = lambda key, default=None: {
             'segment_group_prefix': None,
             'segment_days_active': None,
             'segment_template': '',
             'segment_message_type': 'media',
             'segment_message_chat_id': -123,
             'segment_message_id': 456
-        }.get(key)
+        }.get(key, default)
 
         mock_user_data_manager = AsyncMock()
         mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager
@@ -945,12 +993,12 @@ class TestAdminMenuHandlers:
     async def test_get_preview_data_no_users(self, mock_manager):
         """Тест получения данных предпросмотра без пользователей."""
         # Настраиваем моки
-        mock_manager.dialog_data.get.side_effect = lambda key: {
+        mock_manager.dialog_data.get.side_effect = lambda key, default=None: {
             'segment_group_prefix': 'О7',
             'segment_days_active': 7,
             'segment_template': 'Привет {username}!',
             'segment_message_type': 'text'
-        }.get(key)
+        }.get(key, default)
 
         mock_user_data_manager = AsyncMock()
         mock_manager.middleware_data["user_data_manager"] = mock_user_data_manager

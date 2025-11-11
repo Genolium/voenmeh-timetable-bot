@@ -1,11 +1,14 @@
 import asyncio
+import gzip
 import random
+import shutil
+import tempfile
 from datetime import datetime, time, timedelta, date
 import os
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.types import CallbackQuery, Message, ContentType
+from aiogram.types import CallbackQuery, Message, ContentType, FSInputFile
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Back, Button, Select, Row, SwitchTo, Column
@@ -22,6 +25,7 @@ from core.config import MOSCOW_TZ
 from core.events_manager import EventsManager
 from core.feedback_manager import FeedbackManager
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
+from core.db.backups import create_db_backup, restore_db_backup, BackupError
 
 from .states import Admin
 from .constants import WidgetIds
@@ -29,6 +33,8 @@ from .constants import WidgetIds
 # Генерация полного расписания отключена; переменная сохраняется для совместимости тестов UI
 active_generations = {}
 EVENTS_PAGE_SIZE = 10
+MAX_DB_BACKUP_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB
+ALLOWED_BACKUP_EXTENSIONS = {".sql", ".sql.gz"}
 
 def _is_empty_field(value: str) -> bool:
     """Проверяет, является ли поле пустым или содержит служебные слова"""
@@ -54,6 +60,12 @@ def _is_cancel(text: str) -> bool:
 def _is_skip(text: str) -> bool:
     raw = (text or "").strip().lower()
     return raw in {"пропустить", "skip", "-", "пусто", "empty", ""}
+
+def _is_supported_backup_file(filename: str | None) -> bool:
+    if not filename:
+        return False
+    lower = filename.lower()
+    return any(lower.endswith(ext) for ext in ALLOWED_BACKUP_EXTENSIONS)
 
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
@@ -1298,6 +1310,76 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
     
     await bot.send_message(admin_id, message, parse_mode="HTML")
 
+async def on_backup_create(callback: CallbackQuery, button: Button, manager: DialogManager):
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    await callback.answer("💾 Создаю резервную копию...", show_alert=False)
+
+    backup_path: Path | None = None
+    try:
+        backup_path = await create_db_backup()
+        caption = (
+            "💾 Резервная копия базы данных\n"
+            f"Создана: {datetime.now(MOSCOW_TZ).strftime('%d.%m.%Y %H:%M')}"
+        )
+        await bot.send_document(
+            admin_id,
+            FSInputFile(str(backup_path), filename=backup_path.name),
+            caption=caption,
+        )
+    except BackupError as exc:
+        await bot.send_message(admin_id, f"❌ Не удалось создать резервную копию: {exc}")
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        await bot.send_message(admin_id, f"❌ Непредвиденная ошибка при создании бэкапа: {exc}")
+    finally:
+        if backup_path and backup_path.exists():
+            try:
+                backup_path.unlink()
+            except Exception:  # pragma: no cover - cleanup best effort
+                pass
+
+async def on_backup_file_received(message: Message, message_input: MessageInput, manager: DialogManager):
+    if message.content_type != ContentType.DOCUMENT or not getattr(message, "document", None):
+        await message.answer("📎 Пожалуйста, отправьте файл резервной копии в формате .sql или .sql.gz.")
+        return
+
+    document = message.document
+    if document.file_size and document.file_size > MAX_DB_BACKUP_SIZE_BYTES:
+        await message.answer("❌ Файл слишком большой. Максимальный размер — 50 МБ.")
+        return
+
+    if not _is_supported_backup_file(document.file_name):
+        await message.answer("❌ Поддерживаются только файлы с расширениями .sql или .sql.gz.")
+        return
+
+    bot: Bot = manager.middleware_data.get("bot")
+    restore_successful = False
+
+    await message.answer("⏳ Получен файл. Начинаю восстановление базы данных, это может занять несколько минут...")
+    try:
+        with tempfile.TemporaryDirectory(prefix="db_restore_") as tmp_dir:
+            destination = Path(tmp_dir) / (document.file_name or "database_backup.sql")
+            await bot.download(document, destination=destination)
+
+            target_path = destination
+            if destination.suffix.lower() == ".gz":
+                decompressed_path = destination.with_suffix("")
+                with gzip.open(destination, "rb") as src, open(decompressed_path, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                target_path = decompressed_path
+
+            await restore_db_backup(target_path)
+            restore_successful = True
+    except BackupError as exc:
+        await message.answer(f"❌ Не удалось применить резервную копию: {exc}")
+    except Exception as exc:  # pragma: no cover - unexpected errors
+        await message.answer(f"❌ Непредвиденная ошибка при применении бэкапа: {exc}")
+    else:
+        await message.answer("✅ Резервная копия успешно применена. Убедитесь, что все сервисы работают корректно.")
+    finally:
+        if restore_successful:
+            await manager.switch_to(Admin.backup_menu)
+
 async def on_cancel_generation(callback: CallbackQuery):
     """Отменяет генерацию изображений."""
     admin_id = callback.from_user.id
@@ -1369,6 +1451,9 @@ admin_dialog = Dialog(
             SwitchTo(Const("⚙️ Настройки"), id="section_settings", state=Admin.semester_settings),
         ),
         Row(
+            SwitchTo(Const("💾 Бэкапы"), id="section_backups", state=Admin.backup_menu),
+        ),
+        Row(
             SwitchTo(Const("👤 Пользователи"), id="section_users", state=Admin.enter_user_id),
             SwitchTo(Const("🎉 Мероприятия"), id="section_events", state=Admin.events_menu),
         ),
@@ -1402,6 +1487,28 @@ admin_dialog = Dialog(
         Button(Const("👥 Проверить выпустившиеся группы"), id="check_graduated2", on_click=on_check_graduated_groups),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_cache", state=Admin.menu),
         state=Admin.cache_menu
+    ),
+    Window(
+        Const(
+            "💾 <b>Резервные копии базы данных</b>\n\n"
+            "• Нажмите «Создать бэкап», чтобы получить SQL-файл с текущим состоянием базы данных.\n"
+            "• Для восстановления отправьте ранее сохранённый файл.\n\n"
+            "⚠️ Восстановление перезапишет текущие данные, убедитесь в актуальности резервной копии."
+        ),
+        Button(Const("📥 Создать бэкап"), id="backup_create_btn", on_click=on_backup_create),
+        SwitchTo(Const("📤 Загрузить бэкап"), id="backup_upload_btn", state=Admin.backup_upload_wait),
+        SwitchTo(Const("◀️ В админ-панель"), id="backup_back_btn", state=Admin.menu),
+        state=Admin.backup_menu,
+        parse_mode="HTML"
+    ),
+    Window(
+        Const(
+            "📤 Отправьте файл резервной копии (.sql или .sql.gz) размером до 50 МБ.\n"
+            "Восстановление запустится автоматически после получения файла."
+        ),
+        MessageInput(on_backup_file_received, content_types=[ContentType.DOCUMENT]),
+        SwitchTo(Const("◀️ Назад"), id="backup_upload_back_btn", state=Admin.backup_menu),
+        state=Admin.backup_upload_wait
     ),
     Window(
         Format("{stats_text}"),

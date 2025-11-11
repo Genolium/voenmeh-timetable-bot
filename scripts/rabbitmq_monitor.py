@@ -3,20 +3,51 @@
 Скрипт для мониторинга состояния RabbitMQ и автоматического перезапуска при проблемах
 """
 
+import atexit
 import asyncio
 import logging
 import os
 import subprocess
 import time
-from typing import Optional
+
 import aiohttp
+from pythonjsonlogger.json import JsonFormatter
 from redis.asyncio import Redis
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from core.config import settings
+from core.telemetry import setup_telemetry, shutdown_telemetry
+
+TELEMETRY_HANDLES = None
+if settings.OTEL_ENABLED:
+    TELEMETRY_HANDLES = setup_telemetry(
+        service_name=f"{settings.OTEL_SERVICE_NAME}-monitor",
+        environment=settings.OTEL_ENVIRONMENT,
+        endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+        headers=settings.OTEL_EXPORTER_OTLP_HEADERS,
+    )
+
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        JsonFormatter(
+            "%(asctime)s %(name)s %(levelname)s %(message)s",
+            json_default=str,
+        )
+    )
+    root_logger.addHandler(stream_handler)
+
+if TELEMETRY_HANDLES and TELEMETRY_HANDLES.log_handler:
+    root_logger.addHandler(TELEMETRY_HANDLES.log_handler)
+
+root_logger.setLevel(logging.INFO)
+
+
+def _shutdown_telemetry() -> None:
+    shutdown_telemetry(TELEMETRY_HANDLES)
+
+
+atexit.register(_shutdown_telemetry)
 logger = logging.getLogger(__name__)
 
 class RabbitMQMonitor:

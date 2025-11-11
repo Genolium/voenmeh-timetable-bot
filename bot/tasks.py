@@ -1,41 +1,76 @@
+import atexit
 import asyncio
 import logging
 import os
 import threading
 import time
-from typing import Dict, Any
+from typing import Any, Dict
 
 import dramatiq
 from aiogram import Bot
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
 # Compatibility layer for RetryAfter across aiogram versions
 try:
-    # aiogram v3.x
     from aiogram.exceptions import TelegramRetryAfter as RetryAfter
 except Exception:
     try:
-        # aiogram v2.x
         from aiogram.utils.exceptions import RetryAfter  # type: ignore
-    except Exception:  # Fallback: define a stub to keep logic working
+    except Exception:
         class RetryAfter(Exception):
             pass
+
 from aiolimiter import AsyncLimiter
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, InputMediaPhoto
-from aiogram.client.default import DefaultBotProperties
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.encoder import JSONEncoder
+from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
 from bot.text_formatters import generate_reminder_text
-from core.config import MEDIA_PATH, SUBSCRIPTION_CHANNEL
 from bot.utils.image_compression import get_telegram_safe_image_path
+from core.config import MEDIA_PATH, SUBSCRIPTION_CHANNEL, settings
 from core.image_cache_manager import ImageCacheManager
-from core.image_service import ImageService
 from core.image_generator import generate_schedule_image
+from core.image_service import ImageService
 from core.user_data import UserDataManager
+from core.telemetry import setup_telemetry, shutdown_telemetry
 
 load_dotenv()
+
+TELEMETRY_HANDLES = None
+if settings.OTEL_ENABLED:
+    TELEMETRY_HANDLES = setup_telemetry(
+        service_name=f"{settings.OTEL_SERVICE_NAME}-worker",
+        environment=settings.OTEL_ENVIRONMENT,
+        endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+        headers=settings.OTEL_EXPORTER_OTLP_HEADERS,
+    )
+
+root_logger = logging.getLogger()
+if not root_logger.handlers:
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        JsonFormatter(
+            "%(asctime)s %(name)s %(levelname)s %(message)s",
+            json_default=str,
+        )
+    )
+    root_logger.addHandler(stream_handler)
+
+if TELEMETRY_HANDLES and TELEMETRY_HANDLES.log_handler:
+    root_logger.addHandler(TELEMETRY_HANDLES.log_handler)
+
+root_logger.setLevel(logging.INFO)
+
+
+def _shutdown_telemetry() -> None:
+    shutdown_telemetry(TELEMETRY_HANDLES)
+
+
+atexit.register(_shutdown_telemetry)
 
 # --- Конфигурация Redis пула ---
 def get_redis_client(decode_responses: bool = False):

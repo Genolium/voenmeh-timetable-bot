@@ -32,9 +32,11 @@
 - **📊 Живая статистика:** Отслеживайте ключевые метрики: общее число пользователей, новых за день/неделю, активность (DAU/WAU/MAU), самые популярные группы.
 - **📣 Массовые рассылки:** Отправляйте важные сообщения всем пользователям бота прямо из Telegram.
 - **🗣️ Цикл обратной связи:** Получайте отзывы, предложения и баг-репорты от пользователей в специальный приватный чат.
+- **💾 Резервные копии:** Создавайте резервные копии базы данных и восстанавливайте их напрямую из админ-диалога.
 - **📈 Профессиональный мониторинг:**
+  - **OpenTelemetry Collector:** Единая точка сбора логов, трейсов и метрик с поддержкой OTLP.
   - **Grafana:** Готовые дашборды для визуализации состояния приложения (нагрузка, время ответа, количество пользователей онлайн).
-  - **Prometheus:** Сбор и хранение всех ключевых метрик производительности.
+  - **Prometheus:** Сбор и хранение ключевых метрик производительности, включая экспорт от OpenTelemetry.
 
 ![](https://github.com/Genolium/voenmeh-timetable-bot/blob/main/bot/media/5.png)
 
@@ -101,6 +103,7 @@ cd voenmeh-timetable-bot
 
 - **Grafana (метрики):** `http://localhost:3000` (login/pass: `admin`/`admin`)
 - **Prometheus:** `http://localhost:9090`
+- **OTLP (HTTP) endpoint OpenTelemetry Collector:** `http://localhost:4318`
 - **pgAdmin (веб-интерфейс для PostgreSQL):**
   - **URL:** `http://localhost:5050`
   - **Email:** `${PGADMIN_DEFAULT_EMAIL}` (из `.env`, по умолч.: `admin@voenmeh.local`)
@@ -161,6 +164,7 @@ cd voenmeh-timetable-bot
 - **Миграции:** `Alembic`
 - **Кэш и брокер:** `Redis`
 - **Метрики:** `Prometheus`, `Grafana`
+- **Наблюдаемость:** `OpenTelemetry Collector (OTLP)`
 - **База данных:** `PostgreSQL` с веб-интерфейсом `pgAdmin`
 - **Тестирование:** `pytest`, `pytest-asyncio`, `pytest-mock`
 
