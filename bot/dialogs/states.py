@@ -85,6 +85,10 @@ class Admin(StatesGroup):
 
     # New: send message to user
     send_message_text = State()
+    backup_menu = State()
+    backup_create_confirm = State()
+    backup_upload_wait = State()
+    backup_upload_confirm = State()
 
 
 class Events(StatesGroup):

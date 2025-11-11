@@ -1,11 +1,12 @@
 import asyncio
 import os
 import random
+import tempfile
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.types import CallbackQuery, ContentType, Message
+from aiogram.types import CallbackQuery, ContentType, FSInputFile, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
@@ -16,6 +17,7 @@ from bot.scheduler import evening_broadcast, morning_summary_broadcast
 from bot.tasks import copy_message_task, send_message_task
 from bot.text_formatters import generate_reminder_text
 from core.config import MOSCOW_TZ
+from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
 from core.events_manager import EventsManager
 from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
@@ -198,6 +200,95 @@ async def on_admin_categories(callback: CallbackQuery, button: Button, manager: 
 async def on_admin_events(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.switch_to(Admin.events_menu)
 
+
+BASE_BACKUP_TEXT = (
+    "💾 <b>Резервные копии базы данных</b>\n\n"
+    "• <b>Создать бэкап</b> — получите SQL-файл с текущим состоянием БД.\n"
+    "• <b>Загрузить бэкап</b> — восстановите базу из SQL или .gz файла. "
+    "Текущие данные будут перезаписаны."
+)
+
+
+async def get_backup_menu_data(dialog_manager: DialogManager, **kwargs):
+    status = dialog_manager.dialog_data.get("backup_status")
+    text = BASE_BACKUP_TEXT
+    if status:
+        text = f"{BASE_BACKUP_TEXT}\n\n{status}"
+    return {"backup_status": text}
+
+
+async def on_backup_create(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await callback.answer("⏳ Генерирую бэкап...", show_alert=False)
+    await manager.switch_to(Admin.backup_create_confirm)
+
+    backup_path: Path | None = None
+    try:
+        backup_path = await create_db_backup(output_dir=Path("/app/data"))
+        document = FSInputFile(backup_path)
+        await callback.message.answer_document(
+            document,
+            caption=f"✅ Резервная копия создана: <code>{backup_path.name}</code>",
+        )
+        manager.dialog_data["backup_status"] = (
+            "✅ Бэкап успешно создан. Файл отправлен в этот чат. "
+            "Сохраните его в безопасном месте."
+        )
+    except BackupError as exc:
+        error_text = f"❌ Не удалось создать резервную копию: {exc}"
+        manager.dialog_data["backup_status"] = error_text
+        await callback.message.answer(error_text)
+    except Exception as exc:  # pragma: no cover - неожиданные ошибки
+        error_text = f"❌ Ошибка создания бэкапа: {exc}"
+        manager.dialog_data["backup_status"] = error_text
+        await callback.message.answer(error_text)
+    finally:
+        if backup_path and backup_path.exists():
+            try:
+                backup_path.unlink()
+            except OSError:
+                pass
+        await manager.switch_to(Admin.backup_menu)
+
+
+async def on_backup_upload_received(message: Message, widget: MessageInput, manager: DialogManager):
+    document = message.document
+    if not document:
+        await message.answer("❌ Отправьте документ с расширением .sql или .sql.gz.")
+        return
+
+    await message.answer("⏳ Получен файл. Начинаю восстановление, это может занять несколько минут...")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / (document.file_name or "backup.sql")
+        await message.bot.download(document, destination=tmp_path)
+        target_path = maybe_decompress_gzip(tmp_path)
+
+        try:
+            await restore_db_backup(target_path)
+        except BackupError as exc:
+            status = f"❌ Не удалось применить резервную копию: {exc}"
+            manager.dialog_data["backup_status"] = status
+            manager.dialog_data["backup_upload_status"] = status
+            await message.answer(status)
+            await manager.switch_to(Admin.backup_upload_confirm)
+            return
+
+    success_status = (
+        "✅ База данных успешно восстановлена из резервной копии.\n"
+        "Перезагрузите сервисы, если изменения не применились автоматически."
+    )
+    manager.dialog_data["backup_upload_status"] = success_status
+    manager.dialog_data["backup_status"] = success_status
+    await message.answer(success_status)
+    await manager.switch_to(Admin.backup_upload_confirm)
+
+
+async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs):
+    status = dialog_manager.dialog_data.get(
+        "backup_upload_status",
+        "ℹ️ Ожидаем результат восстановления...",
+    )
+    return {"backup_upload_status": status}
 
 async def get_categories_list(dialog_manager: DialogManager, **kwargs):
     session_factory = dialog_manager.middleware_data.get("session_factory")
@@ -1544,6 +1635,7 @@ admin_dialog = Dialog(
         ),
         Row(
             SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
+            SwitchTo(Const("💾 Бэкапы"), id="section_backups", state=Admin.backup_menu),
         ),
         state=Admin.menu,
     ),
@@ -1603,6 +1695,33 @@ admin_dialog = Dialog(
         SwitchTo(Const("◀️ В админ-панель"), id="stats_back", state=Admin.menu),
         getter=get_stats_data,
         state=Admin.stats,
+        parse_mode="HTML",
+    ),
+    Window(
+        Format("{backup_status}"),
+        Button(Const("📥 Создать бэкап"), id="backup_create_btn", on_click=on_backup_create),
+        SwitchTo(Const("📤 Загрузить бэкап"), id="backup_upload_btn", state=Admin.backup_upload_wait),
+        SwitchTo(Const("◀️ В админ-панель"), id="back_from_backup_menu", state=Admin.menu),
+        getter=get_backup_menu_data,
+        state=Admin.backup_menu,
+        parse_mode="HTML",
+    ),
+    Window(
+        Const("⏳ Получаю файл бэкапа..."),
+        SwitchTo(Const("◀️ Отмена"), id="cancel_backup_create", state=Admin.backup_menu),
+        state=Admin.backup_create_confirm,
+    ),
+    Window(
+        Const("📤 Отправьте SQL-файл резервной копии базы данных (поддерживается .sql и .gz)."),
+        MessageInput(on_backup_upload_received, content_types=[ContentType.DOCUMENT]),
+        SwitchTo(Const("◀️ Отмена"), id="cancel_backup_upload", state=Admin.backup_menu),
+        state=Admin.backup_upload_wait,
+    ),
+    Window(
+        Format("{backup_upload_status}"),
+        SwitchTo(Const("◀️ В меню бэкапов"), id="back_from_backup_status", state=Admin.backup_menu),
+        getter=get_backup_upload_data,
+        state=Admin.backup_upload_confirm,
         parse_mode="HTML",
     ),
     Window(

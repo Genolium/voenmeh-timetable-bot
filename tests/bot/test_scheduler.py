@@ -17,6 +17,9 @@ from bot.scheduler import (
     morning_summary_broadcast,
     plan_reminders_for_user,
     print_progress_bar,
+    send_daily_reports,
+    send_monthly_reports,
+    send_weekly_reports,
     send_schedule_diff_notifications,
     setup_scheduler,
 )
@@ -1111,11 +1114,12 @@ async def test_send_schedule_diff_notifications_exception_in_comparison(
 
 
 @pytest.mark.asyncio
-async def test_auto_backup_with_gzip_pickle_data(mock_redis, monkeypatch):
+async def test_auto_backup_with_gzip_pickle_data(mock_redis, monkeypatch, tmp_path):
     """Тест резервного копирования с gzip+pickle данными."""
     import gzip
     import pickle
     from datetime import datetime as dt
+    from unittest.mock import AsyncMock, mock_open
 
     # Создаем тестовые данные в формате gzip+pickle
     test_data = {"groups": {"О735Б": {"odd": {"lessons": []}}}}
@@ -1131,17 +1135,26 @@ async def test_auto_backup_with_gzip_pickle_data(mock_redis, monkeypatch):
     # Мокаем REDIS_SCHEDULE_CACHE_KEY
     monkeypatch.setattr("core.config.REDIS_SCHEDULE_CACHE_KEY", "schedule:cache")
 
+    backup_file = tmp_path / "db_backup.sql"
+    backup_file.write_text("SELECT 1;", encoding="utf-8")
+    monkeypatch.setattr(
+        "bot.scheduler.create_db_backup",
+        AsyncMock(return_value=backup_file),
+    )
+    monkeypatch.setattr("builtins.open", mock_open())
+
     await auto_backup(mock_redis)
 
-    # Проверяем, что резервная копия создана
-    mock_redis.set.assert_called()
+    # Проверяем, что данные из Redis были прочитаны
+    mock_redis.get.assert_called_with("schedule:cache")
 
 
 @pytest.mark.asyncio
-async def test_auto_backup_with_json_data(mock_redis, monkeypatch):
+async def test_auto_backup_with_json_data(mock_redis, monkeypatch, tmp_path):
     """Тест резервного копирования с JSON данными."""
     import json
     from datetime import datetime as dt
+    from unittest.mock import AsyncMock, mock_open
 
     # Создаем тестовые JSON данные
     test_data = {"groups": {"О735Б": {"odd": {"lessons": []}}}}
@@ -1157,63 +1170,50 @@ async def test_auto_backup_with_json_data(mock_redis, monkeypatch):
     # Мокаем REDIS_SCHEDULE_CACHE_KEY
     monkeypatch.setattr("core.config.REDIS_SCHEDULE_CACHE_KEY", "schedule:cache")
 
+    backup_file = tmp_path / "db_backup.sql"
+    backup_file.write_text("SELECT 1;", encoding="utf-8")
+    monkeypatch.setattr(
+        "bot.scheduler.create_db_backup",
+        AsyncMock(return_value=backup_file),
+    )
+    monkeypatch.setattr("builtins.open", mock_open())
+
     await auto_backup(mock_redis)
 
-    # Проверяем, что резервная копия создана
-    mock_redis.set.assert_called()
+    mock_redis.get.assert_called_with("schedule:cache")
 
 
 @pytest.mark.asyncio
-async def test_auto_backup_database_success(mock_redis, monkeypatch):
+async def test_auto_backup_database_success(mock_redis, monkeypatch, tmp_path):
     """Тест успешного резервного копирования базы данных."""
-    import os
-    from datetime import datetime as dt
+    from unittest.mock import AsyncMock, mock_open
 
-    # Мокаем переменные окружения
-    monkeypatch.setattr("os.getenv", lambda key: "postgresql://user:pass@localhost:5432/test_db")
-    monkeypatch.setattr("bot.scheduler.os", os)
-
-    # Мокаем subprocess
-    mock_process = MagicMock()
-    mock_process.returncode = 0
-    mock_process.stderr = ""
-
-    mock_subprocess = MagicMock()
-    mock_subprocess.run.return_value = mock_process
-    monkeypatch.setattr("bot.scheduler.subprocess", mock_subprocess)
-
-    # Мокаем datetime
-    mock_dt_class = MagicMock()
-    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
-    monkeypatch.setattr("bot.scheduler._dt", mock_dt_class)
+    backup_file = tmp_path / "db_backup.sql"
+    backup_file.write_text("SELECT 1;", encoding="utf-8")
+    create_backup_mock = AsyncMock(return_value=backup_file)
+    monkeypatch.setattr("bot.scheduler.create_db_backup", create_backup_mock)
+    monkeypatch.setattr("builtins.open", mock_open())
+    monkeypatch.setattr("core.config.REDIS_SCHEDULE_CACHE_KEY", "schedule:cache")
+    mock_redis.get.return_value = None
 
     await auto_backup(mock_redis)
 
-    # Проверяем, что pg_dump был вызван
-    mock_subprocess.run.assert_called()
+    create_backup_mock.assert_awaited()
 
 
 @pytest.mark.asyncio
 async def test_auto_backup_database_timeout(mock_redis, monkeypatch):
     """Тест таймаута при резервном копировании базы данных."""
-    import os
-    from datetime import datetime as dt
+    from unittest.mock import AsyncMock
 
-    # Мокаем переменные окружения
-    monkeypatch.setattr("os.getenv", lambda key: "postgresql://user:pass@localhost:5432/test_db")
-    monkeypatch.setattr("bot.scheduler.os", os)
+    async def failing_backup(*args, **kwargs):
+        raise Exception("Timeout")
 
-    # Мокаем subprocess с таймаутом
-    mock_subprocess = MagicMock()
-    mock_subprocess.run.side_effect = Exception("Timeout")
-    monkeypatch.setattr("bot.scheduler.subprocess", mock_subprocess)
+    monkeypatch.setattr("bot.scheduler.create_db_backup", AsyncMock(side_effect=failing_backup))
+    monkeypatch.setattr("core.config.REDIS_SCHEDULE_CACHE_KEY", "schedule:cache")
+    mock_redis.get.return_value = None
 
-    # Мокаем datetime
-    mock_dt_class = MagicMock()
-    mock_dt_class.now.return_value.strftime.return_value = "20250101_120000"
-    monkeypatch.setattr("bot.scheduler._dt", mock_dt_class)
-
-    # Не должно падать при таймауте
+    # Не должно падать при исключении
     await auto_backup(mock_redis)
 
 
@@ -1311,7 +1311,8 @@ async def test_send_daily_reports_success(mock_bot, mock_user_data_manager, monk
     # Мокаем AdminReportsGenerator
     mock_generator = AsyncMock()
     mock_generator.generate_daily_report.return_value = "📊 Daily Report"
-    monkeypatch.setattr("bot.scheduler.AdminReportsGenerator", lambda *args: mock_generator)
+    monkeypatch.setattr("core.admin_reports.AdminReportsGenerator", lambda *args: mock_generator)
+    mock_user_data_manager.get_admin_users.return_value = [111, 222]
 
     await send_daily_reports(mock_bot, mock_user_data_manager)
 
@@ -1332,7 +1333,7 @@ async def test_send_daily_reports_no_admins(mock_bot, mock_user_data_manager, mo
 
     mock_generator = AsyncMock()
     mock_generator.generate_daily_report.return_value = "📊 Daily Report"
-    monkeypatch.setattr("bot.scheduler.AdminReportsGenerator", lambda *args: mock_generator)
+    monkeypatch.setattr("core.admin_reports.AdminReportsGenerator", lambda *args: mock_generator)
 
     await send_daily_reports(mock_bot, mock_user_data_manager)
 
@@ -1348,7 +1349,8 @@ async def test_send_weekly_reports_success(mock_bot, mock_user_data_manager, mon
     # Мокаем AdminReportsGenerator
     mock_generator = AsyncMock()
     mock_generator.generate_weekly_report.return_value = "📊 Weekly Report"
-    monkeypatch.setattr("bot.scheduler.AdminReportsGenerator", lambda *args: mock_generator)
+    monkeypatch.setattr("core.admin_reports.AdminReportsGenerator", lambda *args: mock_generator)
+    mock_user_data_manager.get_admin_users.return_value = [111, 222]
 
     await send_weekly_reports(mock_bot, mock_user_data_manager)
 
@@ -1367,7 +1369,8 @@ async def test_send_monthly_reports_success(mock_bot, mock_user_data_manager, mo
     # Мокаем AdminReportsGenerator
     mock_generator = AsyncMock()
     mock_generator.generate_monthly_report.return_value = "📊 Monthly Report"
-    monkeypatch.setattr("bot.scheduler.AdminReportsGenerator", lambda *args: mock_generator)
+    monkeypatch.setattr("core.admin_reports.AdminReportsGenerator", lambda *args: mock_generator)
+    mock_user_data_manager.get_admin_users.return_value = [111, 222]
 
     await send_monthly_reports(mock_bot, mock_user_data_manager)
 

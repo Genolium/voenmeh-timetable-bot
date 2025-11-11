@@ -33,8 +33,10 @@
 - **📣 Массовые рассылки:** Отправляйте важные сообщения всем пользователям бота прямо из Telegram.
 - **🗣️ Цикл обратной связи:** Получайте отзывы, предложения и баг-репорты от пользователей в специальный приватный чат.
 - **📈 Профессиональный мониторинг:**
+  - **OpenTelemetry Collector:** Единая точка экспорта логов, метрик и трейсов по протоколу OTLP.
   - **Grafana:** Готовые дашборды для визуализации состояния приложения (нагрузка, время ответа, количество пользователей онлайн).
   - **Prometheus:** Сбор и хранение всех ключевых метрик производительности.
+- **💾 Резервные копии:** Прямо из админ-панели можно выгрузить SQL-бэкап базы и восстановить его, отправив файл в бот.
 
 ![](https://github.com/Genolium/voenmeh-timetable-bot/blob/main/bot/media/5.png)
 
@@ -101,6 +103,7 @@ cd voenmeh-timetable-bot
 
 - **Grafana (метрики):** `http://localhost:3000` (login/pass: `admin`/`admin`)
 - **Prometheus:** `http://localhost:9090`
+- **OpenTelemetry Collector (OTLP, HTTP):** `http://localhost:4318`
 - **pgAdmin (веб-интерфейс для PostgreSQL):**
   - **URL:** `http://localhost:5050`
   - **Email:** `${PGADMIN_DEFAULT_EMAIL}` (из `.env`, по умолч.: `admin@voenmeh.local`)

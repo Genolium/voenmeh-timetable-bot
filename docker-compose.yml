@@ -25,6 +25,12 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+      otel-collector:
+        condition: service_started
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
     command: python main.py
     healthcheck:
       test: ["CMD", "pgrep", "python"]
@@ -40,8 +46,14 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
+      otel-collector:
+        condition: service_started
     # Safer defaults to avoid RAM spikes; override via .env if needed
     command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-1} --threads ${DRAMATIQ_THREADS:-2} bot.tasks
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
 
   rabbitmq_monitor:
     <<: *base-app-service
@@ -50,8 +62,14 @@ services:
     depends_on:
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
+      otel-collector:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      PYTHONPATH: /app
 
   db:
     image: postgres:15-alpine
@@ -168,6 +186,19 @@ services:
       - promtail_data:/var/lib/promtail/positions # Сохраняем позицию чтения логов
     depends_on:
       - loki
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    container_name: voenmeh_otel_collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./otel/collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    depends_on:
+      - loki
+    ports:
+      - "4317:4317"
+      - "4318:4318"
     restart: unless-stopped
 
   node-exporter:

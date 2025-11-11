@@ -1,4 +1,5 @@
 import asyncio
+import asyncio
 import logging
 import os
 import sys
@@ -52,25 +53,40 @@ from core.alert_webhook import run_alert_webhook_server
 from core.business_alerts import start_business_monitoring
 
 # --- Импорты ядра ---
-from core.config import ADMIN_IDS
+from core.config import ADMIN_IDS, settings
 from core.image_generator import shutdown_image_generator
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
+
+from core.telemetry import TelemetryHandles, setup_telemetry, shutdown_telemetry
 
 # from bot.utils.cleanup_bot import CleanupBot  # Автоочистка чатов отключена
 
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
-def setup_logging():
-    """Настраивает простое логирование для отладки."""
-    # Простое логирование для отладки
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[logging.StreamHandler()],
+def setup_logging() -> TelemetryHandles | None:
+    """Настраивает логирование и подключает OpenTelemetry обработчики при необходимости."""
+    telemetry_handles: TelemetryHandles | None = None
+    if settings.OTEL_ENABLED:
+        telemetry_handles = setup_telemetry(
+            service_name=settings.OTEL_SERVICE_NAME,
+            environment=settings.OTEL_ENVIRONMENT,
+            endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+            headers=settings.OTEL_EXPORTER_OTLP_HEADERS,
+        )
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(
+        JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str)
     )
-    # Устанавливаем уровень для логгера aiogram, чтобы не видеть слишком много системных сообщений
+
+    handlers = [stream_handler]
+    if telemetry_handles and telemetry_handles.log_handler:
+        handlers.append(telemetry_handles.log_handler)
+
+    logging.basicConfig(level=logging.INFO, handlers=handlers)
     logging.getLogger("aiogram").setLevel(logging.WARNING)
+    return telemetry_handles
 
 
 async def set_bot_commands(bot: Bot):
@@ -230,7 +246,7 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
 
 async def main():
     print("🚀 Starting bot...")
-    setup_logging()  # Вызываем настройку логирования
+    telemetry_handles = setup_logging()  # Вызываем настройку логирования
     print("📝 Logging configured")
     load_dotenv()
     print("🔧 Environment loaded")
@@ -406,6 +422,7 @@ async def main():
         except Exception:
             pass
         logging.info("Планировщик, бот и ресурсы рендеринга изображений остановлены.")
+        shutdown_telemetry(telemetry_handles)
 
 
 if __name__ == "__main__":

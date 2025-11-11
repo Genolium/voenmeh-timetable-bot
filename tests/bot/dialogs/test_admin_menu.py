@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +16,11 @@ from bot.dialogs.admin_menu import (
     get_semester_settings_data,
     get_stats_data,
     get_user_manage_data,
+    get_backup_menu_data,
+    get_backup_upload_data,
     on_admin_events,
+    on_backup_create,
+    on_backup_upload_received,
     on_broadcast_received,
     on_cancel_generation,
     on_check_graduated_groups,
@@ -446,6 +451,156 @@ class TestAdminMenuHandlers:
         await on_admin_events(mock_callback, MagicMock(), mock_manager)
 
         mock_manager.switch_to.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_on_backup_create_success(self, monkeypatch, tmp_path):
+        from bot.dialogs.states import Admin
+
+        manager = MagicMock(spec=DialogManager)
+        manager.dialog_data = {}
+        manager.switch_to = AsyncMock()
+
+        callback = AsyncMock(spec=CallbackQuery)
+        callback.answer = AsyncMock()
+        callback.message = AsyncMock()
+        callback.message.answer_document = AsyncMock()
+        callback.message.answer = AsyncMock()
+
+        backup_file = tmp_path / "backup.sql"
+        backup_file.write_text("SELECT 1;", encoding="utf-8")
+
+        monkeypatch.setattr("bot.dialogs.admin_menu.create_db_backup", AsyncMock(return_value=backup_file))
+
+        await on_backup_create(callback, None, manager)
+
+        callback.message.answer_document.assert_called_once()
+        assert "✅" in manager.dialog_data["backup_status"]
+        assert manager.switch_to.await_args_list[0].args[0] == Admin.backup_create_confirm
+        assert manager.switch_to.await_args_list[-1].args[0] == Admin.backup_menu
+
+    @pytest.mark.asyncio
+    async def test_on_backup_create_failure(self, monkeypatch):
+        from bot.dialogs.states import Admin
+        from core.db.backups import BackupError
+
+        manager = MagicMock(spec=DialogManager)
+        manager.dialog_data = {}
+        manager.switch_to = AsyncMock()
+
+        callback = AsyncMock(spec=CallbackQuery)
+        callback.answer = AsyncMock()
+        callback.message = AsyncMock()
+        callback.message.answer_document = AsyncMock()
+        callback.message.answer = AsyncMock()
+
+        monkeypatch.setattr(
+            "bot.dialogs.admin_menu.create_db_backup",
+            AsyncMock(side_effect=BackupError("failure")),
+        )
+
+        await on_backup_create(callback, None, manager)
+
+        callback.message.answer.assert_called()
+        assert "❌" in manager.dialog_data["backup_status"]
+        assert manager.switch_to.await_args_list[-1].args[0] == Admin.backup_menu
+
+    @pytest.mark.asyncio
+    async def test_on_backup_upload_received_success(self, monkeypatch, tmp_path):
+        from bot.dialogs.states import Admin
+
+        manager = MagicMock(spec=DialogManager)
+        manager.dialog_data = {}
+        manager.switch_to = AsyncMock()
+
+        message = AsyncMock(spec=Message)
+        message.answer = AsyncMock()
+        message.bot = AsyncMock()
+        message.document = MagicMock()
+        message.document.file_name = "backup.sql"
+
+        async def fake_download(document, destination):
+            Path(destination).write_text("SELECT 1;", encoding="utf-8")
+
+        message.bot.download = AsyncMock(side_effect=fake_download)
+
+        monkeypatch.setattr("bot.dialogs.admin_menu.maybe_decompress_gzip", lambda path: Path(path))
+        monkeypatch.setattr("bot.dialogs.admin_menu.restore_db_backup", AsyncMock())
+
+        await on_backup_upload_received(message, None, manager)
+
+        assert "✅" in manager.dialog_data["backup_upload_status"]
+        assert manager.switch_to.await_args_list[-1].args[0] == Admin.backup_upload_confirm
+
+    @pytest.mark.asyncio
+    async def test_on_backup_upload_received_failure(self, monkeypatch, tmp_path):
+        from bot.dialogs.states import Admin
+        from core.db.backups import BackupError
+
+        manager = MagicMock(spec=DialogManager)
+        manager.dialog_data = {}
+        manager.switch_to = AsyncMock()
+
+        message = AsyncMock(spec=Message)
+        message.answer = AsyncMock()
+        message.bot = AsyncMock()
+        message.document = MagicMock()
+        message.document.file_name = "backup.sql"
+
+        async def fake_download(document, destination):
+            Path(destination).write_text("SELECT 1;", encoding="utf-8")
+
+        message.bot.download = AsyncMock(side_effect=fake_download)
+
+        monkeypatch.setattr("bot.dialogs.admin_menu.maybe_decompress_gzip", lambda path: Path(path))
+        monkeypatch.setattr(
+            "bot.dialogs.admin_menu.restore_db_backup",
+            AsyncMock(side_effect=BackupError("restore failed")),
+        )
+
+        await on_backup_upload_received(message, None, manager)
+
+        assert "❌" in manager.dialog_data["backup_upload_status"]
+        assert manager.switch_to.await_args_list[-1].args[0] == Admin.backup_upload_confirm
+
+
+@pytest.mark.asyncio
+async def test_get_backup_menu_data_default():
+    manager = MagicMock(spec=DialogManager)
+    manager.dialog_data = {}
+
+    result = await get_backup_menu_data(manager)
+
+    assert "💾" in result["backup_status"]
+
+
+@pytest.mark.asyncio
+async def test_get_backup_menu_data_with_status():
+    manager = MagicMock(spec=DialogManager)
+    manager.dialog_data = {"backup_status": "✅ Everything good"}
+
+    result = await get_backup_menu_data(manager)
+
+    assert "✅ Everything good" in result["backup_status"]
+
+
+@pytest.mark.asyncio
+async def test_get_backup_upload_data_default():
+    manager = MagicMock(spec=DialogManager)
+    manager.dialog_data = {}
+
+    result = await get_backup_upload_data(manager)
+
+    assert "ℹ️" in result["backup_upload_status"]
+
+
+@pytest.mark.asyncio
+async def test_get_backup_upload_data_custom_status():
+    manager = MagicMock(spec=DialogManager)
+    manager.dialog_data = {"backup_upload_status": "✅ Restored"}
+
+    result = await get_backup_upload_data(manager)
+
+    assert result["backup_upload_status"] == "✅ Restored"
 
     @pytest.mark.asyncio
     async def test_events_filter_all_shows_future_events(self, mock_manager):
