@@ -79,6 +79,7 @@ async def test_get_user_settings_for_unknown_user_returns_defaults(
         "morning_summary": False,
         "lesson_reminders": False,
         "reminder_time_minutes": 60,
+        "theme": "standard",
     }
 
 
@@ -174,6 +175,7 @@ class TestUserDataManagerWithSQLAlchemy:
             "morning_summary": True,
             "lesson_reminders": True,
             "reminder_time_minutes": 60,
+            "theme": "standard",
         }
         await manager_with_db.update_setting(456, "morning_summary", False)
         new_settings = await manager_with_db.get_user_settings(456)
@@ -338,11 +340,10 @@ class TestUserDataManagerCaching:
         manager_with_db._redis_client = None
         manager_with_db._redis_url = None
 
-        # Мокаем get_redis_client
-        with pytest.mock.patch("core.config.get_redis_client") as mock_get_redis:
-            mock_redis = AsyncMock()
-            mock_get_redis.return_value = mock_redis
-
+        # Мокаем get_redis_client как async функцию
+        from unittest.mock import patch
+        mock_redis = AsyncMock()
+        with patch("core.config.get_redis_client", AsyncMock(return_value=mock_redis)) as mock_get_redis:
             result = await manager_with_db._get_redis_client()
 
             assert result == mock_redis

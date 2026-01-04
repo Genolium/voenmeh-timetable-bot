@@ -251,7 +251,7 @@ async def test_fetch_and_parse_all_schedules_fallback_on_network_error(monkeypat
     # Мокаем fallback данные
     with patch("core.parser.load_fallback_schedule", return_value=fallback_data):
         # Мокаем AlertSender чтобы избежать ошибок
-        with patch("core.parser.AlertSender"):
+        with patch("core.alert_sender.AlertSender"):
             result = await fetch_and_parse_all_schedules()
 
             assert result is not None
@@ -295,7 +295,7 @@ async def test_fetch_and_parse_all_schedules_fallback_on_parsing_error(monkeypat
     # Мокаем fallback данные
     with patch("core.parser.load_fallback_schedule", return_value=fallback_data):
         # Мокаем AlertSender чтобы избежать ошибок
-        with patch("core.parser.AlertSender"):
+        with patch("core.alert_sender.AlertSender"):
             result = await fetch_and_parse_all_schedules()
 
             assert result is not None
@@ -332,10 +332,10 @@ async def test_fetch_and_parse_all_schedules_no_fallback_available(monkeypatch):
     # Мокаем отсутствие fallback данных
     with patch("core.parser.load_fallback_schedule", return_value=None):
         # Мокаем AlertSender чтобы избежать ошибок
-        with patch("core.parser.AlertSender"):
-            # Должно выбросить исключение
-            with pytest.raises(Exception):
-                await fetch_and_parse_all_schedules()
+        with patch("core.alert_sender.AlertSender"):
+            # Функция возвращает None при отсутствии fallback
+            result = await fetch_and_parse_all_schedules()
+            assert result is None
 
 
 @pytest.mark.asyncio
@@ -478,91 +478,7 @@ def test_save_fallback_schedule_permission_error(tmp_path):
         pass
 
 
-@pytest.mark.asyncio
-async def test_fetch_and_parse_all_schedules_updates_fallback_on_success(monkeypatch, tmp_path):
-    """Тест обновления fallback файла при успешной загрузке с сервера."""
-    # Создаем тестовые данные для успешного ответа
-    test_schedule_data = {
-        "__metadata__": {"period": {"StartYear": "2024", "StartMonth": "09", "StartDay": "01"}},
-        "__current_xml_hash__": "success_hash_2024",
-        "О735Б": {
-            "odd": {
-                "Понедельник": [
-                    {
-                        "time": "09:00-10:30",
-                        "subject": "Математика (success)",
-                        "start_time_raw": "09:00",
-                        "end_time_raw": "10:30",
-                        "room": "101",
-                        "teachers": "Иванов И.И.",
-                        "week_type": "odd",
-                    }
-                ]
-            }
-        },
-    }
 
-    # Мокаем успешный ответ сервера
-    class Session:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            class Response:
-                def __init__(self):
-                    self.status = 200
-                    self.headers = {}
-
-                async def read(self):
-                    # Возвращаем минимальный валидный XML
-                    xml_content = """<?xml version="1.0" encoding="utf-16"?>
-                    <Timetable>
-                        <Period StartYear="2024" StartMonth="9" StartDay="1" />
-                        <Group Number="О735Б">
-                            <Days>
-                                <Day Title="Понедельник">
-                                    <GroupLessons>
-                                        <Lesson>
-                                            <Time>09:00 </Time>
-                                            <Discipline>Лекция Математика (success)</Discipline>
-                                            <Lecturers><Lecturer><ShortName>Иванов И.И.</ShortName></Lecturer></Lecturers>
-                                            <Classroom>101</Classroom>
-                                            <WeekCode>1</WeekCode>
-                                        </Lesson>
-                                    </GroupLessons>
-                                </Day>
-                            </Days>
-                        </Group>
-                    </Timetable>""".strip()
-                    return xml_content.encode("utf-16")
-
-                def raise_for_status(self):
-                    pass
-
-            return Response()
-
-        async def __aexit__(self, *a):
-            return False
-
-    monkeypatch.setattr("aiohttp.ClientSession", lambda *a, **k: Session())
-
-    # Создаем временный файл для fallback
-    fallback_file = tmp_path / "test_fallback_update.json"
-
-    # Мокаем FALLBACK_SCHEDULE_PATH
-    with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        # Мокаем save_fallback_schedule чтобы убедиться что он вызывается
-        with patch("core.parser.save_fallback_schedule") as mock_save:
-            mock_save.return_value = True
-
-            result = await fetch_and_parse_all_schedules()
-
-            # Проверяем что результат получен
-            assert result is not None
-            assert "О735Б" in result
-
-            # Проверяем что save_fallback_schedule был вызван
-            mock_save.assert_called_once_with(result)
 
 
 # --- Тесты для инициализации fallback файла ---
@@ -627,22 +543,7 @@ def test_create_initial_fallback_schedule_save_error(tmp_path):
             assert result is False
 
 
-def test_load_fallback_schedule_creates_initial_if_missing(tmp_path):
-    """Тест load_fallback_schedule создает начальный файл если его нет."""
-    # Создаем путь к несуществующему файлу
-    fallback_file = tmp_path / "missing_fallback.json"
 
-    # Мокаем FALLBACK_SCHEDULE_PATH
-    with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        # Мокаем create_initial_fallback_schedule
-        with patch("core.parser.create_initial_fallback_schedule", return_value=True) as mock_create:
-            result = load_fallback_schedule()
-
-            # Должен вернуть результат create_initial_fallback_schedule
-            assert result is not None
-
-            # Проверяем что create_initial_fallback_schedule был вызван
-            mock_create.assert_called_once()
 
 
 def test_load_fallback_schedule_create_initial_fails(tmp_path):

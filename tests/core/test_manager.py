@@ -315,8 +315,13 @@ async def test_timetable_manager_create_with_fallback_data(monkeypatch):
     # Мокаем отсутствие кэша и резервных копий
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    
+    # Создаем proper async context manager для lock
+    # lock() - синхронный метод, возвращающий async context manager
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем fallback данные
     fallback_data = {
@@ -341,7 +346,7 @@ async def test_timetable_manager_create_with_fallback_data(monkeypatch):
 
     # Мокаем функции парсера и резервного копирования
     monkeypatch.setattr(
-        "core.manager.fetch_and_parse_all_schedules",
+        "core.parser.fetch_and_parse_all_schedules",
         AsyncMock(return_value=fallback_data),
     )
     monkeypatch.setattr(
@@ -362,8 +367,10 @@ async def test_timetable_manager_create_with_backup_data(monkeypatch):
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем данные резервной копии
     backup_data = {
@@ -387,11 +394,12 @@ async def test_timetable_manager_create_with_backup_data(monkeypatch):
     }
 
     # Мокаем функции
-    monkeypatch.setattr("core.manager.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
+    monkeypatch.setattr("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
     monkeypatch.setattr(
         "core.manager.TimetableManager._restore_from_backup",
         AsyncMock(return_value=backup_data),
     )
+    monkeypatch.setattr("core.parser.save_fallback_schedule", lambda x: True)
 
     manager = await TimetableManager.create(mock_redis)
 
@@ -405,8 +413,10 @@ async def test_timetable_manager_create_with_fallback_after_backup_failure(monke
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем fallback данные
     fallback_data = {
@@ -416,12 +426,13 @@ async def test_timetable_manager_create_with_fallback_after_backup_failure(monke
     }
 
     # Мокаем функции
-    monkeypatch.setattr("core.manager.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
+    monkeypatch.setattr("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
     monkeypatch.setattr(
         "core.manager.TimetableManager._restore_from_backup",
         AsyncMock(return_value=None),
     )
-    monkeypatch.setattr("core.manager.load_fallback_schedule", return_value=fallback_data)
+    monkeypatch.setattr("core.parser.load_fallback_schedule", lambda: fallback_data)
+    monkeypatch.setattr("core.parser.save_fallback_schedule", lambda x: True)
 
     manager = await TimetableManager.create(mock_redis)
 
@@ -435,14 +446,16 @@ async def test_timetable_manager_create_critical_failure():
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Мокаем отсутствие всех источников данных
-    with patch("core.manager.fetch_and_parse_all_schedules", AsyncMock(return_value=None)), patch(
+    with patch("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None)), patch(
         "core.manager.TimetableManager._restore_from_backup",
         AsyncMock(return_value=None),
-    ), patch("core.manager.load_fallback_schedule", return_value=None):
+    ), patch("core.parser.load_fallback_schedule", return_value=None):
         manager = await TimetableManager.create(mock_redis)
 
         assert manager is None
@@ -471,7 +484,7 @@ async def test_timetable_manager_fallback_schedule_functionality(monkeypatch):
             }
         },
         "О735А": {
-            "even": {
+            "odd": {
                 "Вторник": [
                     {
                         "time": "10:40-12:10",
@@ -480,7 +493,7 @@ async def test_timetable_manager_fallback_schedule_functionality(monkeypatch):
                         "end_time_raw": "12:10",
                         "room": "102",
                         "teachers": "Петров П.П.",
-                        "week_type": "even",
+                        "week_type": "odd",
                     }
                 ]
             }
@@ -490,12 +503,14 @@ async def test_timetable_manager_fallback_schedule_functionality(monkeypatch):
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Мокаем функции
     monkeypatch.setattr(
-        "core.manager.fetch_and_parse_all_schedules",
+        "core.parser.fetch_and_parse_all_schedules",
         AsyncMock(return_value=fallback_data),
     )
     monkeypatch.setattr(
@@ -513,7 +528,7 @@ async def test_timetable_manager_fallback_schedule_functionality(monkeypatch):
     assert len(schedule_b["lessons"]) == 1
     assert schedule_b["lessons"][0]["subject"] == "Математика (fallback)"
 
-    schedule_a = await manager.get_schedule_for_day("О735А", target_date=date(2024, 9, 3))  # вторник, even
+    schedule_a = await manager.get_schedule_for_day("О735А", target_date=date(2024, 9, 3))  # вторник, odd
     assert schedule_a is not None
     assert len(schedule_a["lessons"]) == 1
     assert schedule_a["lessons"][0]["subject"] == "Физика (fallback)"
@@ -549,14 +564,16 @@ async def test_timetable_manager_create_updates_fallback_from_cache(monkeypatch,
     # Мокаем Redis с кэшированными данными
     mock_redis = AsyncMock()
     mock_redis.get.return_value = json.dumps(cached_data).encode("utf-8")
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем временный файл для fallback
     fallback_file = tmp_path / "test_fallback_from_cache.json"
 
     # Мокаем save_fallback_schedule
-    with patch("core.manager.save_fallback_schedule") as mock_save:
+    with patch("core.parser.save_fallback_schedule") as mock_save:
         mock_save.return_value = True
 
         # Мокаем _decompress_data чтобы вернуть тестовые данные
@@ -576,8 +593,10 @@ async def test_timetable_manager_create_updates_fallback_from_backup(monkeypatch
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем данные резервной копии
     backup_data = {
@@ -601,7 +620,7 @@ async def test_timetable_manager_create_updates_fallback_from_backup(monkeypatch
     }
 
     # Мокаем функции
-    monkeypatch.setattr("core.manager.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
+    monkeypatch.setattr("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
     monkeypatch.setattr(
         "core.manager.TimetableManager._restore_from_backup",
         AsyncMock(return_value=backup_data),
@@ -611,7 +630,7 @@ async def test_timetable_manager_create_updates_fallback_from_backup(monkeypatch
     fallback_file = tmp_path / "test_fallback_from_backup.json"
 
     # Мокаем save_fallback_schedule
-    with patch("core.manager.save_fallback_schedule") as mock_save:
+    with patch("core.parser.save_fallback_schedule") as mock_save:
         mock_save.return_value = True
 
         manager = await TimetableManager.create(mock_redis)
@@ -629,8 +648,10 @@ async def test_timetable_manager_create_updates_fallback_from_fallback_data(monk
     # Мокаем отсутствие кэша
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    mock_redis.lock.return_value.__aenter__ = AsyncMock(return_value=None)
-    mock_redis.lock.return_value.__aexit__ = AsyncMock(return_value=None)
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Создаем fallback данные
     fallback_data = {
@@ -640,18 +661,18 @@ async def test_timetable_manager_create_updates_fallback_from_fallback_data(monk
     }
 
     # Мокаем функции
-    monkeypatch.setattr("core.manager.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
+    monkeypatch.setattr("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
     monkeypatch.setattr(
         "core.manager.TimetableManager._restore_from_backup",
         AsyncMock(return_value=None),
     )
-    monkeypatch.setattr("core.manager.load_fallback_schedule", return_value=fallback_data)
+    monkeypatch.setattr("core.parser.load_fallback_schedule", lambda: fallback_data)
 
     # Создаем временный файл для fallback
     fallback_file = tmp_path / "test_fallback_from_fallback.json"
 
     # Мокаем save_fallback_schedule
-    with patch("core.manager.save_fallback_schedule") as mock_save:
+    with patch("core.parser.save_fallback_schedule") as mock_save:
         mock_save.return_value = True
 
         manager = await TimetableManager.create(mock_redis)
