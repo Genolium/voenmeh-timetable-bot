@@ -46,6 +46,8 @@ from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
+from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
+from bot.middlewares.i18n_middleware import I18nMiddleware
 
 # from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
 from bot.scheduler import setup_scheduler
@@ -129,7 +131,7 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
     if saved_group:
         await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
     else:
-        await dialog_manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
+        await dialog_manager.start(MainMenu.select_language, mode=StartMode.RESET_STACK)
 
 
 async def about_command_handler(message: Message, dialog_manager: DialogManager):
@@ -168,42 +170,7 @@ async def run_metrics_server(port: int = 8000):
 
 # --- Основная функция запуска ---
 # Простой входной рейт-лимит через throttling middleware
-class SimpleRateLimiter:
-    def __init__(self, max_per_sec: float = 10.0, redis=None):
-        self._max_per_sec = max_per_sec
-        self.redis = redis  # Pass redis_client
-
-    async def __call__(self, handler, event, data):
-        user_id = getattr(getattr(event, "from_user", None), "id", None)
-        if not user_id:
-            return await handler(event, data)
-        key = f"rate_limit:{user_id}"
-        history = await self.redis.lrange(key, 0, -1)
-        now = time.monotonic()
-        # Безопасно парсим значения из Redis (могут быть bytes/str)
-        parsed = []
-        for t in history or []:
-            try:
-                val = float(t if isinstance(t, (int, float, str)) else t.decode())
-                if now - val < 1.0:
-                    parsed.append(val)
-            except Exception:
-                continue
-        history = parsed
-        if len(history) >= self._max_per_sec:
-            # Вместо молча дропаем событие, отвечаем пользователю
-            if hasattr(event, "answer"):
-                try:
-                    await event.answer(
-                        "⚠️ Слишком много запросов. Подождите немного и попробуйте снова.",
-                        show_alert=True,
-                    )
-                except Exception:
-                    pass
-            return
-        await self.redis.rpush(key, now)
-        await self.redis.expire(key, 2)
-        return await handler(event, data)
+# SimpleRateLimiter удален в пользу core/middlewares/rate_limit_middleware.py
 
 
 async def error_handler(event=None, exception: Exception | None = None, *args, **kwargs):
@@ -300,7 +267,8 @@ async def main():
     dp.update.middleware(ActivityLoggingMiddleware())  # Middleware для логирования активности пользователей
     dp.update.middleware(LoggingMiddleware())  # Middleware для сбора метрик и логов
     # Автоочистка чатов полностью отключена
-    dp.update.middleware(SimpleRateLimiter(max_per_sec=1, redis=redis_client))  # анти-флуд на входящие события
+    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд
+    dp.update.middleware(I18nMiddleware())  # Интернационализация (после UserData!)
     dp.update.middleware(
         lambda handler, event, data: handler(
             event,
@@ -391,7 +359,11 @@ async def main():
         # Сначала запускаем фоновые сервисы, затем начинаем polling
         logging.info("Starting background services...")
         asyncio.create_task(run_metrics_server())
-        asyncio.create_task(run_alert_webhook_server(bot, ADMIN_IDS))
+        asyncio.create_task(run_alert_webhook_server(
+            bot, ADMIN_IDS,
+            redis_client=redis_client,
+            db_session_maker=user_data_manager.async_session_maker,
+        ))
         asyncio.create_task(start_business_monitoring())
         asyncio.create_task(_notify_admins_start())
 

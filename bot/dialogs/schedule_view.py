@@ -23,6 +23,7 @@ from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
 from core.metrics import GROUP_POPULARITY, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME, USER_ACTIVITY_DAILY
+from core.i18n import i18n
 
 from .constants import DialogDataKeys, WidgetIds
 from .states import FindMenu, MainMenu, Schedule, SettingsMenu
@@ -141,6 +142,10 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     session_factory = dialog_manager.middleware_data.get("session_factory")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
+    user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
+    
+    # CRITICAL: Fetch user language from DB for proper localization
+    lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
     ctx = dialog_manager.current_context()
 
     if DialogDataKeys.GROUP not in ctx.dialog_data:
@@ -154,7 +159,6 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
 
     # Определяем тип пользователя для корректного отображения
     user_type = "student"  # По умолчанию
-    user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
     if user_id and user_data_manager:
         try:
             user_type = await user_data_manager.get_user_type(user_id) or "student"
@@ -187,15 +191,20 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     except Exception:
         pass
 
-    dynamic_header, progress_bar = generate_dynamic_header(day_info.get("lessons", []), current_date)
+    dynamic_header, progress_bar = generate_dynamic_header(day_info.get("lessons", []), current_date, lang=lang)
 
     # Рассчитываем номер недели с начала семестра
     week_number = await calculate_semester_week_number(current_date, session_factory)
 
     # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
     schedule_text = (
-        format_teacher_schedule_text(day_info) if user_type == "teacher" else format_schedule_text(day_info, week_number)
+        format_teacher_schedule_text(day_info, lang=lang)
+        if user_type == "teacher"
+        else format_schedule_text(day_info, week_number, lang=lang)
     )
+
+    # I18n - use lang from DB instead of middleware
+    _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
 
     return {
         "dynamic_header": dynamic_header,
@@ -204,7 +213,13 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
         "has_lessons": bool(day_info.get("lessons")),
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
-        "user_type_text": "" if user_type == "student" else "Преподаватель:",
+        "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
+        
+        "btn_week": _("btn_week"),
+        "btn_change_group": _("btn_change_group"),
+        "btn_settings": _("btn_settings"),
+        "btn_search": _("btn_search"),
+        "btn_news": _("btn_news"),
     }
 
 
@@ -243,6 +258,12 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
 async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     bot = dialog_manager.middleware_data.get("bot")
+    user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
+    user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
+    
+    # CRITICAL: Fetch user language from DB for proper localization
+    lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
+    _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
     ctx = dialog_manager.current_context()
 
     if DialogDataKeys.GROUP not in ctx.dialog_data:
@@ -313,28 +334,22 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         week_schedule = full_schedule.get(week_key, {})
 
     # Формируем подпись
-    subject_line = (
-        f"🗓 <b>Расписание для преподавателя {group}</b>"
-        if ctx.dialog_data.get("user_type") == "teacher"
-        else f"🗓 <b>Расписание для группы {group}</b>"
-    )
-    final_caption = (
-        "✅ Расписание на неделю готово!\n\n"
-        f"{subject_line}\n"
-        f"Неделя: <b>{week_name}</b>\n"
-        f"Период: <b>с {start_date_str} по {end_date_str}</b>"
-    )
+    subject_line_key = "schedule_teacher_title" if ctx.dialog_data.get("user_type") == "teacher" else "schedule_group_title"
+    subject_line = _(subject_line_key, group=group)
+    
+    final_caption = _("schedule_week_caption", subject_line=subject_line, week_name=week_name, start=start_date_str, end=end_date_str)
 
     # Получаем или генерируем изображение
-    user_id = ctx.dialog_data.get("user_id")
+    user_id_for_image = ctx.dialog_data.get("user_id")
     placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
+    
     # Определяем тему пользователя (если доступно)
     user_theme = None
     try:
-        if user_id:
+        if user_id_for_image:
             udm = dialog_manager.middleware_data.get("user_data_manager")
             if udm:
-                user_theme = await udm.get_user_theme(user_id)
+                user_theme = await udm.get_user_theme(user_id_for_image)
     except Exception:
         user_theme = None
 
@@ -343,20 +358,24 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         week_key=week_key,
         week_name=week_name,
         week_schedule=week_schedule,
-        user_id=user_id,
+        user_id=user_id_for_image,
         user_theme=user_theme,
         placeholder_msg_id=placeholder_msg_id,
         final_caption=final_caption,
+        lang=lang,
     )
 
     if not success:
         logging.error(f"Failed to get/generate week image for {group}_{week_key}")
 
+    # I18n for keys return
     return {
         "week_name": week_name,
         "group": group,
         "start_date": start_date_str,
         "end_date": end_date_str,
+        "btn_original": _("btn_original"),
+        "btn_back": _("btn_back")
     }
 
 
@@ -528,17 +547,11 @@ async def on_find_click(callback: CallbackQuery, button: Button, manager: Dialog
 
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
-    await callback.answer("📢 Переходим к новостям разработки!")
+    _ = manager.middleware_data.get("_", lambda k, **kw: i18n.get(k, k))
+    
+    await callback.answer(_("news_toast"))
     await callback.message.answer(
-        "🚀 <b>Новости разработки бота</b>\n\n"
-        "Все обновления, планы и новости о разработке бота публикуются в нашем канале:\n\n"
-        "📢 <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a>\n\n"
-        "Там вы узнаете:\n"
-        "• О новых функциях первыми\n"
-        "• О планах развития\n"
-        "• Сможете повлиять на разработку\n"
-        "• Увидите закулисье проекта\n\n"
-        "<i>Подписывайтесь, чтобы быть в курсе! 👆</i>",
+        _("news_message"),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -606,18 +619,18 @@ schedul_dialog_windows = [
         # Для преподавателей скрываем кнопки Неделя/Настройки/Поиск/Новости
         Row(
             Button(
-                Const("🗓 Неделя"),
+                Format("{btn_week}"),
                 id="week_as_image",
                 on_click=on_full_week_image_click,
                 when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
             Button(
-                Const("🔄 Сменить"),
+                Format("{btn_change_group}"),
                 id=WidgetIds.CHANGE_GROUP,
                 on_click=on_change_group_click,
             ),
             Button(
-                Const("⚙️ Настройки"),
+                Format("{btn_settings}"),
                 id=WidgetIds.SETTINGS,
                 on_click=on_settings_click,
                 when=lambda data, w, m: data.get("user_type") != "teacher",
@@ -625,13 +638,13 @@ schedul_dialog_windows = [
         ),
         Row(
             Button(
-                Const("🔍 Поиск"),
+                Format("{btn_search}"),
                 id=WidgetIds.FIND_BTN,
                 on_click=on_find_click,
                 when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
             Button(
-                Const("📢 Новости"),
+                Format("{btn_news}"),
                 id="news_btn",
                 on_click=on_news_clicked,
                 when=lambda data, w, m: data.get("user_type") != "teacher",
@@ -648,17 +661,18 @@ schedul_dialog_windows = [
         ),
         Row(
             Button(
-                Const("📄 Оригинал (файл)"),
+                Format("{btn_original}"),
                 id="send_original_file_week",
                 on_click=on_send_original_file,
             ),
             Button(
-                Const("◀️ Назад"),
+                Format("{btn_back}"),
                 id="noop_back_to_day",
                 on_click=lambda c, b, m: m.switch_to(Schedule.view),
             ),
         ),
         state=Schedule.week_image_view,
+        getter=get_week_image_data,
     ),
     # Окно гейта подписки временно отключено
 ]

@@ -46,6 +46,7 @@ class ImageService:
         user_theme: Optional[str] = None,
         placeholder_msg_id: Optional[int] = None,
         final_caption: Optional[str] = None,
+        lang: str = "ru",
     ) -> Tuple[bool, Optional[str]]:
         """
         Получает изображение из кэша или генерирует новое.
@@ -65,9 +66,9 @@ class ImageService:
         """
         # Ключ кэша: для пользовательских тем учитываем тему
         if user_theme and user_theme != "standard":
-            cache_key = f"{group}_{week_key}_{user_theme}"
+            cache_key = f"{group}_{week_key}_{user_theme}_{lang}"
         else:
-            cache_key = f"{group}_{week_key}"
+            cache_key = f"{group}_{week_key}_{lang}"
 
         logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
 
@@ -97,7 +98,7 @@ class ImageService:
 
         # Генерируем изображение
         success, file_path = await self._generate_and_cache_image(
-            cache_key, week_schedule, week_name, group, user_theme=user_theme
+            cache_key, week_schedule, week_name, group, user_theme=user_theme, lang=lang
         )
 
         if success and user_id:
@@ -115,6 +116,7 @@ class ImageService:
         generated_by: str = "single",
         schedule_hash: Optional[str] = None,
         user_theme: Optional[str] = None,
+        lang: str = "ru",
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -181,6 +183,7 @@ class ImageService:
                             output_path=str(file_path),
                             viewport_size=highres_vp,
                             user_theme=user_theme,
+                            lang=lang,
                         )
 
                     if not success or not file_path.exists():
@@ -208,6 +211,7 @@ class ImageService:
                             metadata={
                                 "group": group,
                                 "week_key": week_type,
+                                "lang": lang,
                                 "generated_at": datetime.now(MOSCOW_TZ).isoformat(),
                                 "file_size": len(image_bytes),
                                 "generated_by": generated_by,

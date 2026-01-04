@@ -1,0 +1,269 @@
+{
+    "welcome_title": "👋 <b>欢迎使用 Voenmeh 课程表机器人！</b>\n\n🎯 <b>选择您的角色：</b>",
+    "role_student": "🎓 我是学生",
+    "role_teacher": "🧑‍🏫 我是教师",
+    "reg_student_title": "🎓 <b>学生注册</b>\n\n📝 输入您的<b>班级编号</b>：\n💡 <i>例如：{random_group}</i>\n\nℹ️ <i>如果您不知道确切名称，请大致输入 - 我会找到相似的选项</i>",
+    "reg_teacher_title": "🧑‍🏫 <b>教师注册</b>\n\n📝 输入您的<b>姓名</b>：\n💡 <i>例如：Ivanov I.I.</i>\n\nℹ️ <i>系统将在大学数据库中查找您的课程表</i>\n🔍 <i>如果没有完全匹配，将建议相似的名称</i>",
+    "back_to_role": "⬅️ 返回角色选择",
+    "incorrect_group": "❌ <b>输入不正确！</b>\n\n📝 请使用字母和数字输入班级编号\n💡 <i>例如：O735B, M123A, IVT-21</i>",
+    "group_not_found": "❌ 未找到班级 <b>{group}</b>\n\n🔍 <b>请检查班级名称</b>\n💡 <i>尝试只输入主要部分（例如：O735 而不是 O735B）</i>\n\n❓ <b>需要帮助？</b> 请联系班长或教务处",
+    "group_suggestion": "🔍 <b>未找到班级 \"{group}\" 的精确匹配</b>\n\n💡 <b>您可能指的是：</b>\n{suggestions}\n\n📝 尝试输入建议的选项之一",
+    "reg_complete": "🎉 <b>注册完成！</b>\n\n✅ 已保存：<code>{group}</code>\n\n🚀 <b>现在可用：</b>\n📅 查看任何日期的课程表\n🔍 搜索教师和教室\n🔔 智能课程提醒\n📊 统计和分析\n💬 群组聊天功能\n\n❓ <b>想了解更多？</b>",
+    "show_tutorial": "📖 显示教程",
+    "start_using": "🚀 开始使用！",
+    "teacher_not_found": "❌ 未找到教师 <b>\"{name}\"</b>\n\n🔍 <b>请检查姓名：</b>\n• 确保拼写正确\n• 尝试只输入姓氏\n• 使用全名，不要缩写",
+    "teacher_suggestion": "🔍 <b>未找到教师的精确匹配</b>\n\n💡 <b>您可能指的是：</b>\n{suggestions}\n\n📝 复制并发送建议的选项之一",
+    "find_title": "您想查找什么？",
+    "find_btn_teacher": "🧑‍🏫 按教师查找",
+    "find_btn_classroom": "🚪 按教室查找",
+    "btn_back": "◀️ 返回",
+    "find_enter_teacher": "输入教师姓氏（至少3个字母）：",
+    "find_enter_classroom": "输入教室编号：",
+    "find_select_match": "找到多个匹配项。请选择：",
+    "find_new_search": "◀️ 新搜索",
+    "find_teacher_not_found": "❌ 未找到教师。尝试只输入姓氏。",
+    "find_classroom_not_found": "❌ 未找到教室。",
+    "settings_title": "⚙️ <b>设置</b>\n\n语言: {language}\n",
+    "btn_settings": "⚙️ 设置",
+    "btn_change_lang": "🌍 更改语言",
+    "lang_select_title": "🌍 <b>选择语言</b>",
+    "lang_ru": "🇷🇺 Русский",
+    "lang_en": "🇬🇧 English",
+    "lang_zh": "🇨🇳 中文",
+    "lang_changed": "✅ 语言已更改为 中文",
+    "settings_status_enabled": "✅ 已开启",
+    "settings_status_disabled": "❌ 已关闭",
+    "settings_btn_enable_evening": "开启明日摘要",
+    "settings_btn_disable_evening": "关闭明日摘要",
+    "settings_btn_enable_morning": "开启早间摘要",
+    "settings_btn_disable_morning": "关闭早间摘要",
+    "settings_btn_enable_reminders": "开启课程提醒",
+    "settings_btn_disable_reminders": "关闭课程提醒",
+    "settings_reminder_time_fmt": "(课前 {minutes} 分钟)",
+    "settings_reminder_select_title": "选择第一节课开始前多少分钟发送提醒：",
+    "settings_minutes_short": "分钟",
+    "settings_evening_label": "明日摘要 (20:00)",
+    "settings_morning_label": "今日摘要 (8:00)",
+    "settings_reminders_label": "课程提醒",
+    "btn_time": "⏰ 时间",
+    "theme_standard_name": "🎨 标准",
+    "theme_standard_desc": "奇数周红色，偶数周紫色",
+    "theme_light_name": "☀️ 明亮",
+    "theme_light_desc": "青绿色主题配合米色卡片",
+    "theme_dark_name": "🌙 深色",
+    "theme_dark_desc": "带有紫色强调的深色主题",
+    "theme_classic_name": "📜 经典",
+    "theme_classic_desc": "军工大学(Voenmeh)配色的深蓝色主题",
+    "theme_coffee_name": "☕ 咖啡",
+    "theme_coffee_desc": "带有米色卡片的棕金主题",
+    "theme_gate_title": "🎨 <b>个性化主题访问</b>\n\n为您的课表选择一个独特的主题：\n\n🎨 <b>标准</b> - 奇数周红色，偶数周紫色\n☀️ <b>明亮</b> - 青绿色主题配合米色卡片\n🌙 <b>深色</b> - 带有紫色强调的深色主题\n📜 <b>经典</b> - 深蓝色主题配合白色卡片\n☕ <b>咖啡</b> - 棕金主题配合米色卡片\n\n<i>仅可通过订阅开发频道获得</i>",
+    "theme_btn_check": "✅ 检查订阅",
+    "theme_select_title": "🎨 <b>主题选择</b>\n\n为您的课表选择一个主题：\n",
+    "theme_current_fmt": "当前主题：<b>{current_theme}</b>\n",
+    "theme_available_label": "\n📋 <i>可用主题：</i>\n",
+    "btn_week": "🗓 周视图",
+    "btn_change_group": "🔄 更改",
+    "btn_search": "🔍 搜索",
+    "btn_news": "📢 新闻",
+    "btn_original": "📄 原件 (文件)",
+    "schedule_teacher_label": "教师:",
+    "schedule_week_caption": "✅ 每周时间表已准备就绪！\n\n{subject_line}\n周: <b>{week_name}</b>\n时期: <b>{start} - {end}</b>",
+    "schedule_teacher_title": "🗓 <b>教师{group}的时间表</b>",
+    "schedule_group_title": "🗓 <b>{group}班的时间表</b>",
+    "news_toast": "📢 打开开发新闻！",
+    "news_message": "🚀 <b>机器人开发新闻</b>\n\n所有更新和计划都在我们的频道发布：\n\n📢 <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a>\n\n订阅以保持更新！👆",
+    "fmt_error": "❌ <b>错误:</b> {error}",
+    "fmt_error_unknown": "未知错误",
+    "fmt_date_missing": "❌ <b>错误:</b> 未找到日期。",
+    "fmt_week": "· 第 {number} 周",
+    "fmt_no_lessons": "🎉 <b>没有课!</b>",
+    "fmt_time_unknown": "未指定时间",
+    "fmt_subject_unknown": "未指定科目",
+    "fmt_teacher_header": "🧑‍🏫 <b>{name}</b>",
+    "fmt_teacher_label": "教师",
+    "fmt_classroom_header": "🚪 <b>{number} 教室</b>",
+    "fmt_classroom_label": "教室",
+    "fmt_classroom_free": "✅ <b>教室整天都有空!</b>",
+    "fmt_week_header": "🗓 <b>{week_name}</b>",
+    "fmt_week_no_lessons": "🎉 本周没有课!",
+    "unsubscribe_footer": "\n\n<tg-spoiler><i>可以在 «⚙️ 设置» 中关闭此通知</i></tg-spoiler>",
+    "channel_promo": "\n\n📢 <i>开发新闻: <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a></i>",
+    "evening_greetings": [
+        "晚上好！👋",
+        "嗨！准备迎接明天。",
+        "晚间简报即将送达。"
+    ],
+    "evening_greetings_teacher": [
+        "晚上好！",
+        "通知您明天的日程安排。",
+        "您好！"
+    ],
+    "morning_greetings": [
+        "早上好！☀️",
+        "早安！学习在等待。",
+        "早间简报准备就绪！"
+    ],
+    "morning_greetings_teacher": [
+        "早上好！",
+        "您今天的日程安排。",
+        "您好！"
+    ],
+    "day_context": {
+        "0": [
+            "明天是星期一 —— 崭新的开始！",
+            "准备迎接新的一周。"
+        ],
+        "1": [
+            "明天是星期二，进入节奏。",
+            "计划一个高效的星期二。"
+        ],
+        "2": [
+            "明天是星期三 —— 一周过半！",
+            "已经半周过去了。坚持住！"
+        ],
+        "3": [
+            "明天是星期四，终点线近在咫尺。",
+            "周末前的最后冲刺！"
+        ],
+        "4": [
+            "明天是星期五！休息即将到来。",
+            "放松前的最后努力！"
+        ],
+        "5": [
+            "明天是星期六 —— 给最坚强的人。",
+            "再学习一天，然后休息。"
+        ],
+        "6": [
+            "明天是星期日 —— 好好睡一觉！",
+            "周末愉快，别忘了作业 😉"
+        ]
+    },
+    "day_context_teacher": {
+        "0": [
+            "明天是星期一 —— 新工作周的开始。",
+            "计划高效的一周。"
+        ],
+        "1": [
+            "明天是星期二。",
+            "继续工作周。"
+        ],
+        "2": [
+            "明天是星期三 —— 一周过半。",
+            "祝您度过高效的一天。"
+        ],
+        "3": [
+            "明天是星期四。",
+            "工作周即将结束。"
+        ],
+        "4": [
+            "明天是星期五 —— 工作周结束。",
+            "祝您圆满结束本周工作。"
+        ],
+        "5": [
+            "明天是星期六 —— 工作日。",
+            "祝您度过高效的一天。"
+        ],
+        "6": [
+            "明天是星期日。",
+            "祝您周末愉快。"
+        ]
+    },
+    "clothing_advice": {
+        "cold": [
+            "明天会很冷，别忘了帽子和手套！",
+            "建议穿暖和点。"
+        ],
+        "cool": [
+            "明天早上微凉，轻薄夹克或毛衣正合适。",
+            "秋凉需要舒适的衣服。"
+        ],
+        "warm": [
+            "明天预报温暖，可以穿轻便些。",
+            "课后散步的好天气。"
+        ],
+        "hot": [
+            "明天会很热！多喝水。",
+            "真正的夏天！适合轻薄衣物。"
+        ]
+    },
+    "weather_forecast_fmt": "{emoji} 明日预报: {description}, {temp}°C.\n<i>{advice}</i>",
+    "weather_forecast_teacher_fmt": "{emoji} 明日天气预报: {description}, {temp}°C.",
+    "weather_current_fmt": "当前天气: {description}, {temp}°C.",
+    "weather_current_teacher_fmt": "当前天气: {description}, {temp}°C.",
+    "header_today_no_lessons": "✨ <b>今天没有课。</b> 祝您愉快！",
+    "header_late_night": "🌙 <b>深夜。</b> 早上快到了！",
+    "header_morning_template": "☀️ <b>早上好！</b> 第一节课在 {start_time}。",
+    "header_lessons_done": "✅ <b>今天的课程结束了。</b> 休息一下！",
+    "header_lesson_now_template": "⏳ <b>正在上课:</b> {subject}.\n{end_text}",
+    "header_break_template": "☕️ <b>休息直到 {next_start}。</b>\n下节课: {subject}。",
+    "reminder_first": [
+        "第一节课还有 {minutes} 分钟！",
+        "即将开始，不要迟到！",
+        "准备第一节课！"
+    ],
+    "reminder_break_long": [
+        "午餐时间！",
+        "去食堂的好机会。"
+    ],
+    "reminder_break_medium": [
+        "喝杯茶的时间。",
+        "活动一下筋骨。"
+    ],
+    "reminder_break_short": [
+        "赶快去下一个教室。",
+        "短暂休息。"
+    ],
+    "reminder_final": [
+        "今天就到这里！您可以休息了。",
+        "上学日结束。晚上愉快！"
+    ],
+    "reminder_break_long_fmt": "长休息 {duration} 分钟，直到 {next_time}。 {advice}",
+    "reminder_break_medium_fmt": "休息 {duration} 分钟，直到 {next_time}。 {advice}",
+    "reminder_header_first": "🔔 <b>{text}</b>\n\n",
+    "reminder_header_break": "✅ <b>课程结束！</b>\n{text}\n\n☕️ <b>下节课:</b>\n",
+    "reminder_header_final": "🎉 <b>{text}</b>",
+    "fmt_teacher_with": "<i>与 {teachers}</i>",
+    "about_title": "📖 关于机器人",
+    "about_page_1": "👋 <b>嗨！我是 Voenmeh 课程表机器人。</b>\n\n我的主要任务是让访问课程表变得<b>尽可能快速和方便</b>。我由 <a href='https://t.me/ilyan_vas'>@ilyan_vas</a> 开发。\n\n顺便说一下，这个项目有它自己的主页 —— 频道 <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a>。在那你会第一时间了解到更新、计划，并能影响开发。<b>订阅吧！</b>\n\n<b>现在让我向你展示我能做什么！</b>\n\n<i>你可以通过 /start 命令进入主菜单。</i>",
+    "about_page_2": "✅ <b>最新课程表触手可及</b>\n\n主屏幕显示所选日期的课程表。在顶部你会看到一个<b>动态标题</b>，它会告诉你下一节课什么时候开始，或者休息什么时候结束。\n\n<i>你可以通过 /start 命令进入主菜单。</i>",
+    "about_page_3": "🔍 <b>智能搜索</b>\n\n不知道老师在哪，或者你需要使用的教室是否空闲？使用搜索功能！我可以查找所选日期任何教师或教室的课程表。\n\n<i>你可以通过 /start 命令进入主菜单。</i>",
+    "about_page_4": "🔔 <b>灵活的通知</b>\n\n我可以给你发送：\n• 明日的摘要（在晚上）\n• 今日的摘要（在早上）\n• 第一节课的提醒，以及每次课间休息开始时的提醒。\n\n所有这些都在<b>«⚙️ 设置»</b>菜单中配置。\n\n<i>你可以通过 /start 命令进入主菜单。</i>",
+    "about_page_5": "📲 <b>Inline 模式 «分享课程表»</b>\n\n在任何对话（群聊、频道或其他）中，输入我的名字和请求即可，例如：\n<code>@bstu_timetable_bot O735B 明天</code>\n\n我会立即提供发送现成的课程表。非常适合与同学协调！\n\n<i>你可以通过 /start 命令进入主菜单。</i>",
+    "about_next": "下一步 ▶️",
+    "about_back": "◀️ 返回",
+    "about_finish": "✅ 明白了",
+    "feedback_title": "📝 <b>反馈</b>",
+    "feedback_enter": "📝 <b>请写下您的评价、建议或报告错误。</b>\n\n您可以发送文字、照片或视频。我将把您的消息转发给管理员。",
+    "feedback_offline": "❌ 遗憾的是，反馈功能暂时无法使用。",
+    "feedback_sent": "✅ <b>谢谢！您的评价已发送。</b>\n我们感谢您对改进机器人的帮助！\n\nP.S. 我们所有的消息和更新都在我们的频道 <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a> 发布。请订阅以保持更新！\n\n<i>您可以点击 /start 回到主菜单。</i>",
+    "events_title": "🎉 <b>活动</b>",
+    "events_available": "🎉 <b>活动</b> (可用: {total})\n第 {page} 页",
+    "events_btn_today": "今天",
+    "events_btn_week": "本周",
+    "events_btn_all": "全部",
+    "events_empty": "目前没有发布的活动",
+    "events_not_found": "未找到活动",
+    "events_registration": "🔗 注册/链接",
+    "events_back": "◀️ 返回",
+    "image_first_lesson": "第一节课",
+    "image_no_lessons": "没有课",
+    "day_0": "星期一",
+    "day_1": "星期二",
+    "day_2": "星期三",
+    "day_3": "星期四",
+    "day_4": "星期五",
+    "day_5": "星期六",
+    "day_6": "星期日",
+    "progress_bar_text": "<i>今日进度: {passed}/{total}</i>",
+    "dynamic_header_lesson_end": "{time} 结束。",
+    "cmd_start": "🚀 启动机器人 / 主菜单",
+    "cmd_about": "📖 关于机器人和视频教程",
+    "cmd_feedback": "📝 反馈 / 错误报告",
+    "cmd_events": "🎉 活动",
+    "cmd_admin": "👑 管理面板",
+    "week_odd": "单周",
+    "week_even": "双周",
+    "image_schedule_header": "课程表",
+    "image_credits": "机器人开发在",
+    "room_not_specified": "未指定教室"
+}

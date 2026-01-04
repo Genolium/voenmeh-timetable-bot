@@ -31,6 +31,13 @@ ERRORS_TOTAL = Counter("bot_errors_total", "Total count of errors by source", ["
 # Ретраи по компонентам (weather, parser, tasks)
 RETRIES_TOTAL = Counter("bot_retries_total", "Total retry attempts by component", ["component"])
 
+# Rate limit hits
+RATE_LIMIT_HITS = Counter(
+    "bot_rate_limit_hits_total",
+    "Total count of rate limit violations",
+    ["event_type"],  # message, callback_query, inline_query
+)
+
 # Момент последнего успешного обновления расписания (unix timestamp)
 LAST_SCHEDULE_UPDATE_TS = Gauge(
     "bot_last_schedule_update_timestamp",

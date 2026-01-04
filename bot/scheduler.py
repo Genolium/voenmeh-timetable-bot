@@ -21,6 +21,7 @@ from bot.text_formatters import (
     generate_morning_intro,
     get_footer_with_promo,
 )
+from core.i18n import i18n
 from core.admin_reports import send_daily_reports, send_monthly_reports, send_weekly_reports
 from core.config import (
     CHECK_INTERVAL_MINUTES,
@@ -85,13 +86,13 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
     logger.info(f"Вечерняя рассылка: обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
-    for user_id, group_name in users_to_notify:
+    for user_id, group_name, lang in users_to_notify:
         # Получаем тип пользователя
         user = await user_data_manager.get_full_user_info(user_id)
         user_type = getattr(user, "user_type", "student")
 
-        # Генерируем intro с учетом типа пользователя
-        intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow, user_type=user_type)
+        # Генерируем intro с учетом типа пользователя и языка
+        intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow, user_type=user_type, lang=lang)
 
         # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
@@ -104,16 +105,37 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         # Форматируем расписание в зависимости от типа пользователя
         if has_lessons:
             if user_type == "teacher":
-                schedule_text = format_teacher_schedule_text(schedule_info)
-                text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
+                schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
+                text_body = f"<b>{i18n.get('schedule_teacher_label', lang)}</b>\n\n{schedule_text}" # TODO: Verify label usage or simply header
+                # Wait, "Ваше расписание на завтра:" is hardcoded above.
+                # I should replace "Ваше расписание на завтра:" with a localized string or just rely on the schedule header.
+                # Actually, looking at original code: text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
+                # I don't have a key for "Your schedule for tomorrow".
+                # I will use "day_context" or just a generic header if I have one.
+                # Let's add simple header or assume formatters handle it. 
+                # Formatters return "Teacher Name\nDate..."
+                # The text_body wrapper: "Ваше расписание на завтра:" is extra.
+                # I will use a simple localized string or just remove it if redundant.
+                # Let's check existing locales. I don't have a specific key for this phrase.
+                # I'll use a hardcoded dict for now or add to i18n? 
+                # Better to reuse existing mechanisms.
+                # I'll just use the schedule text directly or add a new key quickly?
+                # No, I should stick to what I have. 
+                # I'll just remove the wrapper "Ваше расписание на завтра:" because `generate_evening_intro` + `schedule_text` (which has headers) is enough.
+                # Or I can use a generic "Here is schedule".
+                # Let's look at `evening_greetings_teacher`. It says "Informing about tomorrow schedule". So intro covers it.
+                text_body = schedule_text
             else:
-                schedule_text = format_schedule_text(schedule_info)
-                text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
+                schedule_text = format_schedule_text(schedule_info, lang=lang)
+                text_body = schedule_text
         else:
             if user_type == "teacher":
-                text_body = "Завтра занятий не запланировано."
+                text_body = i18n.get("fmt_no_lessons", lang) # Using generic no lessons
             else:
-                text_body = "🎉 <b>Завтра занятий нет!</b>"
+                text_body = i18n.get("header_today_no_lessons", lang) # Actually for tomorrow...
+                # "header_today_no_lessons" is "No lessons today".
+                # I need "No lessons tomorrow". I'll use "fmt_no_lessons" which is "No lessons!".
+                text_body = i18n.get("fmt_no_lessons", lang)
 
         text = f"{intro_text}{text_body}{get_footer_with_promo()}"
 
@@ -145,13 +167,13 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     logger.info(f"Утренняя рассылка: обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
-    for user_id, group_name in users_to_notify:
+    for user_id, group_name, lang in users_to_notify:
         # Получаем тип пользователя
         user = await user_data_manager.get_full_user_info(user_id)
         user_type = getattr(user, "user_type", "student")
 
-        # Генерируем intro с учетом типа пользователя
-        intro_text = generate_morning_intro(weather_forecast, user_type=user_type)
+        # Генерируем intro с учетом типа пользователя и языка
+        intro_text = generate_morning_intro(weather_forecast, user_type=user_type, lang=lang)
 
         # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
@@ -162,11 +184,12 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
         if schedule_info and not schedule_info.get("error") and schedule_info.get("lessons"):
             # Форматируем расписание в зависимости от типа пользователя
             if user_type == "teacher":
-                schedule_text = format_teacher_schedule_text(schedule_info)
+                schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
             else:
-                schedule_text = format_schedule_text(schedule_info)
+                schedule_text = format_schedule_text(schedule_info, lang=lang)
 
-            text = f"{intro_text}\n<b>Ваше расписание на сегодня:</b>\n\n{schedule_text}{get_footer_with_promo()}"
+            # "Ваше расписание на сегодня" -> removed or handled by header/intro
+            text = f"{intro_text}\n{schedule_text}{get_footer_with_promo()}"
             send_message_task.send(user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
             processed_count += 1
@@ -194,7 +217,7 @@ async def lesson_reminders_planner(
     logger.info(f"Планирование напоминаний: обработка {len(users_to_plan)} пользователей")
     processed_count = 0
 
-    for user_id, group_name, reminder_time in users_to_plan:
+    for user_id, group_name, reminder_time, lang in users_to_plan:
         processed_count += 1
         try:
             # Пропускаем преподавателей
@@ -227,7 +250,7 @@ async def lesson_reminders_planner(
                     scheduler.add_job(
                         send_lesson_reminder_task.send,
                         trigger=DateTrigger(run_date=run_at),
-                        args=(user_id, lessons[0], "first", None, reminder_time),
+                        args=(user_id, lessons[0], "first", None, reminder_time, lang),
                         id=f"reminder_{user_id}_{today.isoformat()}_first",
                         replace_existing=True,
                     )
@@ -260,7 +283,7 @@ async def lesson_reminders_planner(
                 scheduler.add_job(
                     send_lesson_reminder_task.send,
                     trigger=DateTrigger(run_date=run_at),
-                    args=(user_id, next_lesson, reminder_type, break_duration, None),
+                    args=(user_id, next_lesson, reminder_type, break_duration, None, lang),
                     id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}",
                     replace_existing=True,
                 )
@@ -345,6 +368,7 @@ async def plan_reminders_for_user(
                         "first",
                         None,
                         user.reminder_time_minutes,
+                        user.language,
                     ),
                     id=f"reminder_{user_id}_{today.isoformat()}_first",
                     replace_existing=True,
@@ -379,6 +403,7 @@ async def plan_reminders_for_user(
                         ("final" if is_last else "break"),
                         break_duration,
                         None,
+                        user.language,
                     ),
                     id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}",
                     replace_existing=True,

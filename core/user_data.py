@@ -151,6 +151,7 @@ class UserDataManager:
             if user:
                 user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
+                # Определяем язык из language_code, если передан (логика может быть в хендлере, но дефолт тут)
                 user = User(user_id=user_id, username=username)
                 session.add(user)
             await session.commit()
@@ -266,6 +267,27 @@ class UserDataManager:
         # Очищаем кэш пользователей после изменения темы
         await self.clear_user_cache()
 
+    async def get_user_language(self, user_id: int) -> str:
+        """Возвращает язык пользователя (ru/en/zh)."""
+        # Сначала пробуем из кэша (если бы он был для языка, но пока прямой запрос)
+        # TODO: Добавить кэширование языка, так как это частый запрос
+        async with self.async_session_maker() as session:
+            stmt = select(User.language).where(User.user_id == user_id)
+            result = await session.scalar(stmt)
+            return result or "ru"
+
+    async def set_user_language(self, user_id: int, language: str) -> None:
+        """Устанавливает язык пользователя."""
+        if language not in ["ru", "en", "zh"]:
+            language = "ru"
+
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(language=language)
+            await session.execute(stmt)
+            await session.commit()
+        
+        await self.clear_user_cache()
+
     # --- Методы для статистики ---
     async def get_total_users_count(self) -> int:
         async with self.async_session_maker() as session:
@@ -371,38 +393,38 @@ class UserDataManager:
 
     # --- Методы для рассылок ---
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_evening_notify(self) -> List[Tuple[int, str]]:
+    async def get_users_for_evening_notify(self) -> List[Tuple[int, str, str]]:
         """Получает пользователей для вечерних уведомлений с кэшированием."""
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group).where(User.evening_notify == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language).where(User.evening_notify == True, User.group.isnot(None))
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_morning_summary(self) -> List[Tuple[int, str]]:
+    async def get_users_for_morning_summary(self) -> List[Tuple[int, str, str]]:
         """Получает пользователей для утренних уведомлений с кэшированием."""
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group).where(User.morning_summary == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language).where(User.morning_summary == True, User.group.isnot(None))
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int]]:
+    async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int, str]]:
         """Получает пользователей для напоминаний о парах, включая время напоминания с кэшированием."""
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(
+            stmt = select(User.user_id, User.group, User.reminder_time_minutes, User.language).where(
                 User.lesson_reminders == True, User.group.isnot(None)
             )
             result = await session.execute(stmt)
             rows = result.all()
-            adjusted: List[Tuple[int, str, int]] = []
+            adjusted: List[Tuple[int, str, int, str]] = []
             for row in rows:
-                user_id, group, minutes = row
+                user_id, group, minutes, lang = row
                 # По требованиям рассылки, дефолтное значение для напоминаний — 20 минут,
                 # даже если в настройках по умолчанию хранится 60.
                 if minutes is None or minutes == 60:
                     minutes = 20
-                adjusted.append((user_id, group, minutes))
+                adjusted.append((user_id, group, minutes, lang))
             return adjusted
 
     async def get_admin_users(self) -> List[int]:
@@ -448,3 +470,101 @@ class UserDataManager:
             top_groups,
             group_dist,
         )
+
+    # --- Методы для истории просмотров ---
+    async def add_to_history(
+        self,
+        user_id: int,
+        item_type: str,
+        item_value: str,
+    ) -> None:
+        """
+        Добавляет элемент в историю просмотров пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента ("group", "teacher", "room")
+            item_value: Значение (название группы/преподавателя/аудитории)
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        key = f"history:{user_id}:{item_type}"
+        try:
+            # Удаляем дубликат, если уже есть
+            await redis.lrem(key, 0, item_value)
+            # Добавляем в начало списка
+            await redis.lpush(key, item_value)
+            # Оставляем только последние 10
+            await redis.ltrim(key, 0, 9)
+            # TTL 7 дней
+            await redis.expire(key, 86400 * 7)
+            logger.debug(f"Added {item_type}:{item_value} to history for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to add to history: {e}")
+
+    async def get_history(
+        self,
+        user_id: int,
+        item_type: str,
+        limit: int = 5,
+    ) -> List[str]:
+        """
+        Получает историю просмотров пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента ("group", "teacher", "room")
+            limit: Максимальное количество элементов
+            
+        Returns:
+            Список недавно просмотренных элементов
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return []
+
+        key = f"history:{user_id}:{item_type}"
+        try:
+            items = await redis.lrange(key, 0, limit - 1)
+            return [
+                i.decode("utf-8") if isinstance(i, bytes) else str(i)
+                for i in items
+            ]
+        except Exception as e:
+            logger.warning(f"Failed to get history: {e}")
+            return []
+
+    async def clear_history(
+        self,
+        user_id: int,
+        item_type: Optional[str] = None,
+    ) -> None:
+        """
+        Очищает историю просмотров пользователя.
+        
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента (если None - очищает все типы)
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        if item_type:
+            keys = [f"history:{user_id}:{item_type}"]
+        else:
+            keys = [
+                f"history:{user_id}:group",
+                f"history:{user_id}:teacher",
+                f"history:{user_id}:room",
+            ]
+
+        try:
+            for key in keys:
+                await redis.delete(key)
+            logger.debug(f"Cleared history for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clear history: {e}")
+

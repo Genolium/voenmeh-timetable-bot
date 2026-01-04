@@ -18,6 +18,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String, nullable=True)
     group: Mapped[str] = mapped_column(String, nullable=True)  # Для студентов - группа, для преподов - ФИО
     user_type: Mapped[str] = mapped_column(String, nullable=False, default="student")  # 'student' или 'teacher'
+    language: Mapped[str] = mapped_column(String(5), nullable=False, default="ru", server_default="ru")  # ru/en/zh
 
     registration_date: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
     last_active_date: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())

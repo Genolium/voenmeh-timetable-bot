@@ -2,12 +2,27 @@ from aiogram import Bot
 from aiogram.types import ContentType, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
-from aiogram_dialog.widgets.text import Const
+from aiogram_dialog.widgets.text import Const, Format
 
 from core.config import FEEDBACK_CHAT_ID
 from core.feedback_manager import FeedbackManager
+from core.i18n import i18n
+from core.user_data import UserDataManager
 
 from .states import Feedback
+
+
+async def get_feedback_data(dialog_manager: DialogManager, **kwargs):
+    user_id = dialog_manager.event.from_user.id
+    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_lang = await user_data_manager.get_user_language(user_id)
+
+    # Реинициализируем функцию перевода с актуальным языком
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
+    return {
+        "feedback_enter": _("feedback_enter"),
+    }
 
 
 async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager):
@@ -16,9 +31,13 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     """
     bot: Bot = manager.middleware_data.get("bot")
     session_factory = manager.middleware_data.get("session_factory")
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_lang = await user_data_manager.get_user_language(message.from_user.id)
+
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
     if not FEEDBACK_CHAT_ID:
-        await message.answer("❌ К сожалению, функция обратной связи временно не работает.")
+        await message.answer(_("feedback_offline"))
         await manager.done()
         return
 
@@ -85,24 +104,16 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     )
     await bot.send_message(FEEDBACK_CHAT_ID, user_info)
 
-    await message.answer(
-        "✅ <b>Спасибо! Ваш отзыв отправлен.</b>\n"
-        "Мы ценим вашу помощь в улучшении бота!\n\n"
-        "P.S. Все новости и обновления мы публикуем в нашем канале "
-        "<a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a>. Подписывайтесь, чтобы быть в курсе!\n\n"
-        "<i>Вы можете вернуться в главное меню командой /start.</i>"
-    )
+    await message.answer(_("feedback_sent"))
     await manager.done()
 
 
 feedback_dialog = Dialog(
     Window(
-        Const(
-            "📝 <b>Пожалуйста, напишите ваш отзыв, предложение или сообщение об ошибке.</b>\n\n"
-            "Вы можете отправить текст, фото или видео. Я перешлю ваше сообщение администратору."
-        ),
+        Format("{feedback_enter}"),
         # MessageInput ловит любое сообщение, так как мы не указали фильтр по типу контента
         MessageInput(on_feedback_received, content_types=[ContentType.ANY]),
         state=Feedback.enter_feedback,
+        getter=get_feedback_data,
     )
 )

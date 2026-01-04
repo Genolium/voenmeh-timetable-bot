@@ -34,7 +34,7 @@ async def test_get_schedule_image_cached(image_service, mock_cache_manager):
     success, file_path = await image_service.get_or_generate_week_image("TEST_GROUP", "odd", "Нечетная", {})
     assert success
     assert file_path == "cached.png"
-    mock_cache_manager.is_cached.assert_called_with("TEST_GROUP_odd")
+    mock_cache_manager.is_cached.assert_called_with("TEST_GROUP_odd_ru")
 
 
 @pytest.mark.asyncio

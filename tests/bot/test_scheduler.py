@@ -29,13 +29,13 @@ from core.config import MOSCOW_TZ
 @pytest.fixture
 def mock_user_data_manager():
     manager = AsyncMock()
-    manager.get_users_for_evening_notify.return_value = [(1, "О735Б"), (2, "О735А")]
-    manager.get_users_for_morning_summary.return_value = [(1, "О735Б"), (2, "О735А")]
+    manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru"), (2, "О735А", "ru")]
+    manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru"), (2, "О735А", "ru")]
     manager.get_users_for_lesson_reminders.return_value = [
-        (1, "О735Б", 20),
-        (2, "О735А", 15),
+        (1, "О735Б", 20, "ru"),
+        (2, "О735А", 15, "ru"),
     ]
-    manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=60)
+    manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=60, language="ru")
     manager.get_top_groups.return_value = [("О735Б", 5), ("О735А", 3)]
     manager.get_all_user_ids.return_value = [1, 2, 3]
     manager.get_total_users_count.return_value = 100
@@ -175,7 +175,7 @@ async def test_evening_broadcast_no_lessons(mock_user_data_manager, mock_timetab
     # Проверяем, что отправляется сообщение о том, что занятий нет
     calls = mock_send_task.send.call_args_list
     for call in calls:
-        assert "Завтра занятий нет!" in str(call.args[1])
+        assert "Занятий нет!" in str(call.args[1])
 
 
 @pytest.mark.asyncio
@@ -662,7 +662,7 @@ async def test_evening_broadcast_weather_api_error(mock_user_data_manager, mock_
     monkeypatch.setattr("bot.scheduler.TASKS_SENT_TO_QUEUE", mock_metrics)
 
     # Мокаем пользователей для уведомления
-    mock_user_data_manager.get_users_for_evening_notify.return_value = [(1, "О735Б")]
+    mock_user_data_manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru")]
 
     # Мокаем расписание
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={"lessons": []})
@@ -695,7 +695,7 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
     monkeypatch.setattr("bot.scheduler.TASKS_SENT_TO_QUEUE", mock_metrics)
 
     # Мокаем пользователей для уведомления
-    mock_user_data_manager.get_users_for_morning_summary.return_value = [(1, "О735Б")]
+    mock_user_data_manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru")]
 
     # Мокаем расписание
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={"lessons": [{"time": "09:00-10:30"}]})

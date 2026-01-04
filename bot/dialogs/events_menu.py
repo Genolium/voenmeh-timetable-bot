@@ -9,6 +9,8 @@ from aiogram_dialog.widgets.text import Const, Format
 
 from core.config import MOSCOW_TZ
 from core.events_manager import EventsManager
+from core.i18n import i18n
+from core.user_data import UserDataManager
 
 from .states import Events
 
@@ -64,6 +66,11 @@ def _filter_skip_words(text: str, skip_words: list) -> str:
 
 
 async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
+    user_id = dialog_manager.event.from_user.id
+    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_lang = await user_data_manager.get_user_language(user_id)
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
     session_factory = dialog_manager.middleware_data.get("session_factory")
     manager = EventsManager(session_factory)
     page = dialog_manager.dialog_data.get("page", 0)
@@ -133,10 +140,15 @@ async def get_events_for_user(dialog_manager: DialogManager, **kwargs):
         "events": [(present(e), str(e.id)) for e in items],
         "total": total,
         "has_items": bool(items),
-        "page": page,
+        "page": page + 1,
         "has_prev": page > 0,
         "has_next": (offset + limit) < total,
         "time_filter": time_filter or "all",
+        "events_available": _("events_available", total=total, page=page + 1),
+        "btn_today": _("events_today"),
+        "btn_week": _("events_week"),
+        "btn_all": _("events_all"),
+        "events_empty": _("events_empty"),
     }
 
 
@@ -146,17 +158,24 @@ async def on_event_selected(callback, widget, manager: DialogManager, item_id: s
 
 
 async def get_event_details(dialog_manager: DialogManager, **kwargs):
+    user_id = dialog_manager.event.from_user.id
+    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_lang = await user_data_manager.get_user_language(user_id)
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
     session_factory = dialog_manager.middleware_data.get("session_factory")
     manager = EventsManager(session_factory)
     event_id = dialog_manager.dialog_data.get("event_id")
     event = await manager.get_event(event_id) if event_id else None
     if not event:
         return {
-            "details": "Событие не найдено",
+            "details": _("events_not_found"),
             "has_link": False,
             "event_link": "",
             "has_image": False,
             "image_file_id": "",
+            "btn_back": _("events_back"),
+            "btn_reg": _("events_registration"),
         }
 
     # Формируем детали мероприятия
@@ -187,6 +206,8 @@ async def get_event_details(dialog_manager: DialogManager, **kwargs):
         "event_link": link if link_valid else "",
         "has_image": bool(getattr(event, "image_file_id", None)),
         "image_file_id": getattr(event, "image_file_id", "") or "",
+        "btn_back": _("events_back"),
+        "btn_reg": _("events_registration"),
     }
 
 
@@ -217,11 +238,11 @@ async def on_set_filter(callback, button, manager: DialogManager):
 
 events_dialog = Dialog(
     Window(
-        Format("🎉 <b>Мероприятия</b> (доступно: {total})\nСтр. {page}"),
+        Format("{events_available}"),
         Row(
-            Button(Const("Сегодня"), id="flt_today", on_click=on_set_filter),
-            Button(Const("Неделя"), id="flt_week", on_click=on_set_filter),
-            Button(Const("Все"), id="flt_all", on_click=on_set_filter),
+            Button(Format("{btn_today}"), id="flt_today", on_click=on_set_filter),
+            Button(Format("{btn_week}"), id="flt_week", on_click=on_set_filter),
+            Button(Format("{btn_all}"), id="flt_all", on_click=on_set_filter),
         ),
         Column(
             Select(
@@ -234,7 +255,7 @@ events_dialog = Dialog(
             ),
         ),
         Format(
-            "Пока нет опубликованных мероприятий",
+            "{events_empty}",
             when=lambda data, w, m: not data.get("has_items"),
         ),
         Row(
@@ -254,11 +275,11 @@ events_dialog = Dialog(
         Format("{details}"),
         Row(
             Url(
-                Const("🔗 Регистрация/ссылка"),
+                Format("{btn_reg}"),
                 url=Format("{event_link}"),
                 when="has_link",
             ),
-            SwitchTo(Const("◀️ Назад"), id="back_to_list", state=Events.list),
+            SwitchTo(Format("{btn_back}"), id="back_to_list", state=Events.list),
         ),
         state=Events.details,
         getter=get_event_details,

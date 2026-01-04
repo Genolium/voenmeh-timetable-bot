@@ -32,6 +32,12 @@ async def manager_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     manager = UserDataManager("sqlite+aiosqlite:///:memory:", redis_url=None)
+    
+    # Mock Redis to prevent real connection and shared state
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None  # Cache miss by default
+    manager._redis_client = mock_redis
+    
     manager.engine = engine
     manager.async_session_maker.configure(bind=engine)
     try:
@@ -99,7 +105,7 @@ async def test_set_reminder_time_and_retrieve(manager_db: UserDataManager):
     await manager_db.set_user_group(2, "G")
     await manager_db.set_reminder_time(2, 45)
     reminders = await manager_db.get_users_for_lesson_reminders()
-    assert (2, "G", 45) in reminders
+    assert (2, "G", 45, "ru") in reminders
 
 
 @pytest.mark.asyncio
@@ -132,9 +138,9 @@ async def test_users_for_evening_morning_and_lesson_reminders(
     ev = await manager_db.get_users_for_evening_notify()
     mrn = await manager_db.get_users_for_morning_summary()
     rem = await manager_db.get_users_for_lesson_reminders()
-    assert sorted(ev) == [(1, "G"), (2, "G")]
-    assert mrn == [(1, "G")]
-    assert rem == [(1, "G", 20), (2, "G", 20)]
+    assert sorted(ev) == [(1, "G", "ru"), (2, "G", "ru")]
+    assert mrn == [(1, "G", "ru")]
+    assert rem == [(1, "G", 20, "ru"), (2, "G", 20, "ru")]
 
 
 class TestUserDataManagerWithSQLAlchemy:

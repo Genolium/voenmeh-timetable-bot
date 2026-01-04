@@ -42,7 +42,7 @@ class TestFindMenu:
         mock_manager.dialog_data = {}
         mock_manager.timetable_manager.find_teachers.return_value = []
         await on_teacher_input(mock_message, None, mock_manager)
-        mock_message.answer.assert_called_with("❌ Преподаватель не найден. Попробуйте ввести только фамилию.")
+        mock_message.answer.assert_called_with("find_teacher_not_found")
         mock_manager.switch_to.assert_not_called()
 
     async def test_on_classroom_input(self, mock_manager):

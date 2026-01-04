@@ -2,6 +2,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class MainMenu(StatesGroup):
+    select_language = State()  # Выбор языка при первом запуске
     choose_user_type = State()  # Выбор роли: студент или преподаватель
     enter_group = State()  # Ввод группы для студентов
     enter_teacher = State()  # Ввод ФИО преподавателя
@@ -12,6 +13,7 @@ class Schedule(StatesGroup):
     view = State()
     full_week_view = State()
     week_image_view = State()
+    full_quality_gate = State()
 
 
 class SettingsMenu(StatesGroup):
@@ -19,6 +21,7 @@ class SettingsMenu(StatesGroup):
     reminders_time = State()
     choose_theme = State()
     theme_subscription_gate = State()
+    select_lang = State()
 
 
 class FindMenu(StatesGroup):

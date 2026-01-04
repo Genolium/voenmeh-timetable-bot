@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from aiogram.types import CallbackQuery
 from aiogram_dialog import Dialog, DialogManager, Window
@@ -7,6 +8,7 @@ from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.scheduler import cancel_reminders_for_user, plan_reminders_for_user
 from core.user_data import UserDataManager
+from core.i18n import i18n
 
 from .constants import WidgetIds
 from .states import SettingsMenu
@@ -14,12 +16,15 @@ from .states import SettingsMenu
 # theme_dialog импортируется в main.py
 
 
-def get_status_text(status: bool) -> str:
-    return "✅ Включена" if status else "❌ Отключена"
+def get_status_text(status: bool, lang: str = "ru") -> str:
+    key = "settings_status_enabled" if status else "settings_status_disabled"
+    return i18n.get(key, lang)
 
 
-def get_button_text(status: bool, action: str) -> str:
-    return f"Отключить {action}" if status else f"Включить {action}"
+def get_button_text(status: bool, action_key: str, lang: str = "ru") -> str:
+    # action_key: "evening", "morning", "reminders"
+    prefix = "settings_btn_disable" if status else "settings_btn_enable"
+    return i18n.get(f"{prefix}_{action_key}", lang)
 
 
 async def get_settings_data(dialog_manager: DialogManager, **kwargs):
@@ -27,34 +32,80 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     user_id = dialog_manager.event.from_user.id
     settings = await user_data_manager.get_user_settings(user_id)
 
+    # CRITICAL: Fetch user_lang and define _ FIRST before any usage
+    user_lang = await user_data_manager.get_user_language(user_id)
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
     reminders_status = settings.get(WidgetIds.LESSON_REMINDERS.value, False)
     reminder_time = settings.get("reminder_time_minutes", 60)
     current_theme = settings.get("theme", "standard")
 
-    # Определяем названия тем с эмодзи
+    # Определяем названия тем с эмодзи из локалей
     themes_info = {
-        "standard": "🎨 Стандартная",
-        "light": "☀️ Светлая",
-        "dark": "🌙 Тёмная",
-        "classic": "📜 Классическая",
-        "coffee": "☕ Кофейная",
+        "standard": _("theme_standard_name"),
+        "light": _("theme_light_name"),
+        "dark": _("theme_dark_name"),
+        "classic": _("theme_classic_name"),
+        "coffee": _("theme_coffee_name"),
     }
 
-    current_theme_name = themes_info.get(current_theme, "🎨 Стандартная")
+    current_theme_name = themes_info.get(current_theme, _("theme_standard_name"))
+    
+    language_map = {
+        "ru": _("lang_ru"),
+        "en": _("lang_en"),
+        "zh": _("lang_zh")
+    }
+    lang_name = language_map.get(user_lang, user_lang)
+
+    # Localized labels for status lines
+    settings_evening_label = _("settings_evening_label")
+    settings_morning_label = _("settings_morning_label")
+    settings_reminders_label = _("settings_reminders_label")
 
     return {
-        "evening_status_text": get_status_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False)),
-        "morning_status_text": get_status_text(settings.get(WidgetIds.MORNING_SUMMARY.value, False)),
-        "reminders_status_text": get_status_text(reminders_status),
+        "settings_title": _("settings_title", language=lang_name),
+        "btn_settings": _("btn_settings"),
+        "btn_change_lang": _("btn_change_lang"),
+        "lang_select_title": _("lang_select_title"),
+        
+        "settings_evening_label": settings_evening_label,
+        "settings_morning_label": settings_morning_label,
+        "settings_reminders_label": settings_reminders_label,
+        
+        "evening_status_text": get_status_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False), user_lang),
+        "morning_status_text": get_status_text(settings.get(WidgetIds.MORNING_SUMMARY.value, False), user_lang),
+        "reminders_status_text": get_status_text(reminders_status, user_lang),
         "are_reminders_enabled": reminders_status,
-        "reminder_time_text": f"({reminder_time} мин. до начала)",
-        "evening_button_text": get_button_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False), "сводку на завтра"),
-        "morning_button_text": get_button_text(settings.get(WidgetIds.MORNING_SUMMARY.value, False), "утреннюю сводку"),
-        "reminders_button_text": get_button_text(reminders_status, "напоминания о парах"),
+        "reminder_time_text": _("settings_reminder_time_fmt", minutes=reminder_time),
+        "evening_button_text": get_button_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False), "evening", user_lang),
+        "morning_button_text": get_button_text(settings.get(WidgetIds.MORNING_SUMMARY.value, False), "morning", user_lang),
+        "reminders_button_text": get_button_text(reminders_status, "reminders", user_lang),
         "current_theme_name": current_theme_name,
         "current_theme": current_theme,
         "reminder_times": [30, 60, 90, 120],
         "current_reminder_time": reminder_time,
+        "settings_minutes_short": _("settings_minutes_short"),
+        
+        "lang_ru": _("lang_ru"),
+        "lang_en": _("lang_en"),
+        "lang_zh": _("lang_zh"),
+        "btn_news": _("btn_news"),
+        "btn_back": _("btn_back"),
+        "btn_time": _("btn_time"),
+        "settings_reminder_select_title": _("settings_reminder_select_title"),
+        "current_lang_code": user_lang,
+        "ru_checked": "✅" if user_lang == "ru" else "",
+        "en_checked": "✅" if user_lang == "en" else "",
+        "zh_checked": "✅" if user_lang == "zh" else "",
+        "languages": [("ru", _("lang_ru")), ("en", _("lang_en")), ("zh", _("lang_zh"))],
+        
+        # Theme dialog keys
+        "theme_gate_title": _("theme_gate_title"),
+        "theme_btn_check": _("theme_btn_check"),
+        "theme_select_title": _("theme_select_title"),
+        "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
+        "theme_available_label": _("theme_available_label"),
     }
 
 
@@ -103,6 +154,17 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
 
 async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     await manager.done()
+
+
+async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    await user_data_manager.set_user_language(callback.from_user.id, item_id)
+    
+    # Reload middleware I18n context manually or just reply
+    _ = lambda k: i18n.get(k, lang=item_id)
+    
+    await callback.answer(_("lang_changed"), show_alert=True)
+    await manager.switch_to(SettingsMenu.main)
 
 
 async def on_theme_button_click(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -176,36 +238,42 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
 
 async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     """Возвращает текущую тему и список тем с пометкой текущей."""
-    themes_info = {
-        "standard": {
-            "name": "🎨 Стандартная",
-            "description": "красная для нечётных недель, фиолетовая для чётных",
-        },
-        "light": {
-            "name": "☀️ Светлая",
-            "description": "бирюзовая тема с кремовыми карточками",
-        },
-        "dark": {
-            "name": "🌙 Тёмная",
-            "description": "тёмная тема с фиолетовыми акцентами",
-        },
-        "classic": {
-            "name": "📜 Классическая",
-            "description": "тёмно-синяя тема в цветовой гамме Военмеха",
-        },
-        "coffee": {
-            "name": "☕ Кофейная",
-            "description": "коричнево-золотая тема с кремовыми карточками",
-        },
-    }
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
+    
+    # CRITICAL: Fetch user_lang and define _ FIRST before any usage
+    user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+    
     current_theme = "standard"
     try:
         if user_data_manager:
             current_theme = await user_data_manager.get_user_theme(user_id) or "standard"
     except Exception:
         current_theme = "standard"
+
+    themes_info = {
+        "standard": {
+            "name": _("theme_standard_name"),
+            "description": _("theme_standard_desc"),
+        },
+        "light": {
+            "name": _("theme_light_name"),
+            "description": _("theme_light_desc"),
+        },
+        "dark": {
+            "name": _("theme_dark_name"),
+            "description": _("theme_dark_desc"),
+        },
+        "classic": {
+            "name": _("theme_classic_name"),
+            "description": _("theme_classic_desc"),
+        },
+        "coffee": {
+            "name": _("theme_coffee_name"),
+            "description": _("theme_coffee_desc"),
+        },
+    }
 
     themes = []
     for key, info in themes_info.items():
@@ -218,25 +286,24 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
             }
         )
 
+    current_theme_name = themes_info.get(current_theme, {"name": _("theme_standard_name")})["name"]
     return {
-        "current_theme": themes_info.get(current_theme, {"name": "🎨 Стандартная"})["name"],
+        "current_theme": current_theme_name,
         "themes": themes,
+        "btn_back": _("btn_back"),
+        "theme_select_title": _("theme_select_title"),
+        "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
+        "theme_available_label": _("theme_available_label"),
     }
 
 
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
-    await callback.answer("📢 Переходим к новостям разработки!")
+    user_lang = manager.middleware_data.get("i18n_lang", "ru")
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+    await callback.answer(_("news_toast"))
     await callback.message.answer(
-        "🚀 <b>Новости разработки бота</b>\n\n"
-        "Все обновления, планы и новости о разработке бота публикуются в нашем канале:\n\n"
-        "📢 <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a>\n\n"
-        "Там вы узнаете:\n"
-        "• О новых функциях первыми\n"
-        "• О планах развития\n"
-        "• Сможете повлиять на разработку\n"
-        "• Увидите закулисье проекта\n\n"
-        "<i>Подписывайтесь, чтобы быть в курсе! 👆</i>",
+        _("news_message"),
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
@@ -244,10 +311,10 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
 
 settings_dialog = Dialog(
     Window(
-        Const("⚙️ <b>Настройки уведомлений</b>\n"),
-        Format(f"Сводка на завтра (20:00): <b>{{evening_status_text}}</b>"),
-        Format(f"Сводка на сегодня (8:00): <b>{{morning_status_text}}</b>"),
-        Format(f"Напоминания о парах: <b>{{reminders_status_text}}</b>"),
+        Format("{settings_title}"),
+        Format("{settings_evening_label}: <b>{evening_status_text}</b>"),
+        Format("{settings_morning_label}: <b>{morning_status_text}</b>"),
+        Format("{settings_reminders_label}: <b>{reminders_status_text}</b>"),
         Button(
             Format("{evening_button_text}"),
             id=WidgetIds.EVENING_NOTIFY,
@@ -265,7 +332,7 @@ settings_dialog = Dialog(
                 on_click=on_toggle_setting,
             ),
             SwitchTo(
-                Const("⏰ Время"),
+                Format("{btn_time}"),
                 id="to_time_settings",
                 state=SettingsMenu.reminders_time,
                 when="are_reminders_enabled",
@@ -277,18 +344,23 @@ settings_dialog = Dialog(
             id="theme_btn",
             on_click=on_theme_button_click,
         ),
-        Button(Const("📢 Новости разработки"), id="news_btn", on_click=on_news_clicked),
-        Button(Const("◀️ Назад"), id="back_to_schedule", on_click=on_back_click),
+        Button(
+            Format("{btn_change_lang}"),
+            id="lang_btn",
+            on_click=lambda c, b, m: m.switch_to(SettingsMenu.select_lang),
+        ),
+        Button(Format("{btn_news}"), id="news_btn", on_click=on_news_clicked),
+        Button(Format("{btn_back}"), id="back_to_schedule", on_click=on_back_click),
         state=SettingsMenu.main,
         getter=get_settings_data,
         parse_mode="HTML",
     ),
     Window(
-        Const("Выберите, за сколько минут до первой пары присылать напоминание:"),
+        Format("{settings_reminder_select_title}"),
         Row(
             Select(
                 Jinja(
-                    "{% if item == current_reminder_time %}" "✅ {{ item }} мин." "{% else %}" "{{ item }} мин." "{% endif %}"
+                    "{% if item == current_reminder_time %}✅ {{ item }} {{ settings_minutes_short }}{% else %}{{ item }} {{ settings_minutes_short }}{% endif %}"
                 ),
                 id="select_reminder_time",
                 item_id_getter=lambda item: str(item),
@@ -296,39 +368,55 @@ settings_dialog = Dialog(
                 on_click=on_time_selected,
             )
         ),
-        Back(Const("◀️ Назад")),
+        Back(Format("{btn_back}")),
         state=SettingsMenu.reminders_time,
         getter=get_settings_data,
     ),
+    Window(
+        Format("{lang_select_title}"),
+        Column(
+             Button(
+                 Format("🇷🇺 Русский {ru_checked}"),
+                 id="lang_ru",
+                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "ru"),
+             ),
+             Button(
+                 Format("🇬🇧 English {en_checked}"),
+                 id="lang_en",
+                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "en"),
+             ),
+             Button(
+                 Format("🇨🇳 中文 {zh_checked}"),
+                 id="lang_zh",
+                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "zh"),
+             ),
+        ),
+        SwitchTo(Format("{btn_back}"), id="back_from_lang", state=SettingsMenu.main),
+        state=SettingsMenu.select_lang,
+        getter=get_settings_data,
+        parse_mode="HTML",
+    ),
     # Добавляем окна из theme_dialog
     Window(
-        Const(
-            "🎨 <b>Доступ к персональным темам</b>\n\n"
-            "Выберите уникальную тему для вашего расписания:\n\n"
-            "🎨 <b>Стандартная</b> - красная для нечётных, фиолетовая для чётных недель\n"
-            "☀️ <b>Светлая</b> - бирюзовая тема с кремовыми карточками\n"
-            "🌙 <b>Тёмная</b> - тёмная тема с фиолетовыми акцентами\n"
-            "📜 <b>Классическая</b> - тёмно-синяя тема с белыми карточками\n"
-            "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
-            "<i>Доступно только по подписке на канал разработки</i>"
-        ),
+        Format("{theme_gate_title}"),
         Button(
-            Const("✅ Проверить подписку"),
+            Format("{theme_btn_check}"),
             id="check_subscription",
             on_click=lambda c, b, m: m.switch_to(SettingsMenu.choose_theme),
         ),
         Button(
-            Const("◀️ Назад"),
+            Format("{btn_back}"),
             id="back_to_main_from_gate",
             on_click=lambda c, b, m: m.switch_to(SettingsMenu.main),
         ),
         state=SettingsMenu.theme_subscription_gate,
+        getter=get_settings_data,
         parse_mode="HTML",
     ),
     Window(
-        Const("🎨 <b>Выбор темы оформления</b>\n\n" "Выберите тему для вашего расписания:\n"),
-        Format("Текущая тема: <b>{current_theme}</b>\n"),
-        Const("\n📋 <i>Доступные темы:</i>\n"),
+        Format("{theme_select_title}"),
+        Format("{theme_current_fmt}"),
+        Format("{theme_available_label}"),
         Column(
             Select(
                 Jinja("{% if item.is_current %}" "✅ {{ item.name }}" "{% else %}" "🔘 {{ item.name }}" "{% endif %}"),
@@ -339,7 +427,7 @@ settings_dialog = Dialog(
             )
         ),
         Button(
-            Const("◀️ Назад"),
+            Format("{btn_back}"),
             id="back_to_main_from_theme",
             on_click=lambda c, b, m: m.switch_to(SettingsMenu.main),
         ),

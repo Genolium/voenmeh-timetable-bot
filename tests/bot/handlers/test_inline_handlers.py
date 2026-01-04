@@ -74,7 +74,8 @@ class TestInlineHandler:
         await inline_query_handler(mock_query, mock_manager)
 
         result_article = mock_query.answer.call_args[0][0][0]
-        assert "Группа 'XXXXX' не найдена" in result_article.title
+        # X -> Х translation in normalize_group_name
+        assert "Группа 'ХХХХХ' не найдена" in result_article.title
 
     async def test_inline_query_no_lessons(self, mock_query, mock_manager, mocker):
         mocker.patch(

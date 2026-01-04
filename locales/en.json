@@ -1,0 +1,270 @@
+{
+    "welcome_title": "👋 <b>Welcome to Voenmeh Timetable Bot!</b>\n\n🎯 <b>Choose your role:</b>",
+    "role_student": "🎓 I am a Student",
+    "role_teacher": "🧑‍🏫 I am a Teacher",
+    "reg_student_title": "🎓 <b>Student Registration</b>\n\n📝 Enter your <b>group number</b>:\n💡 <i>Example: {random_group}</i>\n\nℹ️ <i>If you don't know the exact name, enter roughly - I'll find similar options</i>",
+    "reg_teacher_title": "🧑‍🏫 <b>Teacher Registration</b>\n\n📝 Enter your <b>name</b>:\n💡 <i>Example: Ivanov I.I.</i>\n\nℹ️ <i>System will find your schedule in the university database</i>\n🔍 <i>If no exact match, duplicates or similar names will be suggested</i>",
+    "back_to_role": "⬅️ Back to role selection",
+    "incorrect_group": "❌ <b>Incorrect input!</b>\n\n📝 Enter group number using letters and digits\n💡 <i>Example: O735B, M123A, IVT-21</i>",
+    "group_not_found": "❌ Group <b>{group}</b> not found\n\n🔍 <b>Check the group name</b>\n💡 <i>Try entering only the main part (e.g. O735 instead of O735B)</i>\n\n❓ <b>Need help?</b> Contact your class monitor or dean's office",
+    "group_suggestion": "🔍 <b>Group \"{group}\" not found exactly</b>\n\n💡 <b>Maybe you meant:</b>\n{suggestions}\n\n📝 Try entering one of the suggested options",
+    "reg_complete": "🎉 <b>Registration complete!</b>\n\n✅ Saved: <code>{group}</code>\n\n🚀 <b>Now available:</b>\n📅 View schedule for any day\n🔍 Search for teachers and rooms\n🔔 Smart lesson reminders\n📊 Statistics and analytics\n💬 Group chat features\n\n❓ <b>Want to know more?</b>",
+    "show_tutorial": "📖 Show Tutorial",
+    "start_using": "🚀 Start Using!",
+    "teacher_not_found": "❌ <b>Teacher \"{name}\" not found</b>\n\n🔍 <b>Check the name:</b>\n• Ensure correct spelling\n• Try entering only the surname\n• Use full name without abbreviations",
+    "teacher_suggestion": "🔍 <b>Teacher not found exactly</b>\n\n💡 <b>Maybe you meant:</b>\n{suggestions}\n\n📝 Copy and send one of the suggested options",
+    "find_title": "What do you want to find?",
+    "find_btn_teacher": "🧑‍🏫 Teacher",
+    "find_btn_classroom": "🚪 Classroom",
+    "btn_back": "◀️ Back",
+    "find_enter_teacher": "Enter teacher's surname (min 3 letters):",
+    "find_enter_classroom": "Enter classroom number:",
+    "find_select_match": "Multiple matches found. Please select:",
+    "find_new_search": "◀️ New Search",
+    "find_teacher_not_found": "❌ Teacher not found. Try entering only the surname.",
+    "find_classroom_not_found": "❌ Classroom not found.",
+    "settings_title": "⚙️ <b>Settings</b>\n\nLanguage: {language}\n",
+    "btn_settings": "⚙️ Settings",
+    "btn_change_lang": "🌍 Change Language",
+    "lang_select_title": "🌍 <b>Choose language</b>",
+    "lang_ru": "🇷🇺 Русский",
+    "lang_en": "🇬🇧 English",
+    "lang_zh": "🇨🇳 中文",
+    "lang_changed": "✅ Language changed to English",
+    "settings_status_enabled": "✅ Enabled",
+    "settings_status_disabled": "❌ Disabled",
+    "settings_btn_enable_evening": "Enable evening summary",
+    "settings_btn_disable_evening": "Disable evening summary",
+    "settings_btn_enable_morning": "Enable morning summary",
+    "settings_btn_disable_morning": "Disable morning summary",
+    "settings_btn_enable_reminders": "Enable lesson reminders",
+    "settings_btn_disable_reminders": "Disable lesson reminders",
+    "settings_reminder_time_fmt": "({minutes} min before start)",
+    "settings_reminder_select_title": "Choose how many minutes before the first lesson to send a reminder:",
+    "settings_minutes_short": "min",
+    "settings_evening_label": "Evening summary (20:00)",
+    "settings_morning_label": "Morning summary (8:00)",
+    "settings_reminders_label": "Lesson reminders",
+    "btn_time": "⏰ Time",
+    "theme_standard_name": "🎨 Standard",
+    "theme_standard_desc": "red for odd weeks, purple for even weeks",
+    "theme_light_name": "☀️ Light",
+    "theme_light_desc": "turquoise theme with cream cards",
+    "theme_dark_name": "🌙 Dark",
+    "theme_dark_desc": "dark theme with purple accents",
+    "theme_classic_name": "📜 Classic",
+    "theme_classic_desc": "dark blue theme in Voenmeh colors",
+    "theme_coffee_name": "☕ Coffee",
+    "theme_coffee_desc": "brown-gold theme with cream cards",
+    "theme_gate_title": "🎨 <b>Personal Themes Access</b>\n\nChoose a unique theme for your schedule:\n\n🎨 <b>Standard</b> - red for odd, purple for even weeks\n☀️ <b>Light</b> - turquoise theme with cream cards\n🌙 <b>Dark</b> - dark theme with purple accents\n📜 <b>Classic</b> - dark blue theme with white cards\n☕ <b>Coffee</b> - brown-gold theme with cream cards\n\n<i>Available only by subscribing to the development channel</i>",
+    "theme_btn_check": "✅ Check Subscription",
+    "theme_select_title": "🎨 <b>Theme Selection</b>\n\nChoose a theme for your schedule:\n",
+    "theme_current_fmt": "Current theme: <b>{current_theme}</b>\n",
+    "theme_available_label": "\n📋 <i>Available themes:</i>\n",
+    "btn_week": "🗓 Week",
+    "btn_change_group": "🔄 Change",
+    "btn_search": "🔍 Find",
+    "btn_news": "📢 News",
+    "btn_original": "📄 Original (File)",
+    "schedule_teacher_label": "Teacher:",
+    "schedule_week_caption": "✅ Weekly schedule ready!\n\n{subject_line}\nWeek: <b>{week_name}</b>\nPeriod: <b>{start} - {end}</b>",
+    "schedule_teacher_title": "🗓 <b>Schedule for teacher {group}</b>",
+    "schedule_group_title": "🗓 <b>Schedule for group {group}</b>",
+    "news_toast": "📢 Opening dev news!",
+    "news_message": "🚀 <b>Bot Development News</b>\n\nAll updates and plans are published in our channel:\n\n📢 <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a>\n\nSubscribe to stay updated! 👆",
+    "fmt_error": "❌ <b>Error:</b> {error}",
+    "fmt_error_unknown": "Unknown error",
+    "fmt_date_missing": "❌ <b>Error:</b> Date not found.",
+    "fmt_week": "· Week {number}",
+    "fmt_no_lessons": "🎉 <b>No lessons!</b>",
+    "fmt_time_unknown": "Time not specified",
+    "fmt_subject_unknown": "Subject not specified",
+    "fmt_teacher_header": "🧑‍🏫 <b>{name}</b>",
+    "fmt_teacher_label": "Teacher",
+    "fmt_classroom_header": "🚪 <b>Room {number}</b>",
+    "fmt_classroom_label": "Classroom",
+    "fmt_classroom_free": "✅ <b>The room is free all day!</b>",
+    "fmt_week_header": "🗓 <b>{week_name}</b>",
+    "fmt_week_no_lessons": "🎉 No lessons this week!",
+    "unsubscribe_footer": "\n\n<tg-spoiler><i>Notification settings can be changed in «⚙️ Settings»</i></tg-spoiler>",
+    "channel_promo": "\n\n📢 <i>Dev News: <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a></i>",
+    "evening_greetings": [
+        "Good evening! 👋",
+        "Hi! Preparing for tomorrow.",
+        "Evening summary incoming."
+    ],
+    "evening_greetings_teacher": [
+        "Good evening!",
+        "Informing you about tomorrow's schedule.",
+        "Hello!"
+    ],
+    "morning_greetings": [
+        "Good morning! ☀️",
+        "Morning! Studies await.",
+        "Morning summary is ready!"
+    ],
+    "morning_greetings_teacher": [
+        "Good morning!",
+        "Your schedule for today.",
+        "Hello!"
+    ],
+    "day_context": {
+        "0": [
+            "Tomorrow is Monday — fresh start!",
+            "Getting ready for a new week."
+        ],
+        "1": [
+            "Tomorrow is Tuesday, getting into rhythm.",
+            "Planning a productive Tuesday."
+        ],
+        "2": [
+            "Tomorrow is Wednesday — mid-week!",
+            "Halfway through the week already."
+        ],
+        "3": [
+            "Tomorrow is Thursday, finish line is close.",
+            "One last push before the weekend!"
+        ],
+        "4": [
+            "Tomorrow is Friday! Rest is coming soon.",
+            "Last push before chilling!"
+        ],
+        "5": [
+            "Tomorrow is Saturday — for the toughest ones.",
+            "Another study day, then rest."
+        ],
+        "6": [
+            "Tomorrow is Sunday — sleep well!",
+            "Weekend ahead, but don't forget homework 😉"
+        ]
+    },
+    "day_context_teacher": {
+        "0": [
+            "Tomorrow is Monday — start of a new work week.",
+            "Planning a productive week."
+        ],
+        "1": [
+            "Tomorrow is Tuesday.",
+            "Continuing the work week."
+        ],
+        "2": [
+            "Tomorrow is Wednesday — mid-week.",
+            "Wishing you a productive day."
+        ],
+        "3": [
+            "Tomorrow is Thursday.",
+            "Work week is ending soon."
+        ],
+        "4": [
+            "Tomorrow is Friday — end of the work week.",
+            "Wishing you a productive finish."
+        ],
+        "5": [
+            "Tomorrow is Saturday — work day.",
+            "Wishing you a productive day."
+        ],
+        "6": [
+            "Tomorrow is Sunday.",
+            "Wishing you a good weekend."
+        ]
+    },
+    "clothing_advice": {
+        "cold": [
+            "It will be freezing tomorrow, don't forget hat and gloves!",
+            "Advise dressing warmly."
+        ],
+        "cool": [
+            "Chilly morning tomorrow, a light jacket or sweater is perfect.",
+            "Autumn chill needs cozy clothes."
+        ],
+        "warm": [
+            "Warm weather promised, dress lightly.",
+            "Great weather for a walk."
+        ],
+        "hot": [
+            "It will be hot tomorrow! Drink more water.",
+            "Real summer! Perfect for light clothes."
+        ]
+    },
+    "weather_forecast_fmt": "{emoji} Forecast for tomorrow: {description}, {temp}°C.\n<i>{advice}</i>",
+    "weather_forecast_teacher_fmt": "{emoji} Weather forecast for tomorrow: {description}, {temp}°C.",
+    "weather_current_fmt": "Current weather: {description}, {temp}°C.",
+    "weather_current_teacher_fmt": "Current weather: {description}, {temp}°C.",
+    "header_today_no_lessons": "✨ <b>No lessons today.</b> Have a great day!",
+    "header_late_night": "🌙 <b>Late night.</b> Morning is soon!",
+    "header_morning_template": "☀️ <b>Good morning!</b> First lesson at {start_time}.",
+    "header_lessons_done": "✅ <b>Lessons finished today.</b> Rest up!",
+    "header_lesson_now_template": "⏳ <b>Lesson in progress:</b> {subject}.\n{end_text}",
+    "header_break_template": "☕️ <b>Break until {next_start}.</b>\nNext lesson: {subject}.",
+    "reminder_first": [
+        "First lesson in {minutes} minutes!",
+        "Starting soon, don't be late!",
+        "Getting ready for the first lesson!"
+    ],
+    "reminder_break_long": [
+        "Time for lunch!",
+        "Great chance to visit the canteen."
+    ],
+    "reminder_break_medium": [
+        "Time for some tea.",
+        "Stretch your legs."
+    ],
+    "reminder_break_short": [
+        "Hurry to the next room.",
+        "Short break."
+    ],
+    "reminder_final": [
+        "That's all for today! You can rest.",
+        "School day over. Have a good evening!"
+    ],
+    "reminder_break_long_fmt": "Long break {duration} min until {next_time}. {advice}",
+    "reminder_break_medium_fmt": "Break {duration} min until {next_time}. {advice}",
+    "reminder_header_first": "🔔 <b>{text}</b>\n\n",
+    "reminder_header_break": "✅ <b>Lesson finished!</b>\n{text}\n\n☕️ <b>Next lesson:</b>\n",
+    "reminder_header_final": "🎉 <b>{text}</b>",
+    "fmt_teacher_with": "<i>with {teachers}</i>",
+    "about_title": "📖 About Bot",
+    "about_page_1": "👋 <b>Hi! I'm the Voenmeh Timetable Bot.</b>\n\nMy main task is to make access to the schedule <b>as fast and convenient as possible</b>. I was developed by <a href='https://t.me/ilyan_vas'>@ilyan_vas</a>.\n\nBy the way, the project has its own home — the channel <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a>. There you'll be the first to know about updates, plans and will be able to influence the development. <b>Subscribe!</b>\n\n<b>And now let me show you what I can do!</b>\n\n<i>You can go to the main menu with the /start command.</i>",
+    "about_page_2": "✅ <b>Current schedule always at hand</b>\n\nThe main screen shows the schedule for the selected day. And at the top you will see a <b>dynamic header</b> that will tell you when the next lesson starts or when the break ends.\n\n<i>You can go to the main menu with the /start command.</i>",
+    "about_page_3": "🔍 <b>Smart Search</b>\n\nDon't know where the teacher is or if the classroom you need is free? Use the search function! I can find the schedule for any teacher or classroom on the selected day.\n\n<i>You can go to the main menu with the /start command.</i>",
+    "about_page_4": "🔔 <b>Flexible Notifications</b>\n\nI can send you:\n• Summary for tomorrow (in the evening)\n• Summary for today (in the morning)\n• Reminders for the first lesson and at the beginning of each break.\n\nAll this is configured in the <b>«⚙️ Settings»</b> menu.\n\n<i>You can go to the main menu with the /start command.</i>",
+    "about_page_5": "📲 <b>Inline mode «Share schedule»</b>\n\nIn any dialogue (group chat, stream chat or just friends) just write my name and a request, for example:\n<code>@bstu_timetable_bot O735B tomorrow</code>\n\nI will immediately offer to send a ready-made schedule. Perfect for coordination with classmates!\n\n<i>You can go to the main menu with the /start command.</i>",
+    "about_next": "Next ▶️",
+    "about_back": "◀️ Back",
+    "about_finish": "✅ Got it",
+    "feedback_title": "📝 <b>Feedback</b>",
+    "feedback_enter": "📝 <b>Please write your review, suggestion or bug report.</b>\n\nYou can send text, photo or video. I will forward your message to the administrator.",
+    "feedback_offline": "❌ Unfortunately, the feedback function is temporarily not working.",
+    "feedback_sent": "✅ <b>Thanks! Your review has been sent.</b>\nWe appreciate your help in improving the bot!\n\nP.S. All news and updates we publish in our channel <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a>. Subscribe to stay updated!\n\n<i>You can return to the main menu with the /start command.</i>",
+    "events_title": "🎉 <b>Events</b>",
+    "events_available": "🎉 <b>Events</b> (available: {total})\nPage {page}",
+    "events_today": "Today",
+    "events_week": "Week",
+    "events_all": "All",
+    "events_empty": "No published events yet",
+    "events_not_found": "Event not found",
+    "events_registration": "🔗 Registration/Link",
+    "events_back": "◀️ Back",
+    "about_error_unavailable": "ℹ️ 'About' section is temporarily unavailable due to a network error.\nPlease try again later or visit the channel: https://t.me/voenmeh404",
+    "image_first_lesson": "first lesson",
+    "image_no_lessons": "no lessons",
+    "day_0": "Monday",
+    "day_1": "Tuesday",
+    "day_2": "Wednesday",
+    "day_3": "Thursday",
+    "day_4": "Friday",
+    "day_5": "Saturday",
+    "day_6": "Sunday",
+    "progress_bar_text": "<i>Day progress: {passed}/{total}</i>",
+    "dynamic_header_lesson_end": "Ends at {time}.",
+    "cmd_start": "🚀 Launch bot / Main menu",
+    "cmd_about": "📖 About bot and video instruction",
+    "cmd_feedback": "📝 Feedback / Error",
+    "cmd_events": "🎉 Events",
+    "cmd_admin": "👑 Admin Panel",
+    "week_odd": "Odd Week",
+    "week_even": "Even Week",
+    "image_schedule_header": "Schedule",
+    "image_credits": "Bot developed at",
+    "room_not_specified": "Room not specified"
+}

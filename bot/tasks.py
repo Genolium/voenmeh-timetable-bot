@@ -319,10 +319,11 @@ def send_lesson_reminder_task(
     reminder_type: str,
     break_duration: int | None,
     reminder_time_minutes: int | None = None,
+    lang: str = "ru",
 ):
     async def _inner():
         try:
-            text_to_send = generate_reminder_text(lesson, reminder_type, break_duration, reminder_time_minutes)
+            text_to_send = generate_reminder_text(lesson, reminder_type, break_duration, reminder_time_minutes, lang)
             if text_to_send:
                 await _send_message(user_id, text_to_send)
         except Exception as e:

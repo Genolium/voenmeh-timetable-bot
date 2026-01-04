@@ -229,78 +229,7 @@ class TestRunMetricsServer:
             assert "Prometheus metrics server started" in mock_logging.info.call_args[0][0]
 
 
-class TestSimpleRateLimiter:
-    """Тесты для класса SimpleRateLimiter."""
 
-    def test_simple_rate_limiter_init(self):
-        """Тест инициализации SimpleRateLimiter."""
-        redis_mock = MagicMock()
-        limiter = main.SimpleRateLimiter(max_per_sec=5.0, redis=redis_mock)
-
-        assert limiter._max_per_sec == 5.0
-        assert limiter.redis == redis_mock
-
-    @pytest.mark.asyncio
-    async def test_rate_limiter_no_user(self):
-        """Тест ограничения частоты без пользователя."""
-        redis_mock = AsyncMock()
-        limiter = main.SimpleRateLimiter(redis=redis_mock)
-
-        mock_handler = AsyncMock()
-        mock_event = MagicMock()
-        mock_event.from_user = None
-
-        result = await limiter(mock_handler, mock_event, {})
-
-        # Проверяем, что обработчик был вызван без ограничений
-        mock_handler.assert_called_once_with(mock_event, {})
-        assert result == mock_handler.return_value
-
-    @pytest.mark.asyncio
-    async def test_rate_limiter_success(self):
-        """Тест успешного прохождения ограничения частоты."""
-        redis_mock = AsyncMock()
-        redis_mock.lrange.return_value = []  # Нет предыдущих запросов
-
-        limiter = main.SimpleRateLimiter(redis=redis_mock)
-
-        mock_handler = AsyncMock()
-        mock_event = MagicMock()
-        mock_event.from_user.id = 123456789
-
-        with patch("main.time.monotonic", return_value=1000.0):
-            result = await limiter(mock_handler, mock_event, {})
-
-            # Проверяем, что обработчик был вызван
-            mock_handler.assert_called_once_with(mock_event, {})
-
-            # Проверяем, что время было сохранено в Redis
-            redis_mock.rpush.assert_called_once()
-            redis_mock.expire.assert_called_once_with("rate_limit:123456789", 2)
-
-    @pytest.mark.asyncio
-    async def test_rate_limiter_exceeded(self):
-        """Тест превышения ограничения частоты."""
-        redis_mock = AsyncMock()
-        # Имитируем 10 запросов в секунду
-        redis_mock.lrange.return_value = [str(1000.0 - i * 0.1) for i in range(10)]
-
-        limiter = main.SimpleRateLimiter(max_per_sec=10.0, redis=redis_mock)
-
-        mock_handler = AsyncMock()
-        mock_event = MagicMock()
-        mock_event.from_user.id = 123456789
-        mock_event.answer = AsyncMock()
-
-        with patch("main.time.monotonic", return_value=1000.0):
-            result = await limiter(mock_handler, mock_event, {})
-
-            # Проверяем, что обработчик не был вызван
-            mock_handler.assert_not_called()
-
-            # Проверяем, что пользователю было отправлено сообщение
-            mock_event.answer.assert_called_once()
-            assert "Слишком много запросов" in mock_event.answer.call_args[0][0]
 
 
 class TestErrorHandler:

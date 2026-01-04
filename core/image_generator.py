@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from core.i18n import i18n
+from core.transliteration import transliterate
 
 """Утилиты генерации изображений расписания через Playwright.
 
@@ -80,12 +82,31 @@ def _time_to_minutes(t: str) -> int:
         return 24 * 60 + 59
 
 
-def _prepare_days(schedule_data: dict) -> List[dict]:
-    order = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
+    # Ключи в schedule_data приходят на русском от парсера
+    order_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    
+    # Маппинг для получения локализованного названия
+    day_key_map = {
+        "Понедельник": "day_0",
+        "Вторник": "day_1",
+        "Среда": "day_2",
+        "Четверг": "day_3",
+        "Пятница": "day_4",
+        "Суббота": "day_5",
+        "Воскресенье": "day_6"
+    }
+
     upper = {k.upper(): v for k, v in schedule_data.items()}
     prepared: List[dict] = []
-    for name in order:
-        lessons = upper.get(name.upper(), [])
+    
+    for ru_name in order_ru:
+        lessons = upper.get(ru_name.upper())
+        if lessons is None and ru_name == "Воскресенье":
+            continue # Обычно воскресенье не показываем, если нет пар
+            
+        localized_name = i18n.get(day_key_map[ru_name], lang)
+        
         # Определяем первую пару по минимальному времени (в минутах)
         first = ""
         if lessons:
@@ -93,24 +114,34 @@ def _prepare_days(schedule_data: dict) -> List[dict]:
                 first = sorted(
                     lessons,
                     key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
-                )[
-                    0
-                ].get("start_time_raw", "")
+                )[0].get("start_time_raw", "")
             except Exception:
                 first = ""
+        else:
+            lessons = [] # Гарантируем список
+
         items = []
         for l in lessons:
-            title = f"{l.get('subject', '')}{' (' + l.get('type','') + ')' if l.get('type') else ''}"
-            room_raw = (l.get("room", "") or "").strip("; ")  # Удаляем только точку с запятой и пробелы, сохраняем звездочки
+            subject = l.get('subject', '')
+            lesson_type = l.get('type', '')
+            # Build title with optional type
+            if lesson_type:
+                title_raw = f"{subject} ({lesson_type})"
+            else:
+                title_raw = subject
+            # Transliterate title for non-Russian languages
+            title = transliterate(title_raw, lang)
+            
+            room_raw = (l.get("room", "") or "").strip("; ")
             room_lower = room_raw.lower()
-            # Считаем такие значения отсутствием кабинета
             if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
+                # Room not specified - leave empty (don't show anything)
                 room_fmt = ""
             else:
-                room_fmt = f"{room_raw}"
+                room_fmt = transliterate(room_raw, lang)
             items.append({"title": title, "room": room_fmt, "time": l.get("time", "")})
-        # Добавляем оба ключа для совместимости с тестами и шаблонами: 'name' и 'title'
-        prepared.append({"name": name, "title": name, "firstStart": first, "lessons": items})
+
+        prepared.append({"name": localized_name, "title": localized_name, "firstStart": first, "lessons": items})
     return prepared
 
 
@@ -121,6 +152,7 @@ async def generate_schedule_image(
     output_path: str,
     viewport_size: Optional[Dict[str, int]] = None,
     user_theme: Optional[str] = None,
+    lang: str = "ru",
 ) -> bool:
     """
     Создает широкоформатное изображение расписания, рендеря HTML в headless-браузере.
@@ -210,14 +242,29 @@ async def generate_schedule_image(
         bg_key = _resolve_bg_key(user_theme, week_slug)
         bg_image_data = _bg_images_cache.get(bg_key, "")
 
+        # Prepare I18n strings
+        # Use provided lang or default to 'ru'
+        current_lang = lang if lang else "ru"
+        
+        i18n_week_type = i18n.get("week_odd" if week_slug == "odd" else "week_even", current_lang)
+        i18n_schedule_title = i18n.get("image_schedule_header", current_lang)
+        i18n_credits = i18n.get("image_credits", current_lang)
+        i18n_first_lesson = i18n.get("image_first_lesson", current_lang)
+        i18n_no_lessons = i18n.get("image_no_lessons", current_lang)
+
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
             group=group,
-            schedule_days=_prepare_days(schedule_data),
+            schedule_days=_prepare_days(schedule_data, lang=current_lang),
             bg_image=bg_image_data,
             assets_base=(project_root / "assets").as_uri(),
             user_theme=user_theme,
+            i18n_week_type=i18n_week_type,
+            i18n_schedule_title=i18n_schedule_title,
+            i18n_credits=i18n_credits,
+            i18n_first_lesson=i18n_first_lesson,
+            i18n_no_lessons=i18n_no_lessons,
         )
 
         global async_playwright

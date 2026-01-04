@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Расписание — {{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: {{ group }}</title>
+  <title>Расписание — {{ i18n_week_type }}: {{ group }}</title>
   <style>
     /* --- 1. Подключение шрифтов --- */
     /* Этот блок загружает все шрифты, используемые в дизайне. */
@@ -414,11 +414,11 @@
   <div class="content-wrapper">
     <header class="schedule-header">
       <div>
-        <h1>Расписание</h1>
-        <p>{{ 'Нечётная неделя' if week_slug=='odd' else 'Чётная неделя' }}: <span class="group-name">{{ group }}</span></p>
+        <h1>{{ i18n_schedule_title }}</h1>
+        <p>{{ i18n_week_type }}: <span class="group-name">{{ group }}</span></p>
       </div>
       <div class="bot-credit">
-        <p>Сделано в <span class="group-name">@bstu_timetable_bot</span></p>
+        <p>{{ i18n_credits }} <span class="group-name">@bstu_timetable_bot</span></p>
       </div>
     </header>
     <section class="days-grid">
@@ -426,7 +426,7 @@
       <article class="day-card">
         <div class="badge-first-lesson {% if not day.lessons %}hidden{% endif %}">
           <div class="badge-time">{{ day.firstStart }}</div>
-          <div class="badge-text">первая пара</div>
+          <div class="badge-text">{{ i18n_first_lesson }}</div>
         </div>
         <div>
             <h2 class="day-title">{{ day.name }}</h2>
@@ -442,7 +442,7 @@
               </div>
             {% else %}
               <p class="holiday-text">
-                Выходной, пар нет
+                {{ i18n_no_lessons }}
               </p>
             {% endif %}
         </div>
