@@ -173,7 +173,7 @@
 
     /* Задаём фон, основной шрифт*/
     body {
-      font-family: 'Segoe UI', sans-serif;
+      font-family: {{ font_family_body }};
       background-color: var(--color-bg);
       background-image: url('{{ bg_image }}');
       background-position: center;
@@ -208,7 +208,7 @@
       align-items: flex-end;
     }
     .schedule-header h1 {
-      font-family: 'Saira', sans-serif;
+      font-family: {{ font_family_header }};
       font-weight: 600;
       font-size: 15.5rem;
       line-height: 1.1;

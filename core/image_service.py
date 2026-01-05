@@ -84,7 +84,7 @@ class ImageService:
                 await self.cache_manager.invalidate_cache(cache_key)
             else:
                 if user_id:
-                    send_success = await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption)
+                    send_success = await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption, lang=lang)
                     if not send_success:
                         logger.warning(f"⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
@@ -102,7 +102,7 @@ class ImageService:
         )
 
         if success and user_id:
-            await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption)
+            await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption, lang=lang)
 
         return success, file_path
 
@@ -247,6 +247,7 @@ class ImageService:
         user_id: int,
         placeholder_msg_id: Optional[int],
         final_caption: Optional[str],
+        lang: str = "ru",
     ) -> bool:
         """
         Отправляет изображение пользователю.
@@ -286,14 +287,19 @@ class ImageService:
             photo = FSInputFile(safe_image_path)
 
             # Клавиатура: оригинал файла + назад (в одном сообщении)
+            from core.i18n import i18n
+
+            btn_original_text = i18n.get("btn_original", lang=lang)
+            btn_back_text = i18n.get("btn_back", lang=lang)
+
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="📄 Оригинал (файл)",
+                            text=btn_original_text,
                             callback_data="send_original_file",
                         ),
-                        InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img"),
+                        InlineKeyboardButton(text=btn_back_text, callback_data="back_to_day_img"),
                     ]
                 ]
             )

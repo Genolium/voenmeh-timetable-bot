@@ -92,22 +92,42 @@ def setup_logging() -> TelemetryHandles | None:
 
 
 async def set_bot_commands(bot: Bot):
-    """Устанавливает меню команд для пользователей и администраторов."""
-    user_commands = [
-        BotCommand(command="start", description="🤖 Главное меню"),
-        BotCommand(command="about", description="📒 О боте"),
-        BotCommand(command="feedback", description="🤝 Обратная связь"),
-        BotCommand(command="events", description="🎉 Мероприятия"),
-    ]
-    try:
-        await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-        logging.info("Установлены стандартные команды для всех пользователей.")
-    except Exception as e:
-        logging.error(f"Не удалось установить стандартные команды: {e}")
-        return
+    """Устанавливает меню команд для пользователей и администраторов на разных языках."""
+    from core.i18n import i18n
+    
+    # Supported languages
+    languages = ["ru", "en", "zh"]
+    default_lang = "ru"
+
+    for lang in languages:
+        user_commands = [
+            BotCommand(command="start", description=i18n.get("cmd_start_desc", lang=lang)),
+            BotCommand(command="about", description=i18n.get("cmd_about_desc", lang=lang)),
+            BotCommand(command="feedback", description=i18n.get("cmd_feedback_desc", lang=lang)),
+            BotCommand(command="events", description=i18n.get("cmd_events_desc", lang=lang)),
+        ]
+        
+        try:
+            # Установка команд для конкретного языка
+            await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault(), language_code=lang)
+            
+            # Если это дефолтный язык, устанавливаем его как fallback (без language_code)
+            if lang == default_lang:
+                await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+                logging.info(f"Установлены стандартные команды (fallback и {lang}).")
+        except Exception as e:
+            logging.error(f"Не удалось установить команды для языка {lang}: {e}")
 
     if ADMIN_IDS:
-        admin_commands = user_commands + [BotCommand(command="admin", description="👑 Админ-панель")]
+        # Для админов используем дефолтный язык (ru)
+        lang = default_lang
+        admin_commands = [
+            BotCommand(command="start", description=i18n.get("cmd_start_desc", lang=lang)),
+            BotCommand(command="about", description=i18n.get("cmd_about_desc", lang=lang)),
+            BotCommand(command="feedback", description=i18n.get("cmd_feedback_desc", lang=lang)),
+            BotCommand(command="events", description=i18n.get("cmd_events_desc", lang=lang)),
+            BotCommand(command="admin", description=i18n.get("cmd_admin_desc", lang=lang)),
+        ]
         for admin_id in ADMIN_IDS:
             try:
                 await bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(chat_id=admin_id))
@@ -267,8 +287,8 @@ async def main():
     dp.update.middleware(ActivityLoggingMiddleware())  # Middleware для логирования активности пользователей
     dp.update.middleware(LoggingMiddleware())  # Middleware для сбора метрик и логов
     # Автоочистка чатов полностью отключена
-    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд
     dp.update.middleware(I18nMiddleware())  # Интернационализация (после UserData!)
+    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд
     dp.update.middleware(
         lambda handler, event, data: handler(
             event,

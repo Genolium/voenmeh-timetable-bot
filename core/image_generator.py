@@ -252,6 +252,16 @@ async def generate_schedule_image(
         i18n_first_lesson = i18n.get("image_first_lesson", current_lang)
         i18n_no_lessons = i18n.get("image_no_lessons", current_lang)
 
+        # Font selection logic
+        if current_lang == "zh":
+            # Use Noto Sans CJK SC (system installed) for Chinese
+            font_family_body = "'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif"
+            font_family_header = "'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif"
+        else:
+            # Default fonts (loaded from assets)
+            font_family_body = "'Segoe UI', sans-serif"
+            font_family_header = "'Saira', sans-serif"
+
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
@@ -265,6 +275,8 @@ async def generate_schedule_image(
             i18n_credits=i18n_credits,
             i18n_first_lesson=i18n_first_lesson,
             i18n_no_lessons=i18n_no_lessons,
+            font_family_body=font_family_body,
+            font_family_header=font_family_header,
         )
 
         global async_playwright

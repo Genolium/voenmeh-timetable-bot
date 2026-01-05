@@ -107,17 +107,24 @@ class RateLimitMiddleware(BaseMiddleware):
             logger.warning(f"Rate limit check failed: {e}")
             return False  # При ошибках пропускаем
     
-    async def _notify_user(self, update: Update) -> None:
+    async def _notify_user(self, update: Update, data: Dict[str, Any]) -> None:
         """Уведомляет пользователя о превышении лимита."""
         try:
+            i18n = data.get("i18n")
+            lang = data.get("lang", "ru")
+            
+            message_text = "⚠️ Слишком много запросов. Подождите немного."
+            if i18n:
+                message_text = i18n.get("rate_limit_error", lang=lang)
+            
             if update.callback_query:
                 await update.callback_query.answer(
-                    "⚠️ Слишком много запросов. Подождите немного.",
+                    message_text,
                     show_alert=True,
                 )
             elif update.message:
                 await update.message.answer(
-                    "⚠️ Слишком много запросов. Подождите немного.",
+                    message_text,
                 )
         except Exception:
             pass
@@ -145,7 +152,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 pass
             
             logger.debug(f"Rate limited user {user_id} for {event_type}")
-            await self._notify_user(event)
+            await self._notify_user(event, data)
             return None
         
         return await handler(event, data)

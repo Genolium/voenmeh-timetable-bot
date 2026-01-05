@@ -264,6 +264,12 @@
     "week_odd": "单周",
     "week_even": "双周",
     "image_schedule_header": "课程表",
-    "image_credits": "机器人开发在",
-    "room_not_specified": "未指定教室"
+    "image_credits": "Bot developed at",
+    "room_not_specified": "Room not specified",
+    "menu_btn_theme": "🎨 主题: {theme}",
+    "cmd_start_desc": "🤖 主菜单",
+    "cmd_about_desc": "📒 关于机器人",
+    "cmd_feedback_desc": "🤝 反馈",
+    "cmd_events_desc": "🎉 活动",
+    "cmd_admin_desc": "👑 管理面板"
 }

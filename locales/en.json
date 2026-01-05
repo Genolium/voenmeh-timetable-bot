@@ -266,5 +266,13 @@
     "week_even": "Even Week",
     "image_schedule_header": "Schedule",
     "image_credits": "Bot developed at",
-    "room_not_specified": "Room not specified"
+    "room_not_specified": "Room not specified",
+    "theme_changed_success": "✅ Theme changed to {theme}!",
+    "menu_btn_theme": "🎨 Theme: {theme}",
+    "rate_limit_error": "⚠️ Too many requests. Please wait a bit.",
+    "cmd_start_desc": "🤖 Main Menu",
+    "cmd_about_desc": "📒 About Bot",
+    "cmd_feedback_desc": "🤝 Feedback",
+    "cmd_events_desc": "🎉 Events",
+    "cmd_admin_desc": "👑 Admin Panel"
 }

@@ -292,7 +292,8 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         }
 
     week_key, week_name_full = week_info
-    week_name = week_name_full.split(" ")[0]
+    # Localize week name using key (week_odd / week_even)
+    week_name = _(f"week_{week_key}")
 
     # Даты недели
     days_since_monday = current_date.weekday()
@@ -432,10 +433,19 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             user_theme_for_original = await udm.get_user_theme(callback.from_user.id)
     except Exception:
         user_theme_for_original = None
+    # Get user language for correct cache key (must match image_service.py format)
+    lang = "ru"
+    try:
+        udm = manager.middleware_data.get("user_data_manager")
+        if udm and callback.from_user:
+            lang = await udm.get_user_language(callback.from_user.id) or "ru"
+    except Exception:
+        pass
+
     if user_theme_for_original and user_theme_for_original != "standard":
-        cache_key = f"{group}_{week_key}_{user_theme_for_original}"
+        cache_key = f"{group}_{week_key}_{user_theme_for_original}_{lang}"
     else:
-        cache_key = f"{group}_{week_key}"
+        cache_key = f"{group}_{week_key}_{lang}"
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
     # Проверка подписки на канал, если настроено
@@ -547,7 +557,16 @@ async def on_find_click(callback: CallbackQuery, button: Button, manager: Dialog
 
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
-    _ = manager.middleware_data.get("_", lambda k, **kw: i18n.get(k, k))
+    # Force fetch language from DB
+    try:
+        user_data_manager = manager.middleware_data.get("user_data_manager")
+        user_id = callback.from_user.id
+        user_lang = await user_data_manager.get_user_language(user_id) or "ru"
+    except Exception:
+        user_lang = "ru"
+
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
     
     await callback.answer(_("news_toast"))
     await callback.message.answer(

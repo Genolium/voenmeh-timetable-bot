@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libexpat1 \
     libfreetype6 \
     fonts-liberation \
+    fonts-noto-cjk \
     # PostgreSQL development пакеты для psycopg2
     libpq-dev \
     postgresql-client \

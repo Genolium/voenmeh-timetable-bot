@@ -266,5 +266,13 @@
     "week_even": "Чётная неделя",
     "image_schedule_header": "Расписание",
     "image_credits": "Бот разработан в",
-    "room_not_specified": "Кабинет не указан"
+    "room_not_specified": "Кабинет не указан",
+    "theme_changed_success": "✅ Тема изменена на {theme}!",
+    "menu_btn_theme": "🎨 Тема: {theme}",
+    "rate_limit_error": "⚠️ Слишком много запросов. Подождите немного.",
+    "cmd_start_desc": "🤖 Главное меню",
+    "cmd_about_desc": "📒 О боте",
+    "cmd_feedback_desc": "🤝 Обратная связь",
+    "cmd_events_desc": "🎉 Мероприятия",
+    "cmd_admin_desc": "👑 Админ-панель"
 }

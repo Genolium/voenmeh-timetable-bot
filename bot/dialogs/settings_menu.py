@@ -38,7 +38,8 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
 
     reminders_status = settings.get(WidgetIds.LESSON_REMINDERS.value, False)
     reminder_time = settings.get("reminder_time_minutes", 60)
-    current_theme = settings.get("theme", "standard")
+    # Normalize theme ID
+    current_theme = str(settings.get("theme", "standard")).lower()
 
     # Определяем названия тем с эмодзи из локалей
     themes_info = {
@@ -49,7 +50,11 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "coffee": _("theme_coffee_name"),
     }
 
-    current_theme_name = themes_info.get(current_theme, _("theme_standard_name"))
+    # Безопасное получение имени темы
+    current_theme_name = themes_info.get(current_theme)
+    if not current_theme_name:
+        # Если тема не найдена (например старая база), используем стандартную
+        current_theme_name = _("theme_standard_name")
     
     language_map = {
         "ru": _("lang_ru"),
@@ -105,7 +110,9 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "theme_btn_check": _("theme_btn_check"),
         "theme_select_title": _("theme_select_title"),
         "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
+        "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
         "theme_available_label": _("theme_available_label"),
+        "theme_button_text": _("menu_btn_theme", theme=current_theme_name),
     }
 
 
@@ -299,7 +306,14 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
 
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Открывает канал с новостями разработки"""
-    user_lang = manager.middleware_data.get("i18n_lang", "ru")
+    # Force fetch language from DB to ensure correct localization even if middleware is stale
+    try:
+        user_data_manager = manager.middleware_data.get("user_data_manager")
+        user_id = callback.from_user.id
+        user_lang = await user_data_manager.get_user_language(user_id) or "ru"
+    except Exception:
+        user_lang = manager.middleware_data.get("i18n_lang", "ru")
+
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     await callback.answer(_("news_toast"))
     await callback.message.answer(
@@ -340,7 +354,7 @@ settings_dialog = Dialog(
         ),
         Format("{reminder_time_text}", when="are_reminders_enabled"),
         Button(
-            Format("🎨 Тема: {current_theme_name}"),
+            Format("{theme_button_text}"),
             id="theme_btn",
             on_click=on_theme_button_click,
         ),

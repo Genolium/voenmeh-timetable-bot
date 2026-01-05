@@ -7,6 +7,7 @@ from aiogram_dialog.widgets.text import Const, Format, Jinja
 from bot.tasks import check_theme_subscription_task
 from core.config import SUBSCRIPTION_CHANNEL
 from core.user_data import UserDataManager
+from core.i18n import i18n
 
 from .constants import WidgetIds
 from .states import SettingsMenu
@@ -16,19 +17,25 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     """Получает данные о текущей теме пользователя."""
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
-    current_theme = await user_data_manager.get_user_theme(user_id)
+    # Получаем язык пользователя
+    user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
     # Определяем названия тем с эмодзи
     themes_info = {
-        "standard": (
-            "🎨 Стандартная",
-            "красная для нечётных недель, фиолетовая для чётных",
-        ),
-        "light": ("☀️ Светлая", "бирюзовая тема с кремовыми карточками"),
-        "dark": ("🌙 Тёмная", "тёмная тема с фиолетовыми акцентами"),
-        "classic": ("📜 Классическая", "тёмно-синяя тема в цветовой гамме Военмеха"),
-        "coffee": ("☕ Кофейная", "коричнево-золотая тема с кремовыми карточками"),
+        "standard": (_("theme_standard_name"), _("theme_standard_desc")),
+        "light": (_("theme_light_name"), _("theme_light_desc")),
+        "dark": (_("theme_dark_name"), _("theme_dark_desc")),
+        "classic": (_("theme_classic_name"), _("theme_classic_desc")),
+        "coffee": (_("theme_coffee_name"), _("theme_coffee_desc")),
     }
+
+    current_theme_key = themes_info.get(current_theme)
+    if not current_theme_key:
+        current_theme_name = _("theme_standard_name")
+        current_theme_desc = _("theme_standard_desc")
+    else:
+        current_theme_name, current_theme_desc = current_theme_key
 
     # Создаем список тем с информацией о текущей выбранной
     themes = []
@@ -50,15 +57,16 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
         return {}
 
     return {
-        "current_theme": themes_info.get(
-            current_theme,
-            (
-                "🎨 Стандартная",
-                "оранжево-красная для нечётных недель, фиолетовая для чётных",
-            ),
-        )[0],
+        "current_theme": current_theme_name,
         "themes": themes,
         "is_subscribed": is_subscribed,
+        # Localized UI strings
+        "theme_gate_title": _("theme_gate_title"),
+        "theme_select_title": _("theme_select_title"),
+        "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
+        "theme_available_label": _("theme_available_label"),
+        "theme_btn_check": _("theme_btn_check"),
+        "btn_back": _("btn_back"),
     }
 
 
@@ -113,18 +121,25 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
 
     await user_data_manager.set_user_theme(user_id, item_id)
 
-    # Получаем информацию о выбранной теме
-    themes_info = {
-        "standard": "🎨 Стандартная",
-        "light": "☀️ Светлая",
-        "dark": "🌙 Тёмная",
-        "classic": "📜 Классическая",
-        "coffee": "☕ Кофейная",
+    # Получаем информацию о выбранной теме (локализованную)
+    # Здесь нам нужен язык пользователя, так как мы не в геттере
+    # Получим его заново или возьмем дефолт, т.к. middleware_data может не иметь 'lang' в хендлере если это не прокинуто явно
+    # Однако, UserDataMiddleware выполняется до хендлера, но i18n хелпер внутри геттеров
+    # Проще всего достать язык из БД снова или использовать дефолт EN/RU по факту
+    user_lang = await user_data_manager.get_user_language(user_id) or "ru"
+    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
+
+    themes_info_names = {
+        "standard": _("theme_standard_name"),
+        "light": _("theme_light_name"),
+        "dark": _("theme_dark_name"),
+        "classic": _("theme_classic_name"),
+        "coffee": _("theme_coffee_name"),
     }
 
-    theme_name = themes_info.get(item_id, "🎨 Стандартная")
+    theme_name = themes_info_names.get(item_id, _("theme_standard_name"))
 
-    await callback.answer(f"✅ Тема изменена на {theme_name}!")
+    await callback.answer(_("theme_changed_success", theme=theme_name) if i18n.get("theme_changed_success") else f"✅ {theme_name}")
     await manager.switch_to(SettingsMenu.main)
 
 
@@ -148,35 +163,26 @@ async def on_check_subscription(callback: CallbackQuery, button: Button, manager
 theme_dialog = Dialog(
     # Окно с блокировкой доступа (если не подписан)
     Window(
-        Const(
-            "🎨 <b>Доступ к персональным темам</b>\n\n"
-            "Выберите уникальную тему для вашего расписания:\n\n"
-            "🎨 <b>Стандартная</b> - красная для нечётных, фиолетовая для чётных недель\n"
-            "☀️ <b>Светлая</b> - бирюзовая тема с кремовыми карточками\n"
-            "🌙 <b>Тёмная</b> - тёмная тема с фиолетовыми акцентами\n"
-            "📜 <b>Классическая</b> - тёмно-синяя тема с белыми карточками\n"
-            "☕ <b>Кофейная</b> - коричнево-золотая тема с кремовыми карточками\n\n"
-            "<i>Доступно только по подписке на канал разработки</i>"
-        ),
+        Format("{theme_gate_title}"),
         Button(
-            Const("✅ Проверить подписку"),
+            Format("{theme_btn_check}"),
             id="check_subscription",
             on_click=on_check_subscription,
         ),
-        Back(Const("◀️ Назад"), on_click=on_back_to_settings),
+        Back(Format("{btn_back}"), on_click=on_back_to_settings),
         state=SettingsMenu.theme_subscription_gate,
         parse_mode="HTML",
     ),
     # Окно с выбором темы (если подписан)
     Window(
-        Const("🎨 <b>Выбор темы оформления</b>\n\n" "Выберите тему для вашего расписания:\n"),
-        Format("Текущая тема: <b>{current_theme}</b>\n"),
-        Const("\n📋 <i>Доступные темы:</i>\n"),
+        Format("{theme_select_title}"),
+        Format("{theme_current_fmt}"),
+        Format("{theme_available_label}"),
         # Список тем для выбора
         Select(
             Jinja(
                 "{% if item.is_current %}"
-                "✅ <b>{{ item.name }}</b> (текущая)\n"
+                "✅ <b>{{ item.name }}</b> (current)\n"
                 "<i>{{ item.description }}</i>\n\n"
                 "{% else %}"
                 "🔘 {{ item.name }}\n"
@@ -188,7 +194,7 @@ theme_dialog = Dialog(
             items="themes",
             on_click=on_theme_selected,
         ),
-        Back(Const("◀️ Назад"), on_click=on_back_to_settings),
+        Back(Format("{btn_back}"), on_click=on_back_to_settings),
         state=SettingsMenu.choose_theme,
         getter=get_theme_data,
         parse_mode="HTML",
