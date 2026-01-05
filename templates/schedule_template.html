@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="ru">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -8,180 +9,374 @@
     /* --- 1. Подключение шрифтов --- */
     /* Этот блок загружает все шрифты, используемые в дизайне. */
     /* font-display: swap; нужен для того, чтобы текст был виден сразу, не дожидаясь загрузки кастомного шрифта. */
-    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
-    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
-    @font-face { font-family: 'Segoe UI'; src: url('{{ assets_base }}/fonts/SegoeUI-Light.ttf') format('truetype'); font-weight: 300; font-style: normal; font-display: swap; }
-    @font-face { font-family: 'Saira'; src: url('{{ assets_base }}/fonts/Saira.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+    @font-face {
+      font-family: 'Segoe UI';
+      src: url('{{ assets_base }}/fonts/SegoeUI.ttf') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'Segoe UI';
+      src: url('{{ assets_base }}/fonts/SegoeUI-Bold.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'Segoe UI';
+      src: url('{{ assets_base }}/fonts/SegoeUI-Light.ttf') format('truetype');
+      font-weight: 300;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'Saira';
+      src: url('{{ assets_base }}/fonts/Saira.ttf') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
 
     /* --- 2. Глобальные переменные и цветовая схема (Темизация) --- */
     /* :root — это корневой элемент документа. Здесь мы объявляем CSS-переменные для удобного управления цветами. */
     :root {
       /* 🎨 СТАНДАРТНАЯ тема (из переменных Figma) */
-      --standard-odd-bg: #ff2f00;         /* Orange */
-      --standard-odd-accent: #ff2f00;     /* Orange */
-      --standard-odd-badge-bg: #ff656f;   /* Vibe Red */
-      --standard-odd-card-bg: #fffffe;    /* White */
-      --standard-even-bg: #6555f0;        /* Purple */
-      --standard-even-accent: #6555f0;    /* Purple */
-      --standard-even-badge-bg: #776aef;  /* Vibe Purple */
-      --standard-even-card-bg: #fffffe;   /* White */
+      --standard-odd-bg: #ff2f00;
+      /* Orange */
+      --standard-odd-accent: #ff2f00;
+      /* Orange */
+      --standard-odd-badge-bg: #ff656f;
+      /* Vibe Red */
+      --standard-odd-card-bg: #fffffe;
+      /* White */
+      --standard-even-bg: #6555f0;
+      /* Purple */
+      --standard-even-accent: #6555f0;
+      /* Purple */
+      --standard-even-badge-bg: #776aef;
+      /* Vibe Purple */
+      --standard-even-card-bg: #fffffe;
+      /* White */
 
       /* ☀️ СВЕТЛАЯ тема (из переменных Figma) */
-      --light-odd-bg: #078080;            /* Emerald */
-      --light-odd-accent: #078080;        /* Emerald */
-      --light-odd-badge-bg: #078080;      /* Emerald */
-      --light-odd-card-bg: #f9f5f2;       /* Semi Light Blue */
-      --light-even-bg: #078080;           /* Emerald */
-      --light-even-accent: #078080;       /* Emerald */
-      --light-even-badge-bg: #078080;     /* Emerald */
-      --light-even-card-bg: #f9f5f2;      /* Semi Light Blue */
+      --light-odd-bg: #078080;
+      /* Emerald */
+      --light-odd-accent: #078080;
+      /* Emerald */
+      --light-odd-badge-bg: #078080;
+      /* Emerald */
+      --light-odd-card-bg: #f9f5f2;
+      /* Semi Light Blue */
+      --light-even-bg: #078080;
+      /* Emerald */
+      --light-even-accent: #078080;
+      /* Emerald */
+      --light-even-badge-bg: #078080;
+      /* Emerald */
+      --light-even-card-bg: #f9f5f2;
+      /* Semi Light Blue */
 
       /* 🌙 ТЁМНАЯ тема (из переменных Figma) */
-      --dark-odd-bg: #020826;             /* Deep Dark Blue */
-      --dark-odd-accent: #6555f0;         /* Purple */
-      --dark-odd-badge-bg: #fffffe;       /* White */
-      --dark-odd-card-bg: #16161a;        /* Dark Grey */
-      --dark-even-bg: #020826;            /* Deep Dark Blue */
-      --dark-even-accent: #6555f0;        /* Purple */
-      --dark-even-badge-bg: #fffffe;      /* White */
-      --dark-even-card-bg: #16161a;       /* Dark Grey */
+      --dark-odd-bg: #020826;
+      /* Deep Dark Blue */
+      --dark-odd-accent: #6555f0;
+      /* Purple */
+      --dark-odd-badge-bg: #fffffe;
+      /* White */
+      --dark-odd-card-bg: #16161a;
+      /* Dark Grey */
+      --dark-even-bg: #020826;
+      /* Deep Dark Blue */
+      --dark-even-accent: #6555f0;
+      /* Purple */
+      --dark-even-badge-bg: #fffffe;
+      /* White */
+      --dark-even-card-bg: #16161a;
+      /* Dark Grey */
 
       /* 📜 КЛАССИЧЕСКАЯ тема (из переменных Figma) */
-      --classic-odd-bg: #243c6a;          /* Deep Blue */
-      --classic-odd-accent: #243c6a;      /* Deep Blue */
-      --classic-odd-badge-bg: #ffffff;    /* White */
-      --classic-odd-card-bg: #37486e;     /* Blue */
-      --classic-even-bg: #243c6a;         /* Deep Blue */
-      --classic-even-accent: #243c6a;     /* Deep Blue */
-      --classic-even-badge-bg: #ffffff;   /* White */
-      --classic-even-card-bg: #37486e;    /* Blue */
+      --classic-odd-bg: #243c6a;
+      /* Deep Blue */
+      --classic-odd-accent: #243c6a;
+      /* Deep Blue */
+      --classic-odd-badge-bg: #ffffff;
+      /* White */
+      --classic-odd-card-bg: #37486e;
+      /* Blue */
+      --classic-even-bg: #243c6a;
+      /* Deep Blue */
+      --classic-even-accent: #243c6a;
+      /* Deep Blue */
+      --classic-even-badge-bg: #ffffff;
+      /* White */
+      --classic-even-card-bg: #37486e;
+      /* Blue */
 
       /* ☕ КОФЕЙНАЯ тема (из переменных Figma) */
-      --coffee-odd-bg: #8c7851;           /* Light Coffee */
-      --coffee-odd-accent: #8c7851;       /* Light Coffee */
-      --coffee-odd-badge-bg: #8c7851;     /* Light Coffee */
-      --coffee-odd-card-bg: #eaddcf;      /* Coffee BG */
-      --coffee-even-bg: #8c7851;          /* Light Coffee */
-      --coffee-even-accent: #8c7851;      /* Light Coffee */
-      --coffee-even-badge-bg: #8c7851;    /* Light Coffee */
-      --coffee-even-card-bg: #eaddcf;     /* Coffee BG */
+      --coffee-odd-bg: #8c7851;
+      /* Light Coffee */
+      --coffee-odd-accent: #8c7851;
+      /* Light Coffee */
+      --coffee-odd-badge-bg: #8c7851;
+      /* Light Coffee */
+      --coffee-odd-card-bg: #eaddcf;
+      /* Coffee BG */
+      --coffee-even-bg: #8c7851;
+      /* Light Coffee */
+      --coffee-even-accent: #8c7851;
+      /* Light Coffee */
+      --coffee-even-badge-bg: #8c7851;
+      /* Light Coffee */
+      --coffee-even-card-bg: #eaddcf;
+      /* Coffee BG */
 
       /* Дополнительные текстовые переменные по темам */
       /* STANDARD: заголовки и текст на белом фоне */
-      --standard-text-main: #fffffe;      /* White - header text */
-      --standard-text-light: #fffffe;     /* White - subtitle */
-      --standard-card-text: #000000;      /* Black - lesson title */
-      --standard-card-text-light: #323232; /* Gray - lesson time */
-      --standard-odd-card-accent: #ff2f00;    /* Orange - room number ODD */
-      --standard-odd-card-day-title: #ff2f00; /* Orange - day title ODD */
-      --standard-even-card-accent: #6555f0;   /* Purple - room number EVEN */
-      --standard-even-card-day-title: #6555f0; /* Purple - day title EVEN */
-      --standard-badge-time: #fffffe;     /* White - badge time text */
-      
+      --standard-text-main: #fffffe;
+      /* White - header text */
+      --standard-text-light: #fffffe;
+      /* White - subtitle */
+      --standard-card-text: #000000;
+      /* Black - lesson title */
+      --standard-card-text-light: #323232;
+      /* Gray - lesson time */
+      --standard-odd-card-accent: #ff2f00;
+      /* Orange - room number ODD */
+      --standard-odd-card-day-title: #ff2f00;
+      /* Orange - day title ODD */
+      --standard-even-card-accent: #6555f0;
+      /* Purple - room number EVEN */
+      --standard-even-card-day-title: #6555f0;
+      /* Purple - day title EVEN */
+      --standard-badge-time: #fffffe;
+      /* White - badge time text */
+
       /* LIGHT: тёмный текст на светлом фоне */
-      --light-text-main: #232323;         /* Dark Grey 2 - header text */
-      --light-text-light: #232323;        /* Dark Grey 2 - subtitle */
-      --light-card-text: #323232;         /* Light Grey - lesson title */
-      --light-card-text-light: #323232;   /* Light Grey - lesson time */
-      --light-odd-card-accent: #ff2f00;       /* Orange - room number */
-      --light-odd-card-day-title: #078080;    /* Emerald - day title */
-      --light-even-card-accent: #ff2f00;      /* Orange - room number */
-      --light-even-card-day-title: #078080;   /* Emerald - day title */
-      --light-badge-time: #fffffe;        /* White - badge time text */
-      
+      --light-text-main: #232323;
+      /* Dark Grey 2 - header text */
+      --light-text-light: #232323;
+      /* Dark Grey 2 - subtitle */
+      --light-card-text: #323232;
+      /* Light Grey - lesson title */
+      --light-card-text-light: #323232;
+      /* Light Grey - lesson time */
+      --light-odd-card-accent: #ff2f00;
+      /* Orange - room number */
+      --light-odd-card-day-title: #078080;
+      /* Emerald - day title */
+      --light-even-card-accent: #ff2f00;
+      /* Orange - room number */
+      --light-even-card-day-title: #078080;
+      /* Emerald - day title */
+      --light-badge-time: #fffffe;
+      /* White - badge time text */
+
       /* DARK: белый текст на тёмном фоне */
-      --dark-text-main: #fffffe;          /* White - header text */
-      --dark-text-light: #fffffe;         /* White - subtitle */
-      --dark-card-text: #fffffe;          /* White - lesson title */
-      --dark-card-text-light: #e1e5ea;    /* Light Grey 2 - lesson time */
-      --dark-odd-card-accent: #776aef;        /* Vibe Purple - room number */
-      --dark-odd-card-day-title: #fffffe;     /* White - day title */
-      --dark-even-card-accent: #776aef;       /* Vibe Purple - room number */
-      --dark-even-card-day-title: #fffffe;    /* White - day title */
-      --dark-badge-time: #16161a;         /* Dark Grey - badge time text */
-      
+      --dark-text-main: #fffffe;
+      /* White - header text */
+      --dark-text-light: #fffffe;
+      /* White - subtitle */
+      --dark-card-text: #fffffe;
+      /* White - lesson title */
+      --dark-card-text-light: #e1e5ea;
+      /* Light Grey 2 - lesson time */
+      --dark-odd-card-accent: #776aef;
+      /* Vibe Purple - room number */
+      --dark-odd-card-day-title: #fffffe;
+      /* White - day title */
+      --dark-even-card-accent: #776aef;
+      /* Vibe Purple - room number */
+      --dark-even-card-day-title: #fffffe;
+      /* White - day title */
+      --dark-badge-time: #16161a;
+      /* Dark Grey - badge time text */
+
       /* CLASSIC: белый текст на синем фоне */
-      --classic-text-main: #fffffe;       /* White - header text */
-      --classic-text-light: #fffffe;      /* White - subtitle */
-      --classic-card-text: #fffffe;       /* White - lesson title */
-      --classic-card-text-light: #fffffe; /* White - lesson time */
-      --classic-odd-card-accent: #fffffe;     /* White - room number */
-      --classic-odd-card-day-title: #fffffe;  /* White - day title */
-      --classic-even-card-accent: #fffffe;    /* White - room number */
-      --classic-even-card-day-title: #fffffe; /* White - day title */
-      --classic-badge-time: #243c6a;      /* Deep Blue - badge time text */
-      
+      --classic-text-main: #fffffe;
+      /* White - header text */
+      --classic-text-light: #fffffe;
+      /* White - subtitle */
+      --classic-card-text: #fffffe;
+      /* White - lesson title */
+      --classic-card-text-light: #fffffe;
+      /* White - lesson time */
+      --classic-odd-card-accent: #fffffe;
+      /* White - room number */
+      --classic-odd-card-day-title: #fffffe;
+      /* White - day title */
+      --classic-even-card-accent: #fffffe;
+      /* White - room number */
+      --classic-even-card-day-title: #fffffe;
+      /* White - day title */
+      --classic-badge-time: #243c6a;
+      /* Deep Blue - badge time text */
+
       /* COFFEE: кофейные оттенки на светлом фоне */
-      --coffee-text-main: #020826;        /* Deep Dark Blue - header text */
-      --coffee-text-light: #020826;       /* Deep Dark Blue - subtitle */
-      --coffee-card-text: #716040;        /* Coffee - lesson title */
-      --coffee-card-text-light: #716040;  /* Coffee - lesson time */
-      --coffee-odd-card-accent: #8c7851;      /* Light Coffee - room number */
-      --coffee-odd-card-day-title: #392e19;   /* Dark Coffee - day title */
-      --coffee-even-card-accent: #8c7851;     /* Light Coffee - room number */
-      --coffee-even-card-day-title: #392e19;  /* Dark Coffee - day title */
-      --coffee-badge-time: #fffffe;       /* White - badge time text */
+      --coffee-text-main: #020826;
+      /* Deep Dark Blue - header text */
+      --coffee-text-light: #020826;
+      /* Deep Dark Blue - subtitle */
+      --coffee-card-text: #716040;
+      /* Coffee - lesson title */
+      --coffee-card-text-light: #716040;
+      /* Coffee - lesson time */
+      --coffee-odd-card-accent: #8c7851;
+      /* Light Coffee - room number */
+      --coffee-odd-card-day-title: #392e19;
+      /* Dark Coffee - day title */
+      --coffee-even-card-accent: #8c7851;
+      /* Light Coffee - room number */
+      --coffee-even-card-day-title: #392e19;
+      /* Dark Coffee - day title */
+      --coffee-badge-time: #fffffe;
+      /* White - badge time text */
 
       /* Выбор темы на основе пользовательской настройки */
-      {% set theme_prefix = user_theme if user_theme else 'standard' %}
-      {% set odd_bg = theme_prefix + '-odd-bg' %}
-      {% set odd_accent = theme_prefix + '-odd-accent' %}
-      {% set odd_badge = theme_prefix + '-odd-badge-bg' %}
-      {% set odd_card_bg = theme_prefix + '-odd-card-bg' %}
-      {% set even_bg = theme_prefix + '-even-bg' %}
-      {% set even_accent = theme_prefix + '-even-accent' %}
-      {% set even_badge = theme_prefix + '-even-badge-bg' %}
-      {% set even_card_bg = theme_prefix + '-even-card-bg' %}
-      {% set text_main_key = theme_prefix + '-text-main' %}
-      {% set text_light_key = theme_prefix + '-text-light' %}
-      {% set card_text_key = theme_prefix + '-card-text' %}
-      {% set card_text_light_key = theme_prefix + '-card-text-light' %}
-      {% set odd_card_accent_key = theme_prefix + '-odd-card-accent' %}
-      {% set even_card_accent_key = theme_prefix + '-even-card-accent' %}
-      {% set odd_card_day_title_key = theme_prefix + '-odd-card-day-title' %}
-      {% set even_card_day_title_key = theme_prefix + '-even-card-day-title' %}
-      {% set badge_time_key = theme_prefix + '-badge-time' %}
+        {% set theme_prefix=user_theme if user_theme else 'standard' %}
+
+        {% set odd_bg=theme_prefix+'-odd-bg' %}
+
+        {% set odd_accent=theme_prefix+'-odd-accent' %}
+
+        {% set odd_badge=theme_prefix+'-odd-badge-bg' %}
+
+        {% set odd_card_bg=theme_prefix+'-odd-card-bg' %}
+
+        {% set even_bg=theme_prefix+'-even-bg' %}
+
+        {% set even_accent=theme_prefix+'-even-accent' %}
+
+        {% set even_badge=theme_prefix+'-even-badge-bg' %}
+
+        {% set even_card_bg=theme_prefix+'-even-card-bg' %}
+
+        {% set text_main_key=theme_prefix+'-text-main' %}
+
+        {% set text_light_key=theme_prefix+'-text-light' %}
+
+        {% set card_text_key=theme_prefix+'-card-text' %}
+
+        {% set card_text_light_key=theme_prefix+'-card-text-light' %}
+
+        {% set odd_card_accent_key=theme_prefix+'-odd-card-accent' %}
+
+        {% set even_card_accent_key=theme_prefix+'-even-card-accent' %}
+
+        {% set odd_card_day_title_key=theme_prefix+'-odd-card-day-title' %}
+
+        {% set even_card_day_title_key=theme_prefix+'-even-card-day-title' %}
+
+        {% set badge_time_key=theme_prefix+'-badge-time' %}
 
       /* Здесь, с помощью шаблонизатора Jinja, мы выбираем нужную палитру в зависимости от типа недели. */
       /* Это позволяет менять всю тему сайта, просто меняя 'week_slug' в данных. */
-      --color-bg: {{ 'var(--' + odd_bg + ')' if week_slug == 'odd' else 'var(--' + even_bg + ')' }};
-      --color-accent: {{ 'var(--' + odd_accent + ')' if week_slug == 'odd' else 'var(--' + even_accent + ')' }};
-      --color-badge-bg: {{ 'var(--' + odd_badge + ')' if week_slug == 'odd' else 'var(--' + even_badge + ')' }};
-      --color-card-bg: {{ 'var(--' + odd_card_bg + ')' if week_slug == 'odd' else 'var(--' + even_card_bg + ')' }};
+      --color-bg: {{
+          'var(--'+odd_bg+')' if week_slug=='odd' else 'var(--'+even_bg+')'
+        }}
+
+      ;
+
+      --color-accent: {{
+          'var(--'+odd_accent+')' if week_slug=='odd' else 'var(--'+even_accent+')'
+        }}
+
+      ;
+
+      --color-badge-bg: {{
+          'var(--'+odd_badge+')' if week_slug=='odd' else 'var(--'+even_badge+')'
+        }}
+
+      ;
+
+      --color-card-bg: {{
+          'var(--'+odd_card_bg+')' if week_slug=='odd' else 'var(--'+even_card_bg+')'
+        }}
+
+      ;
 
       /* Переменные для текстовых цветов (зависят от темы) */
-      --text-main: {{ 'var(--' + text_main_key + ')' }};
-      --text-light: {{ 'var(--' + text_light_key + ')' }};
-      --text-white: #fffffe;              /* White */
-      
+      --text-main: {{
+          'var(--'+text_main_key+')'
+        }}
+
+      ;
+
+      --text-light: {{
+          'var(--'+text_light_key+')'
+        }}
+
+      ;
+      --text-white: #fffffe;
+      /* White */
+
       /* Цвета текста внутри карточек (зависят от темы И недели) */
-      --card-text-main: {{ 'var(--' + card_text_key + ')' }};
-      --card-text-light: {{ 'var(--' + card_text_light_key + ')' }};
-      --card-text-accent: {{ 'var(--' + odd_card_accent_key + ')' if week_slug == 'odd' else 'var(--' + even_card_accent_key + ')' }};
-      --card-day-title: {{ 'var(--' + odd_card_day_title_key + ')' if week_slug == 'odd' else 'var(--' + even_card_day_title_key + ')' }};
-      --badge-time-color: {{ 'var(--' + badge_time_key + ')' }};
+      --card-text-main: {{
+          'var(--'+card_text_key+')'
+        }}
+
+      ;
+
+      --card-text-light: {{
+          'var(--'+card_text_light_key+')'
+        }}
+
+      ;
+
+      --card-text-accent: {{
+          'var(--'+odd_card_accent_key+')' if week_slug=='odd' else 'var(--'+even_card_accent_key+')'
+        }}
+
+      ;
+
+      --card-day-title: {{
+          'var(--'+odd_card_day_title_key+')' if week_slug=='odd' else 'var(--'+even_card_day_title_key+')'
+        }}
+
+      ;
+
+      --badge-time-color: {{
+          'var(--'+badge_time_key+')'
+        }}
+
+      ;
     }
 
     /* --- 3. Базовые стили и сброс --- */
     /* Универсальный селектор (*) для сброса стандартных отступов у всех элементов. */
     /* box-sizing: border-box; — ключевое правило, чтобы padding и border не увеличивали итоговый размер элемента. */
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
     /* Хитрость для удобного перевода px в rem: 16px (стандарт) * 62.5% = 10px. */
     /* Теперь 1rem = 10px, что упрощает вёрстку по макету (например, 40px = 4rem). */
-    html { font-size: 62.5%; }
+    html {
+      font-size: 62.5%;
+    }
 
     /* Задаём фон, основной шрифт*/
     body {
-      font-family: {{ font_family_body }};
+      font-family: {{
+          font_family_body | safe
+        }}
+
+      ;
       background-color: var(--color-bg);
       background-image: url('{{ bg_image }}');
       background-position: center;
       background-size: cover;
       background-repeat: no-repeat;
       display: flex;
-      justify-content: center; /* горизонтально по центру */
-      align-items: center;      /* вертикально по центру */
+      justify-content: center;
+      /* горизонтально по центру */
+      align-items: center;
+      /* вертикально по центру */
       min-height: 100vh;
       margin: 0;
       padding: 0;
@@ -191,10 +386,12 @@
 
     /* Ограничиваем максимальную ширину контента и выстраиваем его элементы (заголовок и сетку) в колонку. */
     .content-wrapper {
-      padding: 10rem; /* Разумные отступы по 100px со всех сторон */
+      padding: 10rem;
+      /* Разумные отступы по 100px со всех сторон */
       width: 100%;
       max-width: 270rem;
-      margin: 0 auto; /* Вспомогательное центрирование по горизонтали */
+      margin: 0 auto;
+      /* Вспомогательное центрирование по горизонтали */
       display: flex;
       flex-direction: column;
       gap: 9rem;
@@ -207,13 +404,19 @@
       justify-content: space-between;
       align-items: flex-end;
     }
+
     .schedule-header h1 {
-      font-family: {{ font_family_header }};
+      font-family: {{
+          font_family_header | safe
+        }}
+
+      ;
       font-weight: 600;
       font-size: 15.5rem;
       line-height: 1.1;
       letter-spacing: 0.23rem;
     }
+
     .schedule-header p {
       font-size: 6.4rem;
       font-weight: 400;
@@ -227,7 +430,7 @@
       letter-spacing: 0.096rem;
     }
 
-    .group-name{
+    .group-name {
       font-weight: 700;
     }
 
@@ -273,7 +476,7 @@
       font-size: 6.4rem;
       letter-spacing: 0.096rem;
       color: var(--card-day-title);
-      margin-bottom: 2.5rem; 
+      margin-bottom: 2.5rem;
     }
 
     /* Контейнер для всех строк с парами. */
@@ -282,7 +485,7 @@
       flex-direction: column;
       gap: 2rem;
     }
-    
+
     /* Ключевой элемент: строка с информацией о паре. */
     /* display: grid; — используем 12-колоночную сетку для точного контроля. */
     .lesson-row {
@@ -329,11 +532,11 @@
       text-align: right;
       justify-self: end;
     }
-    
+
     /* Текст для выходного дня. */
     .holiday-text {
-        font-size: 3.8rem;
-        color: var(--card-day-title);
+      font-size: 3.8rem;
+      color: var(--card-day-title);
     }
 
     /* Плашка с временем первой пары. */
@@ -370,7 +573,7 @@
       text-transform: lowercase;
       margin-top: 0.5rem;
     }
-    
+
     /* --- 6. Адаптивность (Responsive Design) --- */
     /* Правила ниже применяются только на экранах определённой ширины. */
 
@@ -379,37 +582,88 @@
     @media (min-width: 1600px) {
       .days-grid {
         grid-template-columns: repeat(2, 1fr);
-      }
-    }
-    
+      }}
+
     /* Для планшетов и небольших экранов (ширина до 768px): */
     /* Пропорционально уменьшаем все размеры через базовый font-size. */
     @media (max-width: 768px) {
-      html { font-size: 50%; }
-      body { padding: 3rem; }
-      .content-wrapper { gap: 5rem; }
-      .day-card { padding: 3rem 4rem; min-height: 0; } /* Убираем min-height, чтобы карточки не были слишком высокими. */
-      .schedule-header { flex-direction: column; align-items: flex-start; gap: 2rem; }
-      .bot-credit { align-self: flex-end; }
-    }
+      html {
+        font-size: 50%;
+      }
+
+      body {
+        padding: 3rem;
+      }
+
+      .content-wrapper {
+        gap: 5rem;
+      }
+
+      .day-card {
+        padding: 3rem 4rem;
+        min-height: 0;
+      }
+
+      /* Убираем min-height, чтобы карточки не были слишком высокими. */
+      .schedule-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 2rem;
+      }
+
+      .bot-credit {
+        align-self: flex-end;
+      }}
 
     /* Для мобильных телефонов (ширина до 480px): */
     @media (max-width: 480px) {
+
       /* Ещё больше уменьшаем размеры. */
-      html { font-size: 40%; }
-      body { padding: 2rem; }
-      .day-card { padding: 3rem; }
+      html {
+        font-size: 40%;
+      }
+
+      body {
+        padding: 2rem;
+      }
+
+      .day-card {
+        padding: 3rem;
+      }
+
       /* Плашка с временем становится частью потока, а не висит сбоку. */
-      .badge-first-lesson { position: static; margin-bottom: 2rem; align-self: flex-start; }
+      .badge-first-lesson {
+        position: static;
+        margin-bottom: 2rem;
+        align-self: flex-start;
+      }
+
       /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
-      .lesson-room { display: none; }
-      .lesson-title { grid-column: 1 / 11; }
-      .lesson-time { grid-column: 11 / 13; }
-      .schedule-header { flex-direction: column; align-items: flex-start; gap: 1.5rem; }
-      .bot-credit { align-self: flex-end; font-size: 2.8rem; }
-    }
+      .lesson-room {
+        display: none;
+      }
+
+      .lesson-title {
+        grid-column: 1 / 11;
+      }
+
+      .lesson-time {
+        grid-column: 11 / 13;
+      }
+
+      .schedule-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1.5rem;
+      }
+
+      .bot-credit {
+        align-self: flex-end;
+        font-size: 2.8rem;
+      }}
   </style>
 </head>
+
 <body>
   <div class="content-wrapper">
     <header class="schedule-header">
@@ -429,28 +683,32 @@
           <div class="badge-text">{{ i18n_first_lesson }}</div>
         </div>
         <div>
-            <h2 class="day-title">{{ day.name }}</h2>
-            {% if day.lessons %}
-              <div class="lessons-list">
-                {% for l in day.lessons %}
-                <div class="lesson-row">
-                  <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
-                  <div class="lesson-room">{{ l.room }}</div>
-                  <div class="lesson-time">{{ l.time }}</div>
-                </div>
-                {% endfor %}
-              </div>
-            {% else %}
-              <p class="holiday-text">
-                {{ i18n_no_lessons }}
-              </p>
-            {% endif %}
+          <h2 class="day-title">{{ day.name }}</h2>
+          {% if day.lessons %}
+          <div class="lessons-list">
+            {% for l in day.lessons %}
+            <div class="lesson-row">
+              <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
+              <div class="lesson-room">{{ l.room }}</div>
+              <div class="lesson-time">{{ l.time }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <p class="holiday-text">
+            {{ i18n_no_lessons }}
+          </p>
+          {% endif %}
         </div>
       </article>
       {% endfor %}
     </section>
   </div>
-  <style>.hidden { display: none; }</style>
+  <style>
+    .hidden {
+      display: none;
+    }
+  </style>
   <script>
     (function () {
       function setRem(el, value) { el.style.fontSize = value.toFixed(2) + 'rem'; }
@@ -477,15 +735,12 @@
           if (roomFits && timeFits && noOverlap) break;
 
           if (!roomFits || (!noOverlap && roomRem > minRoom)) {
-            if (roomRem > minRoom) { roomRem -= 0.1; setRem(room, roomRem); continue; }
-          }
+            if (roomRem > minRoom) { roomRem -= 0.1; setRem(room, roomRem); continue; }}
           if (!timeFits || (!noOverlap && timeRem > minTime)) {
-            if (timeRem > minTime) { timeRem -= 0.1; setRem(time, timeRem); continue; }
-          }
+            if (timeRem > minTime) { timeRem -= 0.1; setRem(time, timeRem); continue; }}
           // Больше уменьшать нельзя — выходим
           break;
-        }
-      }
+        }}
 
       function runFit() {
         var rows = document.querySelectorAll('.lesson-row');
@@ -503,4 +758,5 @@
     })();
   </script>
 </body>
+
 </html>
