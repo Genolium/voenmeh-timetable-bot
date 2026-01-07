@@ -137,7 +137,7 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
                 # I need "No lessons tomorrow". I'll use "fmt_no_lessons" which is "No lessons!".
                 text_body = i18n.get("fmt_no_lessons", lang)
 
-        text = f"{intro_text}{text_body}{get_footer_with_promo()}"
+        text = f"{intro_text}{text_body}{get_footer_with_promo(lang)}"
 
         send_message_task.send(user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
@@ -189,7 +189,7 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
                 schedule_text = format_schedule_text(schedule_info, lang=lang)
 
             # "Ваше расписание на сегодня" -> removed or handled by header/intro
-            text = f"{intro_text}\n{schedule_text}{get_footer_with_promo()}"
+            text = f"{intro_text}\n{schedule_text}{get_footer_with_promo(lang)}"
             send_message_task.send(user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
             processed_count += 1

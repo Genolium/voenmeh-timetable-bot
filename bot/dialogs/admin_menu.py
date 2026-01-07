@@ -104,7 +104,7 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
         )
         return
 
-    test_user_id, test_group_name, _ = random.choice(test_users)
+    test_user_id, test_group_name, _, _ = random.choice(test_users)
     await bot.send_message(
         admin_id,
         f"ℹ️ Тестирую логику для случайного пользователя: <code>{test_user_id}</code> (группа <code>{test_group_name}</code>)",

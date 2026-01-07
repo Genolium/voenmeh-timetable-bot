@@ -30,6 +30,8 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
         "coffee": (_("theme_coffee_name"), _("theme_coffee_desc")),
     }
 
+    current_theme = await user_data_manager.get_user_theme(user_id) if user_data_manager else "standard"
+
     current_theme_key = themes_info.get(current_theme)
     if not current_theme_key:
         current_theme_name = _("theme_standard_name")

@@ -456,11 +456,13 @@ UNSUBSCRIBE_FOOTER = "\n\n<tg-spoiler><i>Отключить эту рассыл�
 CHANNEL_PROMO = "\n\n📢 <i>Новости разработки бота: <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a></i>"
 
 
-def get_footer_with_promo() -> str:
+def get_footer_with_promo(lang: str = "ru") -> str:
     """Возвращает footer с возможной рекламой канала (30% вероятность)"""
+    footer = i18n.get("unsubscribe_footer", lang)
     if random.random() < 0.3:  # 30% вероятность показа рекламы
-        return UNSUBSCRIBE_FOOTER + CHANNEL_PROMO
-    return UNSUBSCRIBE_FOOTER
+        promo = i18n.get("channel_promo", lang)
+        return footer + promo
+    return footer
 
 
 EVENING_GREETINGS = [

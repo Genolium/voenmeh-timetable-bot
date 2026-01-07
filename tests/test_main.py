@@ -55,14 +55,13 @@ class TestSetBotCommands:
         with patch("main.ADMIN_IDS", [123456789]):
             await main.set_bot_commands(mock_bot)
 
-            # Проверяем, что команды были установлены для обычных пользователей
-            # Получаем аргументы первого вызова
-            calls = mock_bot.set_my_commands.call_args_list
-            assert len(calls) >= 1
-            user_commands = calls[0][0][0]  # Первый аргумент первого вызова
+            # Проверяем количество вызовов:
+            # 3 языка (ru, en, zh) + 1 fallback (ru) + 1 админ = 5 вызовов
+            assert mock_bot.set_my_commands.call_count == 5
 
-            # Проверяем, что команды были установлены для админов
-            assert mock_bot.set_my_commands.call_count == 2
+            # Проверяем, что первый вызов был с language_code='ru'
+            calls = mock_bot.set_my_commands.call_args_list
+            assert calls[0][1].get("language_code") == "ru"
 
     @pytest.mark.asyncio
     async def test_set_bot_commands_no_admins(self):
@@ -72,10 +71,8 @@ class TestSetBotCommands:
         with patch("main.ADMIN_IDS", []):
             await main.set_bot_commands(mock_bot)
 
-            # Проверяем, что команды установлены только для обычных пользователей
-            mock_bot.set_my_commands.assert_called_once()
-            calls = mock_bot.set_my_commands.call_args_list
-            assert len(calls) == 1
+            # 3 языка (ru, en, zh) + 1 fallback (ru) = 4 вызова
+            assert mock_bot.set_my_commands.call_count == 4
 
     @pytest.mark.asyncio
     async def test_set_bot_commands_error(self):
@@ -86,9 +83,9 @@ class TestSetBotCommands:
         with patch("main.ADMIN_IDS", []), patch("main.logging") as mock_logging:
             await main.set_bot_commands(mock_bot)
 
-            # Проверяем, что ошибка была залогирована
-            mock_logging.error.assert_called_once()
-            assert "Не удалось установить стандартные команды" in mock_logging.error.call_args[0][0]
+            # Ошибка будет залогирована для каждого языка (3 раза)
+            assert mock_logging.error.call_count == 3
+            assert "Не удалось установить команды для языка" in mock_logging.error.call_args[0][0]
 
 
 class TestCommandHandlers:
@@ -139,7 +136,7 @@ class TestCommandHandlers:
         await main.start_command_handler(mock_message, mock_dialog_manager)
 
         # Проверяем, что был запущен диалог выбора типа пользователя
-        mock_dialog_manager.start.assert_called_once_with(MainMenu.choose_user_type, mode=main.StartMode.RESET_STACK)
+        mock_dialog_manager.start.assert_called_once_with(MainMenu.select_language, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
     async def test_start_command_handler_invalid_user_data_manager(self):
