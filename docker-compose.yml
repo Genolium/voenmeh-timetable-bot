@@ -207,7 +207,7 @@ services:
       - "4318:4318"
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "zcat", "-f", "/etc/otel-collector-config.yaml" ]
+      test: [ "CMD", "cat", "/etc/otel-collector-config.yaml" ]
       interval: 10s
       timeout: 5s
       retries: 3
