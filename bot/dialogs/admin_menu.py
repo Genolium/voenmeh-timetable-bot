@@ -1488,6 +1488,46 @@ async def get_semester_settings_data(dialog_manager: DialogManager, **kwargs):
     return {"semester_settings_text": settings_text}
 
 
+async def on_force_update_schedule(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Принудительное обновление расписания."""
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    redis_client = manager.middleware_data.get("redis_client")
+
+    from bot.scheduler import monitor_schedule_changes
+    from core import parser
+    from core.config import REDIS_SCHEDULE_HASH_KEY
+
+    await callback.answer("🚀 Запущено принудительное обновление...", show_alert=False)
+
+    async def _process_force_update():
+        try:
+            await bot.send_message(
+                admin_id, "🔄 <b>Принудительное обновление</b>\n\n1. Сбрасываю хеш и кэш заголовков..."
+            )
+            # Сбрасываем хеш в Redis, чтобы бот "увидел" изменения
+            await redis_client.delete(REDIS_SCHEDULE_HASH_KEY)
+            # Сбрасываем заголовки ETag/Last-Modified, чтобы сервер не вернул 304
+            parser._LAST_ETAG = None
+            parser._LAST_MODIFIED = None
+
+            await bot.send_message(
+                admin_id, "2. Запрашиваю и обрабатываю новое расписание (это может занять время)..."
+            )
+            await monitor_schedule_changes(user_data_manager, redis_client, bot)
+
+            await bot.send_message(
+                admin_id,
+                "✅ <b>Обновление завершено!</b>\nЕсли были изменения, уведомления отправлены админам.",
+            )
+        except Exception as e:
+            await bot.send_message(admin_id, f"❌ Критическая ошибка при обновлении: {e}")
+
+    asyncio.create_task(_process_force_update())
+
+
+
 async def on_clear_cache(callback: CallbackQuery, button: Button, manager: DialogManager):
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
@@ -1673,6 +1713,11 @@ admin_dialog = Dialog(
     Window(
         Const("🧹 Раздел 'Кэш и генерация'"),
         Button(Const("🗑️ Очистить кэш картинок"), id="clear_cache2", on_click=on_clear_cache),
+        Button(
+            Const("🔄 Обновить расписание"),
+            id="force_update_sched",
+            on_click=on_force_update_schedule,
+        ),
         Button(
             Const("👥 Проверить выпустившиеся группы"),
             id="check_graduated2",
