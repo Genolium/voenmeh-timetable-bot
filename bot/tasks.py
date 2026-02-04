@@ -191,7 +191,7 @@ if broker_url:
 
         _parsed = urlparse(broker_url)
         _q = dict(parse_qsl(_parsed.query, keep_blank_values=True))
-        _q.setdefault("heartbeat", "30")
+        _q.setdefault("heartbeat", "120")
         _q.setdefault("blocked_connection_timeout", "300")
         _q.setdefault("connection_attempts", "10")
         _q.setdefault("retry_delay", "5")
@@ -367,7 +367,7 @@ def generate_week_image_task(
 
                 if is_auto_generation:
                     success, _ = await image_service._generate_and_cache_image(
-                        cache_key, week_schedule, week_name, group, generated_by="mass"
+                        cache_key, week_schedule, week_name, group, generated_by="mass", exec_locally=True
                     )
                     if success:
                         log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
@@ -395,6 +395,7 @@ def generate_week_image_task(
                             user_theme=user_theme,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption,
+                            exec_locally=True,
                         )
                     if not success and user_id:
                         await _send_error_message(user_id, "Не удалось сгенерировать изображение")

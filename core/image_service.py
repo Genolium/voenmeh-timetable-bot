@@ -47,6 +47,7 @@ class ImageService:
         placeholder_msg_id: Optional[int] = None,
         final_caption: Optional[str] = None,
         lang: str = "ru",
+        exec_locally: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """
         Получает изображение из кэша или генерирует новое.
@@ -60,6 +61,7 @@ class ImageService:
             user_theme: Тема оформления пользователя для генерации
             placeholder_msg_id: ID сообщения-плейсхолдера
             final_caption: Подпись к изображению
+            exec_locally: Выполнять ли генерацию локально
 
         Returns:
             Tuple[success, file_path]
@@ -98,7 +100,7 @@ class ImageService:
 
         # Генерируем изображение
         success, file_path = await self._generate_and_cache_image(
-            cache_key, week_schedule, week_name, group, user_theme=user_theme, lang=lang
+            cache_key, week_schedule, week_name, group, user_theme=user_theme, lang=lang, exec_locally=exec_locally
         )
 
         if success and user_id:
@@ -117,6 +119,7 @@ class ImageService:
         schedule_hash: Optional[str] = None,
         user_theme: Optional[str] = None,
         lang: str = "ru",
+        exec_locally: bool = False,
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -129,13 +132,14 @@ class ImageService:
             generated_by: Источник генерации
             schedule_hash: Хэш расписания
             user_theme: Тема оформления пользователя
+            exec_locally: Выполнять генерацию в текущем процессе (True) или отправить в очередь (False)
 
         Returns:
             Tuple[success, file_path]
         """
         start_time = datetime.now(MOSCOW_TZ)
 
-        # Ограничение на количество одновременных генераций
+        # Ограничение на механизм блокировок (но не на playwright, если мы в очереди)
         with _generation_semaphore:
             logger.info(f"🔄 Starting image generation for {cache_key} (semaphore acquired)")
 
@@ -165,6 +169,36 @@ class ImageService:
                 logger.info(f"🔄 Generating image for {cache_key}")
                 logger.info(f"Using user_theme={user_theme or 'standard'} for {cache_key}")
 
+                if not exec_locally:
+                    try:
+                        # Offload to worker
+                        # Import here to avoid circular dependency
+                        from bot.tasks import generate_week_image_task
+
+                        logger.info(f"🚀 Offloading generation for {cache_key} to worker")
+                        
+                        # Отправляем задачу в очередь
+                        generate_week_image_task.send(
+                            cache_key=cache_key,
+                            week_schedule=schedule_data,
+                            week_name=week_type,
+                            group=group,
+                            user_id=None,
+                            placeholder_msg_id=None,
+                            final_caption=None
+                        )
+                        
+                        # Метрика отправки в очередь
+                        from core.metrics import IMAGE_CACHE_MISSES
+                        IMAGE_CACHE_MISSES.labels(cache_type="generation_queued").inc()
+
+                        return False, None
+
+                    except Exception as e:
+                        logger.error(f"❌ Error queuing generation for {cache_key}: {e}")
+                        return False, None
+                
+                # Local execution logic
                 try:
                     # Измеряем время генерации для метрик
                     with SCHEDULE_GENERATION_TIME.labels(schedule_type="week").time():
@@ -188,15 +222,13 @@ class ImageService:
 
                     if not success or not file_path.exists():
                         logger.error(f"❌ Failed to generate image for {cache_key}")
-                        # Проверяем, есть ли файл и его размер
                         if file_path.exists():
                             file_size = file_path.stat().st_size
                             logger.error(f"   File exists but size is {file_size} bytes")
                         else:
                             logger.error(f"   File does not exist: {file_path}")
-                        # Метрика неудачной генерации
+                        
                         from core.metrics import IMAGE_CACHE_MISSES
-
                         IMAGE_CACHE_MISSES.labels(cache_type="generation_failed").inc()
                         return False, None
 
@@ -215,22 +247,17 @@ class ImageService:
                                 "generated_at": datetime.now(MOSCOW_TZ).isoformat(),
                                 "file_size": len(image_bytes),
                                 "generated_by": generated_by,
-                                **({"schedule_hash": schedule_hash} if schedule_hash else {}),
                             },
                         )
 
-                        # Метрика успешного кэширования
                         from core.metrics import IMAGE_CACHE_OPERATIONS
-
                         IMAGE_CACHE_OPERATIONS.labels(operation="store").inc()
 
                         logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
 
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
-                        # Не возвращаем False, так как файл все равно создан
 
-                    # Обновляем метрики времени генерации
                     generation_time = (datetime.now(MOSCOW_TZ) - start_time).total_seconds()
                     SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
 
