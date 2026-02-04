@@ -31,10 +31,9 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      otel-collector: { condition: service_healthy }
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
       PYTHONPATH: /app
     command: python main.py
     healthcheck:
@@ -51,11 +50,10 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      otel-collector: { condition: service_healthy }
     command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-1} --threads ${DRAMATIQ_THREADS:-2} bot.tasks
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
       PYTHONPATH: /app
 
   rabbitmq_monitor:
@@ -65,12 +63,11 @@ services:
     depends_on:
       rabbitmq: { condition: service_healthy }
       redis: { condition: service_healthy }
-      otel-collector: { condition: service_healthy }
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
       PYTHONPATH: /app
 
   db:
@@ -206,11 +203,6 @@ services:
       - "4317:4317"
       - "4318:4318"
     restart: unless-stopped
-    healthcheck:
-      test: [ "CMD", "ls", "/etc/otel-collector-config.yaml" ]
-      interval: 5s
-      timeout: 5s
-      retries: 3
 
   node-exporter:
     image: prom/node-exporter:v1.6.1
