@@ -367,7 +367,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     )
 
     if not success:
-        logging.error(f"Failed to get/generate week image for {group}_{week_key}")
+        logging.info(f"Week image for {group}_{week_key} was likely queued for background generation")
 
     # I18n for keys return
     return {
