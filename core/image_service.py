@@ -100,7 +100,16 @@ class ImageService:
 
         # Генерируем изображение
         success, file_path = await self._generate_and_cache_image(
-            cache_key, week_schedule, week_name, group, user_theme=user_theme, lang=lang, exec_locally=exec_locally
+            cache_key,
+            week_schedule,
+            week_name,
+            group,
+            user_theme=user_theme,
+            lang=lang,
+            exec_locally=exec_locally,
+            user_id=user_id,
+            placeholder_msg_id=placeholder_msg_id,
+            final_caption=final_caption,
         )
 
         if success and user_id:
@@ -120,6 +129,9 @@ class ImageService:
         user_theme: Optional[str] = None,
         lang: str = "ru",
         exec_locally: bool = False,
+        user_id: Optional[int] = None,
+        placeholder_msg_id: Optional[int] = None,
+        final_caption: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -183,9 +195,9 @@ class ImageService:
                             week_schedule=schedule_data,
                             week_name=week_type,
                             group=group,
-                            user_id=None,
-                            placeholder_msg_id=None,
-                            final_caption=None
+                            user_id=user_id,
+                            placeholder_msg_id=placeholder_msg_id,
+                            final_caption=final_caption
                         )
                         
                         # Метрика отправки в очередь
