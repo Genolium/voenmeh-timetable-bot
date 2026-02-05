@@ -197,6 +197,7 @@ class ImageService:
                             week_schedule=schedule_data,
                             week_name=week_type,
                             group=group,
+                            week_key=week_type if generated_by == "mass" else cache_key.split("_")[1] if "_" in cache_key else week_type,
                             user_id=user_id,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption,

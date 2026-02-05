@@ -497,9 +497,28 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                 return
     except Exception:
         pass
-    # Если файла нет – инициируем генерацию и попробуем дождаться готовности короткое время
+    # Если файла нет – инициируем генерацию (БЕЗ ОТПРАВКИ ФОТО) и попробуем дождаться готовности
     if not output_path.exists():
-        await get_week_image_data(manager)
+        # Trigger generation without sending compressed photo again
+        try:
+            image_service = manager.middleware_data.get("image_service")
+            timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+            
+            # Prepare minimal data for generation trigger
+            group_schedule = timetable_manager.get_group_schedule(group)
+            week_schedule = group_schedule.get("even" if "Чет" in week_name_full else "odd", {})
+            
+            await image_service.get_or_generate_week_image(
+                group=group,
+                week_key=week_key,
+                week_name=week_name_full,
+                week_schedule=week_schedule,
+                user_id=None, # CRITICAL: Don't send photo again
+                user_theme=user_theme_for_original,
+                lang=lang
+            )
+        except Exception as e:
+            logging.error(f"Error triggering background generation in on_send_original_file: {e}")
         # Подождём до 8 секунд с экспоненциальной задержкой
         wait_intervals = [0.5, 0.5, 1.0, 1.0, 1.0, 2.0, 2.0]
         for interval in wait_intervals:

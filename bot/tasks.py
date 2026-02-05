@@ -344,6 +344,7 @@ def generate_week_image_task(
     week_schedule: Dict[str, Any],
     week_name: str,
     group: str,
+    week_key: str,
     user_id: int | None = None,
     placeholder_msg_id: int | None = None,
     final_caption: str | None = None,
@@ -365,7 +366,7 @@ def generate_week_image_task(
                     bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
                 image_service = ImageService(cache_manager, bot_for_images)
 
-                week_key = cache_key.split("_")[-1]
+                # week_key now passed explicitly
 
                 if is_auto_generation:
                     success, _ = await image_service._generate_and_cache_image(
