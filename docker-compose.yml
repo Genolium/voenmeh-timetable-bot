@@ -48,7 +48,7 @@ services:
       rabbitmq: { condition: service_healthy }
       otel-collector:
         condition: service_started
-    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-3} --threads ${DRAMATIQ_THREADS:-1} bot.tasks
+    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-1} --threads ${DRAMATIQ_THREADS:-4} bot.tasks
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       OTEL_ENABLED: ${OTEL_ENABLED:-true}
@@ -113,7 +113,7 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
-      RABBITMQ_MEM_RELATIVE: 0.4
+      RABBITMQ_MEM_RELATIVE: 0.7
     restart: unless-stopped
     deploy:
       resources:

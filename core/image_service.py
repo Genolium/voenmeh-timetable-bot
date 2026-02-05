@@ -19,8 +19,8 @@ from core.image_generator import generate_schedule_image
 from core.metrics import SCHEDULE_GENERATION_TIME
 
 _generation_semaphore = threading.Semaphore(
-    int(os.getenv("IMAGE_SERVICE_SEMAPHORE", "2"))
-)  # Максимум 2 одновременных генерации на процесс
+    int(os.getenv("IMAGE_GENERATION_SEMAPHORE", "2"))
+)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,6 @@ class ImageService:
     def __init__(self, cache_manager: ImageCacheManager, bot: Bot):
         self.cache_manager = cache_manager
         self.bot = bot
-        self.generation_locks = {}  # Локальные блокировки для генерации
 
     async def get_or_generate_week_image(
         self,
@@ -162,14 +161,13 @@ class ImageService:
 
             IMAGE_CACHE_MISSES.labels(cache_type="generation_requested").inc()
 
-            # Создаем лок для предотвращения дублирования генерации
-            if cache_key not in self.generation_locks:
-                self.generation_locks[cache_key] = asyncio.Lock()
-
-            async with self.generation_locks[cache_key]:
-                # Проверяем кэш еще раз после получения лока
+            # Используем Redis-лок для предотвращения дублирования генерации между процессами/воркерами
+            lock_key = f"gen_lock:{cache_key}"
+            # Lock expires in 5 minutes to avoid deadlocks if a worker crashes
+            async with self.cache_manager.redis.lock(lock_key, timeout=300):
+                # Проверяем кэш после получения лока
                 if await self.cache_manager.is_cached(cache_key):
-                    logger.info(f"✅ Another process generated {cache_key} while waiting")
+                    logger.info(f"✅ Another worker generated {cache_key} while waiting")
                     file_path = self.cache_manager.get_file_path(cache_key)
                     from core.metrics import IMAGE_CACHE_HITS
 
