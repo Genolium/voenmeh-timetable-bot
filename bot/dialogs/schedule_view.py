@@ -382,6 +382,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
 
 async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Callback handler для кнопки 'Оригинал' без параметра button"""
+    logging.info(f"🔔 on_send_original_file_callback TRIGGERED by user {callback.from_user.id if callback.from_user else 'unknown'}")
     await on_send_original_file(callback, None, dialog_manager)
 
 
@@ -392,6 +393,7 @@ async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager
 
 async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Отправляет оригинал изображения недели как файл (Document), без сжатия Telegram."""
+    logging.info(f"📄 on_send_original_file STARTED for user {callback.from_user.id if callback.from_user else 'unknown'}")
     ctx = manager.current_context()
     manager_obj: TimetableManager = manager.middleware_data.get("manager")
     # Всегда сохраняем user_id для последующих отправок/плейсхолдера
