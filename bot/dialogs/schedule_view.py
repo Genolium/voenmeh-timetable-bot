@@ -244,6 +244,18 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
 
     # Сохраняем user_id, запускаем генерацию и фиксируем состояние на Schedule.view
     ctx.dialog_data["user_id"] = user_id
+    
+    # Показываем уведомление о начале генерации
+    try:
+        udm = manager.middleware_data.get("user_data_manager")
+        lang = await udm.get_user_language(user_id) if udm else "ru"
+        await callback.answer(i18n.get("toast_drawing", lang=lang))
+    except Exception:
+        try:
+            await callback.answer("⏳ Рисую расписание...")
+        except Exception:
+            pass
+
     await get_week_image_data(manager)
     try:
         await manager.switch_to(Schedule.view)
@@ -448,6 +460,12 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     except Exception:
         pass
 
+    # Показываем уведомление о начале подготовки оригинала
+    try:
+        await callback.answer(i18n.get("toast_preparing_original", lang=lang))
+    except Exception:
+        pass
+
     # Приводим к верхнему регистру для консистентности имен файлов
     safe_group = group.upper()
     if user_theme_for_original and user_theme_for_original != "standard":
@@ -519,11 +537,16 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             )
         except Exception as e:
             logging.error(f"Error triggering background generation in on_send_original_file: {e}")
-        # Подождём до 8 секунд с экспоненциальной задержкой
-        wait_intervals = [0.5, 0.5, 1.0, 1.0, 1.0, 2.0, 2.0]
+        # Подождём до 15 секунд с экспоненциальной задержкой
+        wait_intervals = [0.5, 0.5, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 5.0]
         for interval in wait_intervals:
             try:
                 if output_path.exists():
+                    # Показываем успех, если файл внезапно появился
+                    try:
+                        await callback.answer(i18n.get("toast_success", lang=lang))
+                    except Exception:
+                        pass
                     break
                 await asyncio.sleep(interval)
             except Exception:
@@ -550,7 +573,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
         await bot.send_document(callback.from_user.id, document=doc_file, caption=caption)
         logging.info(f"✅ Document sent successfully to user {callback.from_user.id}")
         try:
-            await callback.answer()
+            await callback.answer(i18n.get("toast_success", lang=lang))
         except Exception:
             pass
         return

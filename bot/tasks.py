@@ -559,7 +559,6 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
                 # Use correct cache_key based path
                 file_path = MEDIA_PATH / "generated" / f"{cache_key}.png"
                 if not file_path.exists():
-                    await bot.send_message(user_id, "⏳ Готовлю оригинал, попробуйте чуть позже…")
                     return
                 # Добавляем имя файла и подпись для красоты и надежности
                 doc_file = FSInputFile(file_path, filename=f"Schedule_{cache_key}.png")

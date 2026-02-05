@@ -72,6 +72,12 @@ _POOL_HEADLESS_ARGS = [
     "--disable-background-networking",
 ]
 
+# Глобальный семафор для ограничения страниц на ОДИН процесс/браузер
+# (чтобы не убить память если слишком много тасков)
+_MAX_CONCURRENT_PAGES = int(os.getenv("IMAGE_BROWSER_CONCURRENT_PAGES", "4"))
+_page_semaphore: Optional[asyncio.Semaphore] = None
+_init_lock = asyncio.Lock()
+
 
 def _time_to_minutes(t: str) -> int:
     """Конвертирует время в минуты для сортировки."""
@@ -301,24 +307,32 @@ async def generate_schedule_image(
             setattr(loop, "__img_pool_state__", None)
 
         async def _ensure_browser() -> _PoolState:
+            global _page_semaphore
+            if _page_semaphore is None:
+                _page_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+            
             state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
+            
+            # 1. Инициализация если пусто (под спец. локом)
             if state is None:
-                # Первичная инициализация (без лока, так как стейта еще нет)
-                ctx = await async_playwright().__aenter__()
-                try:
-                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(
-                        lock=asyncio.Lock(),
-                        ctx=ctx,
-                        browser=browser,
-                        created_at=time.time(),
-                        pages_made=0,
-                    )
-                    setattr(loop, "__img_pool_state__", state)
-                except Exception:
-                    # Чистим если упало на старте
-                    await ctx.__aexit__(None, None, None)
-                    raise
+                async with _init_lock:
+                    # Double check
+                    state = getattr(loop, "__img_pool_state__")
+                    if state is None:
+                        ctx = await async_playwright().__aenter__()
+                        try:
+                            browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                            state = _PoolState(
+                                lock=asyncio.Lock(),
+                                ctx=ctx,
+                                browser=browser,
+                                created_at=time.time(),
+                                pages_made=0,
+                            )
+                            setattr(loop, "__img_pool_state__", state)
+                        except Exception:
+                            await ctx.__aexit__(None, None, None)
+                            raise
                 return state
 
             # Все операции со стейтом теперь строго под локом
@@ -368,11 +382,13 @@ async def generate_schedule_image(
 
         state = await _ensure_browser()
 
-        # Теперь используем лок для основной работы
-        async with state.lock:
+        # Используем семафор для ограничения количества открытых вкладок
+        async with _page_semaphore:
+            # Открываем страницу БЕЗ блокировки всего браузера (state.lock)
             page = await state.browser.new_page()
-            page.set_default_timeout(120000)
-            page.set_default_navigation_timeout(120000)
+            # Уменьшаем таймауты до 60с (это и так много)
+            page.set_default_timeout(60000)
+            page.set_default_navigation_timeout(60000)
 
             attempt = 0
             last_error: Exception | None = None
@@ -402,8 +418,8 @@ async def generate_schedule_image(
 
                         print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
 
-                        await page.set_content(html, timeout=120000)
-                        await page.wait_for_load_state("networkidle", timeout=120000)
+                        await page.set_content(html, timeout=60000)
+                        await page.wait_for_load_state("networkidle", timeout=60000)
 
                         # --- ИЗМЕРЯЕМ РЕАЛЬНУЮ ВЫСОТУ КОНТЕНТА ---
                         content_height = await page.evaluate(
@@ -458,11 +474,12 @@ async def generate_schedule_image(
                             path=output_path,
                             full_page=False,
                             type="png",
-                            timeout=120000,
+                            timeout=60000,
                         )
 
                         print_progress_bar(5, 5, f"Генерация {group}", "Готово")
-                        state.pages_made += 1
+                        async with state.lock:
+                            state.pages_made += 1
                         return True
 
                     except Exception as inner_e:
@@ -482,10 +499,10 @@ async def generate_schedule_image(
                                 except Exception:
                                     pass
                             finally:
-                                state = await _ensure_browser()
-                                page = await state.browser.new_page()
-                                page.set_default_timeout(120000)
-                                page.set_default_navigation_timeout(120000)
+                                 state = await _ensure_browser()
+                                 page = await state.browser.new_page()
+                                 page.set_default_timeout(60000)
+                                 page.set_default_navigation_timeout(60000)
 
                 if last_error is not None:
                     logging.error(f"Генерация для {group} не удалась: {last_error}")

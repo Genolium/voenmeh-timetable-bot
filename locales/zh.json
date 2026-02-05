@@ -271,5 +271,8 @@
     "cmd_about_desc": "📒 关于机器人",
     "cmd_feedback_desc": "🤝 反馈",
     "cmd_events_desc": "🎉 活动",
-    "cmd_admin_desc": "👑 管理面板"
+    "cmd_admin_desc": "👑 管理面板",
+    "toast_drawing": "⏳ 正在绘制本周课表...",
+    "toast_preparing_original": "⏳ 正在准备原始文件...",
+    "toast_success": "✅ 完成！"
 }

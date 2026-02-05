@@ -274,5 +274,8 @@
     "cmd_about_desc": "📒 О боте",
     "cmd_feedback_desc": "🤝 Обратная связь",
     "cmd_events_desc": "🎉 Мероприятия",
-    "cmd_admin_desc": "👑 Админ-панель"
+    "cmd_admin_desc": "👑 Админ-панель",
+    "toast_drawing": "⏳ Рисую расписание на неделю...",
+    "toast_preparing_original": "⏳ Подготавливаю файл оригинала...",
+    "toast_success": "✅ Готово!"
 }

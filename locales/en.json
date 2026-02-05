@@ -274,5 +274,8 @@
     "cmd_about_desc": "📒 About Bot",
     "cmd_feedback_desc": "🤝 Feedback",
     "cmd_events_desc": "🎉 Events",
-    "cmd_admin_desc": "👑 Admin Panel"
+    "cmd_admin_desc": "👑 Admin Panel",
+    "toast_drawing": "⏳ Drawing the week schedule...",
+    "toast_preparing_original": "⏳ Preparing the original file...",
+    "toast_success": "✅ Done!"
 }
