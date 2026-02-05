@@ -442,10 +442,12 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     except Exception:
         pass
 
+    # Приводим к верхнему регистру для консистентности имен файлов
+    safe_group = group.upper()
     if user_theme_for_original and user_theme_for_original != "standard":
-        cache_key = f"{group}_{week_key}_{user_theme_for_original}_{lang}"
+        cache_key = f"{safe_group}_{week_key}_{user_theme_for_original}_{lang}"
     else:
-        cache_key = f"{group}_{week_key}_{lang}"
+        cache_key = f"{safe_group}_{week_key}_{lang}"
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
     # Проверка подписки на канал, если настроено
@@ -515,13 +517,17 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     # Файл готов — отправим сразу
     try:
         bot: Bot = manager.middleware_data.get("bot")
-        await bot.send_document(callback.from_user.id, FSInputFile(output_path))
+        # Форсируем отправку как файл (Document) с явным именем
+        caption = f"📄 {week_name_full} ({safe_group})"
+        doc_file = FSInputFile(output_path, filename=f"Schedule_{safe_group}_{week_key}.png")
+        await bot.send_document(callback.from_user.id, document=doc_file, caption=caption)
         try:
             await callback.answer()
         except Exception:
             pass
         return
-    except Exception:
+    except Exception as e:
+        logging.error(f"Failed to send document directly: {e}")
         # Фолбэк: через очередь
         try:
             send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)

@@ -67,10 +67,12 @@ class ImageService:
             Tuple[success, file_path]
         """
         # Ключ кэша: для пользовательских тем учитываем тему
+        # Приводим группу к верхнему регистру для консистентности имен файлов
+        safe_group = group.upper()
         if user_theme and user_theme != "standard":
-            cache_key = f"{group}_{week_key}_{user_theme}_{lang}"
+            cache_key = f"{safe_group}_{week_key}_{user_theme}_{lang}"
         else:
-            cache_key = f"{group}_{week_key}_{lang}"
+            cache_key = f"{safe_group}_{week_key}_{lang}"
 
         logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
 
@@ -197,7 +199,8 @@ class ImageService:
                             group=group,
                             user_id=user_id,
                             placeholder_msg_id=placeholder_msg_id,
-                            final_caption=final_caption
+                            final_caption=final_caption,
+                            lang=lang
                         )
                         
                         # Метрика отправки в очередь

@@ -347,6 +347,7 @@ def generate_week_image_task(
     user_id: int | None = None,
     placeholder_msg_id: int | None = None,
     final_caption: str | None = None,
+    lang: str = "ru",
 ):
     async def _inner():
         is_auto_generation = user_id is None
@@ -396,6 +397,7 @@ def generate_week_image_task(
                             user_theme=user_theme,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption,
+                            lang=lang,
                             exec_locally=True,
                         )
                     if not success and user_id:
@@ -558,7 +560,9 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
                 if not file_path.exists():
                     await bot.send_message(user_id, "⏳ Готовлю оригинал, попробуйте чуть позже…")
                     return
-                await bot.send_document(user_id, FSInputFile(file_path))
+                # Добавляем имя файла и подпись для красоты и надежности
+                doc_file = FSInputFile(file_path, filename=f"Schedule_{cache_key}.png")
+                await bot.send_document(user_id, document=doc_file, caption="📄 Оригинал расписания (полное качество)")
         except Exception as e:
             log.error(f"send_week_original_if_subscribed_task failed: {e}")
 
