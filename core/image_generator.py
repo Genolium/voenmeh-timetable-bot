@@ -322,7 +322,7 @@ async def generate_schedule_image(
                     if state is None:
                         ctx = await async_playwright().__aenter__()
                         try:
-                            browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                            browser = await asyncio.wait_for(ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
                             state = _PoolState(
                                 lock=asyncio.Lock(),
                                 ctx=ctx,
@@ -341,14 +341,8 @@ async def generate_schedule_image(
             if now - state.last_check_at < 30: # Проверяем здоровье раз в 30 секунд
                 return state
 
-            # Пытаемся взять лок для обслуживания (с коротким таймаутом чтобы не вешать очередь)
-            try:
-                await asyncio.wait_for(state.lock.acquire(), timeout=5.0)
-            except asyncio.TimeoutError:
-                # Если лок занят — значит кто-то уже проверяет или генерит, отдаем браузер "на удачу"
-                return state
-
-            try:
+            # Используем лок для обслуживания
+            async with state.lock:
                 # Еще раз проверяем тайминг под локом (double check)
                 if now - state.last_check_at < 30:
                     return state
@@ -384,26 +378,31 @@ async def generate_schedule_image(
                         # Пересоздаем
                         new_ctx = await async_playwright().__aenter__()
                         try:
-                            new_browser = await new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                            new_browser = await asyncio.wait_for(new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
                             state.ctx = new_ctx
                             state.browser = new_browser
                             state.created_at = time.time()
                             state.last_check_at = time.time()
                             state.pages_made = 0
-                            logging.info("Browser pool rotated successfully")
+                            logging.info(f"Browser pool rotated successfully (loop: {id(loop)})")
                         except Exception:
                             await new_ctx.__aexit__(None, None, None)
                             raise
                 return state
-            finally:
-                state.lock.release()
 
         state = await _ensure_browser()
 
         # Используем семафор для ограничения количества открытых вкладок
         async with _page_semaphore:
             # Открываем страницу БЕЗ блокировки всего браузера (state.lock)
-            page = await state.browser.new_page()
+            # Добавляем таймаут на создание страницы
+            try:
+                page = await asyncio.wait_for(state.browser.new_page(), timeout=15.0)
+            except Exception as e:
+                logging.error(f"Failed to create new page: {e}")
+                # Если не удалось создать страницу, помечаем браузер как требующий проверки немедленно
+                state.last_check_at = 0
+                raise
             # Уменьшаем таймауты до 60с (это и так много)
             page.set_default_timeout(60000)
             page.set_default_navigation_timeout(60000)

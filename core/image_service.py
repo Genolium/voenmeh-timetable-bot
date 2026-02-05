@@ -18,10 +18,6 @@ from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.metrics import SCHEDULE_GENERATION_TIME
 
-_generation_semaphore = threading.Semaphore(
-    int(os.getenv("IMAGE_GENERATION_SEMAPHORE", "2"))
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -152,135 +148,126 @@ class ImageService:
         """
         start_time = datetime.now(MOSCOW_TZ)
 
-        # Ограничение на механизм блокировок (но не на playwright, если мы в очереди)
-        with _generation_semaphore:
-            logger.info(f"🔄 Starting image generation for {cache_key} (semaphore acquired)")
-
-            # Добавляем метрику начала генерации
-            from core.metrics import IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME
-
-            IMAGE_CACHE_MISSES.labels(cache_type="generation_requested").inc()
-
-            # Используем Redis-лок для предотвращения дублирования генерации между процессами/воркерами
-            lock_key = f"gen_lock:{cache_key}"
-            # Lock expires in 5 minutes to avoid deadlocks if a worker crashes
-            async with self.cache_manager.redis.lock(lock_key, timeout=300):
-                # Проверяем кэш после получения лока
-                if await self.cache_manager.is_cached(cache_key):
-                    logger.info(f"✅ Another worker generated {cache_key} while waiting")
-                    file_path = self.cache_manager.get_file_path(cache_key)
-                    from core.metrics import IMAGE_CACHE_HITS
-
-                    IMAGE_CACHE_HITS.labels(cache_type="concurrent_generation").inc()
-                    return True, str(file_path)
-
-                # Генерируем изображение
+        # Используем Redis-лок для предотвращения дублирования генерации между процессами/воркерами
+        lock_key = f"gen_lock:{cache_key}"
+        # Lock expires in 5 minutes to avoid deadlocks if a worker crashes
+        async with self.cache_manager.redis.lock(lock_key, timeout=300):
+            # Проверяем кэш после получения лока
+            if await self.cache_manager.is_cached(cache_key):
+                logger.info(f"✅ Another worker generated {cache_key} while waiting")
                 file_path = self.cache_manager.get_file_path(cache_key)
-                file_path.parent.mkdir(parents=True, exist_ok=True)
+                from core.metrics import IMAGE_CACHE_HITS
 
-                logger.info(f"🔄 Generating image for {cache_key}")
-                logger.info(f"Using user_theme={user_theme or 'standard'} for {cache_key}")
+                IMAGE_CACHE_HITS.labels(cache_type="concurrent_generation").inc()
+                return True, str(file_path)
 
-                if not exec_locally:
-                    try:
-                        # Offload to worker
-                        # Import here to avoid circular dependency
-                        from bot.tasks import generate_week_image_task
+            # Генерируем изображение
+            file_path = self.cache_manager.get_file_path(cache_key)
+            file_path.parent.mkdir(parents=True, exist_ok=True)
 
-                        logger.info(f"🚀 Offloading generation for {cache_key} to worker")
-                        
-                        # Отправляем задачу в очередь
-                        generate_week_image_task.send(
-                            cache_key=cache_key,
-                            week_schedule=schedule_data,
-                            week_name=week_type,
-                            group=group,
-                            week_key=week_type if generated_by == "mass" else cache_key.split("_")[1] if "_" in cache_key else week_type,
-                            user_id=user_id,
-                            placeholder_msg_id=placeholder_msg_id,
-                            final_caption=final_caption,
-                            lang=lang
-                        )
-                        
-                        # Метрика отправки в очередь
-                        from core.metrics import IMAGE_CACHE_MISSES
-                        IMAGE_CACHE_MISSES.labels(cache_type="generation_queued").inc()
+            logger.info(f"🔄 Generating image for {cache_key}")
+            logger.info(f"Using user_theme={user_theme or 'standard'} for {cache_key}")
 
-                        return False, None
-
-                    except Exception as e:
-                        logger.error(f"❌ Error queuing generation for {cache_key}: {e}")
-                        return False, None
-                
-                # Local execution logic
+            if not exec_locally:
                 try:
-                    # Измеряем время генерации для метрик
-                    with SCHEDULE_GENERATION_TIME.labels(schedule_type="week").time():
-                        # Сохраняем исходную компоновку — жестко фиксированный холст
-                        from core.render_config import VIEWPORT_HEIGHT, VIEWPORT_WIDTH
+                    # Offload to worker
+                    # Import here to avoid circular dependency
+                    from bot.tasks import generate_week_image_task
 
-                        highres_vp = {
-                            "width": VIEWPORT_WIDTH,
-                            "height": VIEWPORT_HEIGHT,
-                        }
+                    logger.info(f"🚀 Offloading generation for {cache_key} to worker")
+                    
+                    # Отправляем задачу в очередь
+                    generate_week_image_task.send(
+                        cache_key=cache_key,
+                        week_schedule=schedule_data,
+                        week_name=week_type,
+                        group=group,
+                        week_key=week_type if generated_by == "mass" else cache_key.split("_")[1] if "_" in cache_key else week_type,
+                        user_id=user_id,
+                        placeholder_msg_id=placeholder_msg_id,
+                        final_caption=final_caption,
+                        lang=lang
+                    )
+                    
+                    # Метрика отправки в очередь
+                    from core.metrics import IMAGE_CACHE_MISSES
+                    IMAGE_CACHE_MISSES.labels(cache_type="generation_queued").inc()
 
-                        success = await generate_schedule_image(
-                            schedule_data=schedule_data,
-                            week_type=week_type,
-                            group=group,
-                            output_path=str(file_path),
-                            viewport_size=highres_vp,
-                            user_theme=user_theme,
-                            lang=lang,
-                        )
-
-                    if not success or not file_path.exists():
-                        logger.error(f"❌ Failed to generate image for {cache_key}")
-                        if file_path.exists():
-                            file_size = file_path.stat().st_size
-                            logger.error(f"   File exists but size is {file_size} bytes")
-                        else:
-                            logger.error(f"   File does not exist: {file_path}")
-                        
-                        from core.metrics import IMAGE_CACHE_MISSES
-                        IMAGE_CACHE_MISSES.labels(cache_type="generation_failed").inc()
-                        return False, None
-
-                    # Сохраняем в кэш
-                    try:
-                        with open(file_path, "rb") as f:
-                            image_bytes = f.read()
-
-                        await self.cache_manager.cache_image(
-                            cache_key,
-                            image_bytes,
-                            metadata={
-                                "group": group,
-                                "week_key": week_type,
-                                "lang": lang,
-                                "generated_at": datetime.now(MOSCOW_TZ).isoformat(),
-                                "file_size": len(image_bytes),
-                                "generated_by": generated_by,
-                            },
-                        )
-
-                        from core.metrics import IMAGE_CACHE_OPERATIONS
-                        IMAGE_CACHE_OPERATIONS.labels(operation="store").inc()
-
-                        logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
-
-                    except Exception as e:
-                        logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
-
-                    generation_time = (datetime.now(MOSCOW_TZ) - start_time).total_seconds()
-                    SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
-
-                    logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")
-                    return True, str(file_path)
+                    return False, None
 
                 except Exception as e:
-                    logger.error(f"❌ Error generating {cache_key}: {e}")
+                    logger.error(f"❌ Error queuing generation for {cache_key}: {e}")
                     return False, None
+            
+            # Local execution logic
+            try:
+                # Измеряем время генерации для метрик
+                with SCHEDULE_GENERATION_TIME.labels(schedule_type="week").time():
+                    # Сохраняем исходную компоновку — жестко фиксированный холст
+                    from core.render_config import VIEWPORT_HEIGHT, VIEWPORT_WIDTH
+
+                    highres_vp = {
+                        "width": VIEWPORT_WIDTH,
+                        "height": VIEWPORT_HEIGHT,
+                    }
+
+                    success = await generate_schedule_image(
+                        schedule_data=schedule_data,
+                        week_type=week_type,
+                        group=group,
+                        output_path=str(file_path),
+                        viewport_size=highres_vp,
+                        user_theme=user_theme,
+                        lang=lang,
+                    )
+
+                if not success or not file_path.exists():
+                    logger.error(f"❌ Failed to generate image for {cache_key}")
+                    if file_path.exists():
+                        file_size = file_path.stat().st_size
+                        logger.error(f"   File exists but size is {file_size} bytes")
+                    else:
+                        logger.error(f"   File does not exist: {file_path}")
+                    
+                    from core.metrics import IMAGE_CACHE_MISSES
+                    IMAGE_CACHE_MISSES.labels(cache_type="generation_failed").inc()
+                    return False, None
+
+                # Сохраняем в кэш
+                try:
+                    with open(file_path, "rb") as f:
+                        image_bytes = f.read()
+
+                    await self.cache_manager.cache_image(
+                        cache_key,
+                        image_bytes,
+                        metadata={
+                            "group": group,
+                            "week_key": week_type,
+                            "lang": lang,
+                            "generated_at": datetime.now(MOSCOW_TZ).isoformat(),
+                            "file_size": len(image_bytes),
+                            "generated_by": generated_by,
+                        },
+                    )
+
+                    from core.metrics import IMAGE_CACHE_OPERATIONS
+                    IMAGE_CACHE_OPERATIONS.labels(operation="store").inc()
+
+                    logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
+
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
+
+                generation_time = (datetime.now(MOSCOW_TZ) - start_time).total_seconds()
+                SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
+
+                logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")
+                return True, str(file_path)
+
+            except Exception as e:
+                logger.error(f"❌ Error generating {cache_key}: {e}")
+                return False, None
 
     async def _send_image_to_user(
         self,

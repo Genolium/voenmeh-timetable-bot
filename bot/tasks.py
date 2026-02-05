@@ -350,11 +350,10 @@ def generate_week_image_task(
     final_caption: str | None = None,
     lang: str = "ru",
 ):
-    async def _inner():
-        is_auto_generation = user_id is None
-
-        # Ожидаем доступности слота в семафоре
-        with _generation_semaphore:
+    # CRITICAL: Acquire semaphore in the Dramatiq thread to avoid blocking the background loop
+    with _generation_semaphore:
+        async def _inner():
+            is_auto_generation = user_id is None
             log.info(f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key} (семафор получен)")
 
             try:
