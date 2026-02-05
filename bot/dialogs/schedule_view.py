@@ -452,6 +452,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
         cache_key = f"{safe_group}_{week_key}_{lang}"
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
+    logging.info(f"📂 on_send_original_file: cache_key={cache_key}, output_path={output_path}, exists={output_path.exists()}")
     # Проверка подписки на канал, если настроено
     try:
         if SUBSCRIPTION_CHANNEL:
@@ -522,14 +523,16 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
         # Форсируем отправку как файл (Document) с явным именем
         caption = f"📄 {week_name_full} ({safe_group})"
         doc_file = FSInputFile(output_path, filename=f"Schedule_{safe_group}_{week_key}.png")
+        logging.info(f"📤 Attempting to send document to user {callback.from_user.id}, file={output_path}")
         await bot.send_document(callback.from_user.id, document=doc_file, caption=caption)
+        logging.info(f"✅ Document sent successfully to user {callback.from_user.id}")
         try:
             await callback.answer()
         except Exception:
             pass
         return
     except Exception as e:
-        logging.error(f"Failed to send document directly: {e}")
+        logging.error(f"❌ Failed to send document directly: {e}")
         # Фолбэк: через очередь
         try:
             send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
