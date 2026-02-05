@@ -341,7 +341,11 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     final_caption = _("schedule_week_caption", subject_line=subject_line, week_name=week_name, start=start_date_str, end=end_date_str)
 
     # Получаем или генерируем изображение
+    # CRITICAL: Используем user_id из события если в контексте нет — иначе тема не будет учтена
     user_id_for_image = ctx.dialog_data.get("user_id")
+    if not user_id_for_image and user_id:
+        user_id_for_image = user_id
+        ctx.dialog_data["user_id"] = user_id  # Сохраняем для последующих вызовов
     placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
     
     # Определяем тему пользователя (если доступно)
