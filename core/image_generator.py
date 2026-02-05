@@ -302,6 +302,7 @@ async def generate_schedule_image(
             browser: any
             created_at: float
             pages_made: int
+            last_check_at: float = 0.0
 
         if not hasattr(loop, "__img_pool_state__"):
             setattr(loop, "__img_pool_state__", None)
@@ -335,13 +336,30 @@ async def generate_schedule_image(
                             raise
                 return state
 
-            # Все операции со стейтом теперь строго под локом
-            async with state.lock:
-                # 1. Health-check: браузер жив?
+            # Если проверка была недавно, скипаем и отдаем браузер как есть
+            now = time.time()
+            if now - state.last_check_at < 30: # Проверяем здоровье раз в 30 секунд
+                return state
+
+            # Пытаемся взять лок для обслуживания (с коротким таймаутом чтобы не вешать очередь)
+            try:
+                await asyncio.wait_for(state.lock.acquire(), timeout=5.0)
+            except asyncio.TimeoutError:
+                # Если лок занят — значит кто-то уже проверяет или генерит, отдаем браузер "на удачу"
+                return state
+
+            try:
+                # Еще раз проверяем тайминг под локом (double check)
+                if now - state.last_check_at < 30:
+                    return state
+                
+                state.last_check_at = now
+
+                # 1. Health-check: браузер жив? (с малым таймаутом)
                 is_healthy = True
                 try:
-                    # Тестовый контекст для проверки живости
-                    test_ctx = await state.browser.new_context()
+                    # Тестовое создание контекста
+                    test_ctx = await asyncio.wait_for(state.browser.new_context(), timeout=5.0)
                     await test_ctx.close()
                 except Exception:
                     is_healthy = False
@@ -350,35 +368,35 @@ async def generate_schedule_image(
                 # 2. Ротация по возрасту/количеству страниц или если битый
                 needs_restart = (
                     not is_healthy or 
-                    (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or 
+                    (now - state.created_at) > _POOL_MAX_AGE_SEC or 
                     state.pages_made >= _POOL_MAX_PAGES
                 )
 
                 if needs_restart:
                     logging.info(f"Rotating browser pool (reason: healthy={is_healthy}, pages={state.pages_made})")
                     try:
-                        try:
-                            await state.browser.close()
-                        except Exception:
-                            pass
-                        try:
-                            await state.ctx.__aexit__(None, None, None)
-                        except Exception:
-                            pass
+                        # Закрываем всё с таймаутом
+                        await asyncio.wait_for(state.browser.close(), timeout=5.0)
+                        await asyncio.wait_for(state.ctx.__aexit__(None, None, None), timeout=5.0)
+                    except Exception:
+                        pass
                     finally:
-                        # Пересоздаем контекст и браузер
+                        # Пересоздаем
                         new_ctx = await async_playwright().__aenter__()
                         try:
                             new_browser = await new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
                             state.ctx = new_ctx
                             state.browser = new_browser
                             state.created_at = time.time()
+                            state.last_check_at = time.time()
                             state.pages_made = 0
                             logging.info("Browser pool rotated successfully")
                         except Exception:
                             await new_ctx.__aexit__(None, None, None)
                             raise
                 return state
+            finally:
+                state.lock.release()
 
         state = await _ensure_browser()
 
