@@ -41,6 +41,7 @@ from core.image_generator import generate_schedule_image
 from core.image_service import ImageService
 from core.telemetry import setup_telemetry, shutdown_telemetry
 from core.user_data import UserDataManager
+from bot.utils.worker_loop import run_async
 
 load_dotenv()
 
@@ -304,12 +305,12 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
 
 @dramatiq.actor
 def send_message_task(user_id: int, text: str):
-    asyncio.run(_send_message(user_id, text))
+    run_async(_send_message(user_id, text))
 
 
 @dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
-    asyncio.run(_copy_message(user_id, from_chat_id, message_id))
+    run_async(_copy_message(user_id, from_chat_id, message_id))
 
 
 @dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
@@ -329,7 +330,7 @@ def send_lesson_reminder_task(
         except Exception as e:
             log.error(f"Dramatiq task send_lesson_reminder_task FAILED to prepare reminder for {user_id}: {e}")
 
-    asyncio.run(_inner())
+    run_async(_inner())
 
 
 # Семафор для ограничения количества одновременных задач генерации изображений
@@ -412,7 +413,7 @@ def generate_week_image_task(
                     except Exception:
                         pass
 
-    asyncio.run(_inner())
+    run_async(_inner())
 
 
 async def _send_error_message(user_id: int, error_text: str):
@@ -511,7 +512,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
         except Exception as e:
             log.error(f"❌ check_theme_subscription_task failed: {e}")
 
-    asyncio.run(_inner())
+    run_async(_inner())
 
 
 @dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=60000)
@@ -575,4 +576,4 @@ def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: st
         except Exception as e:
             log.error(f"send_week_original_if_subscribed_task failed: {e}")
 
-    asyncio.run(_inner())
+    run_async(_inner())
