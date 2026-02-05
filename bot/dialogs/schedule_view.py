@@ -491,14 +491,16 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     # Если файла нет – инициируем генерацию и попробуем дождаться готовности короткое время
     if not output_path.exists():
         await get_week_image_data(manager)
-        # Подождём до 5 секунд небольшими интервалами
-        for _ in range(10):
+        # Подождём до 8 секунд с экспоненциальной задержкой
+        wait_intervals = [0.5, 0.5, 1.0, 1.0, 1.0, 2.0, 2.0]
+        for interval in wait_intervals:
             try:
                 if output_path.exists():
                     break
+                await asyncio.sleep(interval)
             except Exception:
-                pass
-            await asyncio.sleep(0.5)
+                await asyncio.sleep(interval)
+        
         if not output_path.exists():
             try:
                 await callback.answer("⏳ Готовлю оригинал, вернитесь через пару секунд…")
@@ -506,7 +508,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                 pass
             # Запросим отправку через очередь (после проверки подписки)
             try:
-                send_week_original_if_subscribed_task.send(callback.from_user.id, group, week_key)
+                send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
             except Exception:
                 pass
             return
@@ -522,7 +524,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     except Exception:
         # Фолбэк: через очередь
         try:
-            send_week_original_if_subscribed_task.send(callback.from_user.id, group, week_key)
+            send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
             await callback.answer("📤 Отправлю изображение в фоне…")
         except Exception:
             pass

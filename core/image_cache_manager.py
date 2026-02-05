@@ -291,7 +291,7 @@ class ImageCacheManager:
 
     async def cleanup_expired_cache(self) -> int:
         """
-        Очищает устаревшие файлы из кэша.
+        Очищает устаревшие файлы из кэша и их метаданные в Redis.
 
         Returns:
             Количество удаленных файлов
@@ -300,18 +300,32 @@ class ImageCacheManager:
             removed_count = 0
             cutoff_time = datetime.now(MOSCOW_TZ) - timedelta(hours=self.cache_ttl_hours)
 
+            # Перебираем все файлы в папке кэша
             for file_path in self.cache_dir.glob("*.png"):
                 try:
                     file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
                     if file_mtime < cutoff_time:
+                        cache_key = file_path.stem
+                        
+                        # Удаляем файл
                         file_path.unlink()
                         removed_count += 1
-                        logger.info(f"Removed expired cache file: {file_path.name}")
+                        
+                        # Удаляем метаданные и данные из Redis
+                        try:
+                            redis_key = f"{self.cache_data_prefix}{cache_key}"
+                            meta_key = f"{self.cache_metadata_prefix}{cache_key}"
+                            await self.redis.delete(redis_key, meta_key)
+                            await self._decrement_counter()
+                        except Exception as re:
+                            logger.warning(f"Failed to cleanup Redis for {cache_key}: {re}")
+                            
+                        logger.info(f"Removed expired cache: {file_path.name}")
                 except Exception as e:
                     logger.warning(f"Failed to remove expired file {file_path}: {e}")
 
             if removed_count > 0:
-                logger.info(f"Cleanup removed {removed_count} expired cache files")
+                logger.info(f"Cleanup removed {removed_count} expired items")
                 IMAGE_CACHE_OPERATIONS.labels(operation="cleanup").inc()
                 await self._update_cache_size_metrics()
 

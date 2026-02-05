@@ -18,17 +18,21 @@ def get_worker_loop() -> asyncio.AbstractEventLoop:
     global _worker_loop, _worker_loop_thread
     
     with _lock:
-        if _worker_loop is None:
+        if _worker_loop is None or _worker_loop.is_closed():
             _worker_loop = asyncio.new_event_loop()
             
             def run_loop(loop):
                 asyncio.set_event_loop(loop)
+                logger.info("背景 event loop 开始运行")
                 try:
                     loop.run_forever()
                 except Exception as e:
                     logger.error(f"Worker loop crashed: {e}")
                 finally:
-                    loop.close()
+                    # Убеждаемся, что луп закрыт корректно
+                    if not loop.is_closed():
+                        loop.close()
+                    logger.info("背景 event loop 已停止")
             
             _worker_loop_thread = threading.Thread(
                 target=run_loop, 
@@ -38,16 +42,36 @@ def get_worker_loop() -> asyncio.AbstractEventLoop:
             )
             _worker_loop_thread.start()
             logger.info("✅ Global persistent worker loop started")
+        
+        # Проверка здоровья лупа
+        if not _worker_loop_thread.is_alive():
+            logger.error("❌ Worker loop thread is dead! Attempting to restart...")
+            _worker_loop = None # Сброс для перезапуска при следующем вызове
+            return get_worker_loop()
             
     return _worker_loop
+
+
+def stop_worker_loop():
+    """Stops the global worker loop and joins the thread."""
+    global _worker_loop
+    if _worker_loop and _worker_loop.is_running():
+        _worker_loop.call_soon_threadsafe(_worker_loop.stop)
+        logger.info("Stopping worker loop...")
 
 
 def run_async(coro):
     """
     Runs a coroutine in the global worker loop and waits for the result (synchronously).
-    Useful for bridging logic in synchronous Dramatiq workers.
     """
-    loop = get_worker_loop()
-    future = asyncio.run_coroutine_threadsafe(coro, loop)
-    # This will block the current thread until the coroutine finishes
-    return future.result()
+    try:
+        loop = get_worker_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        # Блокируем с таймаутом, чтобы не зависнуть навсегда если что-то пошло не так
+        return future.result(timeout=350) # Чуть больше самого длинного лимита Dramatiq
+    except asyncio.TimeoutError:
+        logger.error("Coroutine timed out in worker loop")
+        raise
+    except Exception as e:
+        logger.error(f"Error running async task: {e}")
+        raise

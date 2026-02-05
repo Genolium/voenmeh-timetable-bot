@@ -303,70 +303,72 @@ async def generate_schedule_image(
         async def _ensure_browser() -> _PoolState:
             state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
             if state is None:
-                # Первичная инициализация
+                # Первичная инициализация (без лока, так как стейта еще нет)
                 ctx = await async_playwright().__aenter__()
-                browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                state = _PoolState(
-                    lock=asyncio.Lock(),
-                    ctx=ctx,
-                    browser=browser,
-                    created_at=time.time(),
-                    pages_made=0,
-                )
-                setattr(loop, "__img_pool_state__", state)
+                try:
+                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                    state = _PoolState(
+                        lock=asyncio.Lock(),
+                        ctx=ctx,
+                        browser=browser,
+                        created_at=time.time(),
+                        pages_made=0,
+                    )
+                    setattr(loop, "__img_pool_state__", state)
+                except Exception:
+                    # Чистим если упало на старте
+                    await ctx.__aexit__(None, None, None)
+                    raise
                 return state
-            # Health-check: браузер жив?
-            try:
-                _ = await state.browser.new_context()
-                await _.close()
-            except Exception:
-                # Перезапустим пул
+
+            # Все операции со стейтом теперь строго под локом
+            async with state.lock:
+                # 1. Health-check: браузер жив?
+                is_healthy = True
                 try:
+                    # Тестовый контекст для проверки живости
+                    test_ctx = await state.browser.new_context()
+                    await test_ctx.close()
+                except Exception:
+                    is_healthy = False
+                    logging.warning("Browser health-check failed, scheduling restart")
+
+                # 2. Ротация по возрасту/количеству страниц или если битый
+                needs_restart = (
+                    not is_healthy or 
+                    (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or 
+                    state.pages_made >= _POOL_MAX_PAGES
+                )
+
+                if needs_restart:
+                    logging.info(f"Rotating browser pool (reason: healthy={is_healthy}, pages={state.pages_made})")
                     try:
-                        await state.browser.close()
-                    except Exception:
-                        pass
-                    try:
-                        await state.ctx.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                finally:
-                    ctx = await async_playwright().__aenter__()
-                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(
-                        lock=asyncio.Lock(),
-                        ctx=ctx,
-                        browser=browser,
-                        created_at=time.time(),
-                        pages_made=0,
-                    )
-                    setattr(loop, "__img_pool_state__", state)
-            # Ротация по возрасту/количеству страниц
-            if (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES:
-                try:
-                    try:
-                        await state.browser.close()
-                    except Exception:
-                        pass
-                    try:
-                        await state.ctx.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                finally:
-                    ctx = await async_playwright().__aenter__()
-                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(
-                        lock=asyncio.Lock(),
-                        ctx=ctx,
-                        browser=browser,
-                        created_at=time.time(),
-                        pages_made=0,
-                    )
-                    setattr(loop, "__img_pool_state__", state)
-            return state
+                        try:
+                            await state.browser.close()
+                        except Exception:
+                            pass
+                        try:
+                            await state.ctx.__aexit__(None, None, None)
+                        except Exception:
+                            pass
+                    finally:
+                        # Пересоздаем контекст и браузер
+                        new_ctx = await async_playwright().__aenter__()
+                        try:
+                            new_browser = await new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
+                            state.ctx = new_ctx
+                            state.browser = new_browser
+                            state.created_at = time.time()
+                            state.pages_made = 0
+                            logging.info("Browser pool rotated successfully")
+                        except Exception:
+                            await new_ctx.__aexit__(None, None, None)
+                            raise
+                return state
 
         state = await _ensure_browser()
 
+        # Теперь используем лок для основной работы
         async with state.lock:
             page = await state.browser.new_page()
             page.set_default_timeout(120000)

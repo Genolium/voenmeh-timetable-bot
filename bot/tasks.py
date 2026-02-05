@@ -516,16 +516,19 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
 
 
 @dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=60000)
-def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: str):
+def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
     async def _inner():
         try:
             r = get_redis_client(decode_responses=True)
             bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
             async with bot:
+                # ... (subscription check logic remains the same) ...
+                
+                # Check subscription status
                 is_subscribed = False
-                cache_key = f"sub_status:{user_id}"
+                status_cache_key = f"sub_status:{user_id}"
                 try:
-                    cached = await r.get(cache_key)
+                    cached = await r.get(status_cache_key)
                     if cached is not None:
                         is_subscribed = cached == "1"
                     else:
@@ -533,42 +536,25 @@ def send_week_original_if_subscribed_task(user_id: int, group: str, week_key: st
                             try:
                                 member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
                                 status = getattr(member, "status", None)
-                                is_subscribed = status in (
-                                    "member",
-                                    "administrator",
-                                    "creator",
-                                )
+                                is_subscribed = status in ("member", "administrator", "creator")
                             except Exception:
                                 is_subscribed = False
-                        await r.set(
-                            cache_key,
-                            "1" if is_subscribed else "0",
-                            ex=21600 if is_subscribed else 60,
-                        )
+                        await r.set(status_cache_key, "1" if is_subscribed else "0", ex=21600 if is_subscribed else 60)
                 except Exception:
                     pass
 
                 if not is_subscribed and SUBSCRIPTION_CHANNEL:
-                    # Корректно формируем ссылку на канал
+                    # (skip channel link generation for brevity in thought, but keep it in implementation)
                     channel_link = SUBSCRIPTION_CHANNEL
-                    if channel_link.startswith("@"):
-                        channel_link = f"https://t.me/{channel_link[1:]}"
-                    elif channel_link.startswith("-"):
-                        # Для каналов с числовым ID
-                        channel_link = f"tg://resolve?domain={channel_link}"
-                    elif not channel_link.startswith("http"):
-                        # Для обычных имен каналов
-                        channel_link = f"https://t.me/{channel_link}"
-
+                    if channel_link.startswith("@"): channel_link = f"https://t.me/{channel_link[1:]}"
+                    elif channel_link.startswith("-"): channel_link = f"tg://resolve?domain={channel_link}"
+                    elif not channel_link.startswith("http"): channel_link = f"https://t.me/{channel_link}"
                     kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]])
-                    await bot.send_message(
-                        user_id,
-                        "Доступ к полному качеству по подписке на канал.",
-                        reply_markup=kb,
-                    )
+                    await bot.send_message(user_id, "Доступ к полному качеству по подписке на канал.", reply_markup=kb)
                     return
 
-                file_path = MEDIA_PATH / "generated" / f"{group}_{week_key}.png"
+                # Use correct cache_key based path
+                file_path = MEDIA_PATH / "generated" / f"{cache_key}.png"
                 if not file_path.exists():
                     await bot.send_message(user_id, "⏳ Готовлю оригинал, попробуйте чуть позже…")
                     return
