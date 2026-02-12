@@ -320,7 +320,7 @@ async def generate_schedule_image(
                     # Double check
                     state = getattr(loop, "__img_pool_state__")
                     if state is None:
-                        ctx = await async_playwright().__aenter__()
+                        ctx = await async_playwright().start()
                         try:
                             browser = await asyncio.wait_for(ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
                             state = _PoolState(
@@ -332,7 +332,7 @@ async def generate_schedule_image(
                             )
                             setattr(loop, "__img_pool_state__", state)
                         except Exception:
-                            await ctx.__aexit__(None, None, None)
+                            await ctx.stop()
                             raise
                 return state
 
@@ -371,7 +371,7 @@ async def generate_schedule_image(
                     try:
                         # Закрываем всё с таймаутом
                         await asyncio.wait_for(state.browser.close(), timeout=5.0)
-                        await asyncio.wait_for(state.ctx.__aexit__(None, None, None), timeout=5.0)
+                        await asyncio.wait_for(state.ctx.stop(), timeout=5.0)
                     except Exception:
                         pass
                     finally:
@@ -386,7 +386,7 @@ async def generate_schedule_image(
                             state.pages_made = 0
                             logging.info(f"Browser pool rotated successfully (loop: {id(loop)})")
                         except Exception:
-                            await new_ctx.__aexit__(None, None, None)
+                            await new_ctx.stop()
                             raise
                 return state
 
@@ -512,7 +512,7 @@ async def generate_schedule_image(
                                 except Exception:
                                     pass
                                 try:
-                                    await state.ctx.__aexit__(None, None, None)
+                                    await state.ctx.stop()
                                 except Exception:
                                     pass
                             finally:
@@ -547,7 +547,7 @@ async def shutdown_image_generator():
                 except Exception:
                     pass
                 try:
-                    await state.ctx.__aexit__(None, None, None)
+                    await state.ctx.stop()
                 except Exception:
                     pass
             finally:

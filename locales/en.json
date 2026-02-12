@@ -265,7 +265,7 @@
     "week_odd": "Odd Week",
     "week_even": "Even Week",
     "image_schedule_header": "Schedule",
-    "image_credits": "Bot developed at",
+    "image_credits": "created in",
     "room_not_specified": "Room not specified",
     "theme_changed_success": "✅ Theme changed to {theme}!",
     "menu_btn_theme": "🎨 Theme: {theme}",

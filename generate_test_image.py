@@ -69,25 +69,45 @@ async def main():
     # Создаем тестовые данные
     test_data = create_test_schedule_data()
 
-    # Генерируем изображения для обеих недель
-    week_types = [("Нечётная неделя", "test_schedule_odd.png"), ("Чётная неделя", "test_schedule_even.png")]
+    # Генерируем изображения для обеих недель и всех языков
+    week_types = [("Нечётная неделя", "odd"), ("Чётная неделя", "even")]
+    languages = ["ru", "en", "zh"]
 
-    total_images = len(week_types)
-    print(f"Начинаю генерацию {total_images} тестовых изображений...")
-    print_progress_bar(0, total_images, "Генерация тестовых изображений", "0/2 изображений")
+    total_tasks = len(week_types) * len(languages)
+    print(f"Начинаю генерацию {total_tasks} тестовых изображений...")
+    print_progress_bar(0, total_tasks, "Генерация", f"0/{total_tasks}")
 
-    for i, (week_type, filename) in enumerate(week_types):
-        output_path = output_dir / filename
-        print_progress_bar(i, total_images, "Генерация тестовых изображений", f"{i}/{total_images} изображений")
+    counter = 0
+    for lang in languages:
+        for week_name, week_slug in week_types:
+            filename = f"test_schedule_{week_slug}_{lang}.png"
+            output_path = output_dir / filename
+            
+            # For non-ru languages, we might want to change the week name passed to the function
+            # checking core/image_generator.py... it uses week_type string to determine odd/even logic:
+            # week_slug = "odd" if "Неч" in week_type else "even"
+            # So we must keep "Нечётная" / "Чётная" in the string or just ensure logic works.
+            # Let's keep the Russian string for detection but maybe that looks weird in other langs?
+            # actually image_generator.py:
+            # week_slug = "odd" if "Неч" in week_type else "even"
+            # i18n_week_type = i18n.get("week_odd" if week_slug == "odd" else "week_even", current_lang)
+            # So the input `week_type` is only used for detection if it contains "Неч".
+            # Let's pass the Russian string ensuring it works for detection.
+            
+            success = await generate_schedule_image(
+                schedule_data=test_data, 
+                week_type=week_name, 
+                group="TEST_GROUP", 
+                output_path=str(output_path), 
+                user_theme=None,
+                lang=lang
+            )
 
-        success = await generate_schedule_image(
-            schedule_data=test_data, week_type=week_type, group="TEST_GROUP", output_path=str(output_path), user_theme=None
-        )
-
-        if success:
-            print_progress_bar(i + 1, total_images, "Генерация тестовых изображений", f"{i + 1}/{total_images} изображений")
-        else:
-            print(f"\n[ERROR] Ошибка при создании изображения: {output_path}")
+            counter += 1
+            if success:
+                print_progress_bar(counter, total_tasks, "Генерация", f"{counter}/{total_tasks}")
+            else:
+                print(f"\n[ERROR] Ошибка при создании изображения: {output_path}")
 
     print("\n[SUCCESS] Генерация тестовых изображений завершена!")
 

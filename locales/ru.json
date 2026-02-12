@@ -265,7 +265,7 @@
     "week_odd": "Нечётная неделя",
     "week_even": "Чётная неделя",
     "image_schedule_header": "Расписание",
-    "image_credits": "Бот разработан в",
+    "image_credits": "сделано в",
     "room_not_specified": "Кабинет не указан",
     "theme_changed_success": "✅ Тема изменена на {theme}!",
     "menu_btn_theme": "🎨 Тема: {theme}",
