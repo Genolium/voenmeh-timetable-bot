@@ -41,6 +41,8 @@
     "settings_btn_disable_reminders": "Disable lesson reminders",
     "settings_reminder_time_fmt": "({minutes} min before start)",
     "settings_reminder_select_title": "Choose how many minutes before the first lesson to send a reminder:",
+    "settings_morning_time_title": "Choose morning summary time:",
+    "settings_evening_time_title": "Choose evening summary time:",
     "settings_minutes_short": "min",
     "settings_evening_label": "Evening summary (20:00)",
     "settings_morning_label": "Morning summary (8:00)",
@@ -91,7 +93,12 @@
     "evening_greetings": [
         "Good evening! 👋",
         "Hi! Preparing for tomorrow.",
-        "Evening summary incoming."
+        "Evening summary incoming.",
+        "The day has come to an end. 🌙",
+        "Time to rest and prepare for tomorrow.",
+        "Going to bed soon, but first — the schedule.",
+        "Hope your day was productive! ✨",
+        "Evening schedule check-up."
     ],
     "evening_greetings_teacher": [
         "Good evening!",
@@ -101,7 +108,12 @@
     "morning_greetings": [
         "Good morning! ☀️",
         "Morning! Studies await.",
-        "Morning summary is ready!"
+        "Morning summary is ready!",
+        "Wake up and get to work! 🚀",
+        "New day — new knowledge.",
+        "Time to hit the books! 📚",
+        "Hope you slept well! Time for classes.",
+        "Good morning! Have an easy day."
     ],
     "morning_greetings_teacher": [
         "Good morning!",
@@ -111,31 +123,45 @@
     "day_context": {
         "0": [
             "Tomorrow is Monday — fresh start!",
-            "Getting ready for a new week."
+            "Getting ready for a new week.",
+            "Monday is a hard day, but we'll manage. 💪",
+            "Bursting into a new study week!"
         ],
         "1": [
             "Tomorrow is Tuesday, getting into rhythm.",
-            "Planning a productive Tuesday."
+            "Planning a productive Tuesday.",
+            "Tuesday is a day of productive work.",
+            "Speeding up, the week just started."
         ],
         "2": [
             "Tomorrow is Wednesday — mid-week!",
-            "Halfway through the week already."
+            "Halfway through the week already.",
+            "Wednesday is a little Friday (almost).",
+            "Over the hump! Keep going."
         ],
         "3": [
             "Tomorrow is Thursday, finish line is close.",
-            "One last push before the weekend!"
+            "One last push before the weekend!",
+            "Thursday — tomorrow is Friday!",
+            "Almost weekend, keep the pace."
         ],
         "4": [
             "Tomorrow is Friday! Rest is coming soon.",
-            "Last push before chilling!"
+            "Last push before chilling!",
+            "Yay Friday! Weekend on the horizon. 🎉",
+            "Hold on until evening — then freedom!"
         ],
         "5": [
             "Tomorrow is Saturday — for the toughest ones.",
-            "Another study day, then rest."
+            "Another study day, then rest.",
+            "Saturday — studying while others sleep. 📚",
+            "Final push before Sunday."
         ],
         "6": [
             "Tomorrow is Sunday — sleep well!",
-            "Weekend ahead, but don't forget homework 😉"
+            "Weekend ahead, but don't forget homework 😉",
+            "Sunday. Charging energy. 🔋",
+            "Resting and preparing for Monday."
         ]
     },
     "day_context_teacher": {
@@ -171,19 +197,31 @@
     "clothing_advice": {
         "cold": [
             "It will be freezing tomorrow, don't forget hat and gloves!",
-            "Advise dressing warmly."
+            "Advise dressing warmly.",
+            "It's freezing outside! Dress like an onion. ❄️",
+            "Don't forget a scarf, the wind can bite.",
+            "Wrap up as much as possible!"
         ],
         "cool": [
             "Chilly morning tomorrow, a light jacket or sweater is perfect.",
-            "Autumn chill needs cozy clothes."
+            "Autumn chill needs cozy clothes.",
+            "It's chilly. A coat or a warm jacket is a must. 🧥",
+            "Deceptive weather, better safe than sorry.",
+            "Don't forget an umbrella if the forecast hints."
         ],
         "warm": [
             "Warm weather promised, dress lightly.",
-            "Great weather for a walk."
+            "Great weather for a walk.",
+            "Nice weather, great for a walk after classes. 🌤",
+            "Comfortable temperature, but keep your windbreaker handy.",
+            "Perfect weather for study and rest."
         ],
         "hot": [
             "It will be hot tomorrow! Drink more water.",
-            "Real summer! Perfect for light clothes."
+            "Real summer! Perfect for light clothes.",
+            "It's hot! Sunglasses will come in handy. 😎",
+            "Great day for ice cream after classes. 🍦",
+            "Dress lightly and drink water."
         ]
     },
     "weather_forecast_fmt": "{emoji} Forecast for tomorrow: {description}, {temp}°C.\n<i>{advice}</i>",

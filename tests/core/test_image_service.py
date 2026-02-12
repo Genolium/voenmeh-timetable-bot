@@ -14,6 +14,14 @@ def mock_cache_manager():
     mock.is_cached = AsyncMock(return_value=False)
     mock.get_file_path.return_value = Path("test.png")
     mock.cache_image = AsyncMock(return_value=True)
+    
+    # Mock redis lock
+    mock.redis = MagicMock()
+    mock_lock = MagicMock()
+    mock_lock.__aenter__ = AsyncMock(return_value=None)
+    mock_lock.__aexit__ = AsyncMock(return_value=None)
+    mock.redis.lock.return_value = mock_lock
+    
     return mock
 
 
@@ -28,7 +36,8 @@ def image_service(mock_cache_manager, mock_bot):
 
 
 @pytest.mark.asyncio
-async def test_get_schedule_image_cached(image_service, mock_cache_manager):
+async def test_get_schedule_image_cached(image_service, mock_cache_manager, mocker):
+    mocker.patch("pathlib.Path.exists", return_value=True)
     mock_cache_manager.is_cached.return_value = True
     mock_cache_manager.get_file_path.return_value = Path("cached.png")
     success, file_path = await image_service.get_or_generate_week_image("TEST_GROUP", "odd", "Нечетная", {})
@@ -69,7 +78,7 @@ async def test_generate_and_cache_image(image_service, mocker, tmp_path):
     mocker.patch("core.image_service.generate_schedule_image", AsyncMock(return_value=True))
     mocker.patch("pathlib.Path.exists", return_value=True)
     mocker.patch("builtins.open", mocker.mock_open())
-    success, file_path = await image_service._generate_and_cache_image("test_key", {}, "Test Week", "TEST")
+    success, file_path = await image_service._generate_and_cache_image("test_key", {}, "Test Week", "TEST", exec_locally=True)
     assert success
     assert file_path.endswith(".png")
 

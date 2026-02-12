@@ -1,8 +1,9 @@
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
 from redis.asyncio.client import Redis
 from sqlalchemy import case, event, func, or_, select, update
@@ -29,8 +30,8 @@ def cached(ttl: int = 3600) -> Callable:
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @wraps(func)
         async def wrapper(self: "UserDataManager", *args: Any, **kwargs: Any) -> T:
-            # Создаем ключ кэша на основе имени функции и аргументов
-            cache_key: str = f"cache:{func.__name__}:{hash(str(args) + str(sorted(kwargs.items())))}"
+            # Создаем детерминированный ключ кэша
+            cache_key = self._get_cache_key(func.__name__, *args, **kwargs)
 
             # Получаем Redis клиент
             redis_client: Redis = await self._get_redis_client()
@@ -117,30 +118,60 @@ class UserDataManager:
             self._redis_client = await get_redis_client()
         return self._redis_client
 
-    async def clear_user_cache(self) -> None:
-        """Очищает кэш пользователей (вызывается при изменении данных)."""
+    def _get_cache_key(self, func_name: str, *args: Any, **kwargs: Any) -> str:
+        """
+        Генерирует детерминированный ключ кэша на основе имени функции и аргументов.
+        Использует MD5 вместо hash() для стабильности между процессами.
+        """
+        # Сериализуем аргументы для создания стабильного хэша
+        # Сортируем kwargs для детерминизма
+        args_str = str(args)
+        kwargs_str = str(sorted(kwargs.items()))
+        data_to_hash = f"{args_str}:{kwargs_str}"
+        
+        arg_hash = hashlib.md5(data_to_hash.encode("utf-8")).hexdigest()
+        return f"cache:{func_name}:{arg_hash}"
+
+    async def clear_user_cache(self, user_id: Optional[int] = None) -> None:
+        """Очищает кэш пользователей (вызывается при изменении данных подписок)."""
+        if not self._redis_client:
+            await self._get_redis_client()
+        
         if not self._redis_client:
             return
 
         try:
-            # Удаляем ключи кэша для методов получения пользователей
-            cache_patterns: List[str] = [
-                "cache:get_users_for_evening_notify:*",
-                "cache:get_users_for_morning_summary:*",
-                "cache:get_users_for_lesson_reminders:*",
-            ]
+            if user_id is not None:
+                # Инвалидируем только кэш конкретного пользователя
+                # Генерируем ключи точно так же, как декоратор @cached
+                user_patterns = [
+                    self._get_cache_key("get_user_language", user_id),
+                    self._get_cache_key("get_user_theme", user_id),
+                    self._get_cache_key("get_user_group", user_id),
+                ]
+                for key in user_patterns:
+                    deleted = await self._redis_client.delete(key)
+                    if deleted:
+                        logger.debug(f"Cache key deleted: {key}")
+                logger.info(f"User cache cleared for user_id={user_id}")
+            else:
+                # Полная очистка — только при изменении подписок
+                cache_patterns: List[str] = [
+                    "cache:get_users_for_evening_notify:*",
+                    "cache:get_users_for_morning_summary:*",
+                    "cache:get_users_for_lesson_reminders:*",
+                ]
 
-            for pattern in cache_patterns:
-                # Используем SCAN для поиска ключей по паттерну
-                cursor: int = 0
-                while True:
-                    cursor, keys = await self._redis_client.scan(cursor, match=pattern)
-                    if keys:
-                        await self._redis_client.delete(*keys)
-                    if cursor == 0:
-                        break
+                for pattern in cache_patterns:
+                    cursor: int = 0
+                    while True:
+                        cursor, keys = await self._redis_client.scan(cursor, match=pattern)
+                        if keys:
+                            await self._redis_client.delete(*keys)
+                        if cursor == 0:
+                            break
 
-            logger.info("User cache cleared")
+                logger.info("User cache cleared (full)")
         except Exception as e:
             logger.warning(f"Failed to clear user cache: {e}")
 
@@ -151,13 +182,23 @@ class UserDataManager:
             if user:
                 user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
             else:
-                # Определяем язык из language_code, если передан (логика может быть в хендлере, но дефолт тут)
                 user = User(user_id=user_id, username=username)
                 session.add(user)
             await session.commit()
+        # НЕ очищаем кэш при простом обновлении last_active_date
 
-        # Очищаем кэш пользователей после регистрации/обновления
-        await self.clear_user_cache()
+    async def register_user_and_get(self, user_id: int, username: Optional[str]) -> Optional["User"]:
+        """Регистрирует/обновляет пользователя и возвращает его объект за одну сессию."""
+        async with self.async_session_maker() as session:
+            user = await session.get(User, user_id)
+            if user:
+                user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
+            else:
+                user = User(user_id=user_id, username=username)
+                session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return user
 
     async def set_user_group(self, user_id: int, group: str) -> None:
         """Устанавливает или обновляет учебную группу пользователя."""
@@ -166,7 +207,8 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения группы
+        # Очищаем кэш конкретного пользователя + broadcast кэш (группа влияет на рассылки)
+        await self.clear_user_cache(user_id)
         await self.clear_user_cache()
 
     async def set_user_type(self, user_id: int, user_type: str) -> None:
@@ -176,7 +218,7 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения типа
+        # Очищаем broadcast кэш (тип влияет на рассылки)
         await self.clear_user_cache()
 
     async def get_user_type(self, user_id: int) -> Optional[str]:
@@ -186,8 +228,9 @@ class UserDataManager:
             result = await session.scalar(stmt)
             return result
 
+    @cached(ttl=300)
     async def get_user_group(self, user_id: int) -> Optional[str]:
-        """Получает учебную группу пользователя."""
+        """Получает учебную группу пользователя (кэшируется на 5 минут)."""
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             return user.group if user else None
@@ -203,6 +246,8 @@ class UserDataManager:
                     "lesson_reminders": user.lesson_reminders,
                     "reminder_time_minutes": user.reminder_time_minutes,
                     "theme": user.theme,
+                    "morning_time": user.morning_time,
+                    "evening_time": user.evening_time,
                 }
             return {
                 "evening_notify": False,
@@ -210,6 +255,8 @@ class UserDataManager:
                 "lesson_reminders": False,
                 "reminder_time_minutes": 60,
                 "theme": "standard",
+                "morning_time": "08:00",
+                "evening_time": "20:00",
             }
 
     async def update_setting(self, user_id: int, setting_name: str, status: bool) -> None:
@@ -226,7 +273,7 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения настроек
+        # Очищаем broadcast кэш (настройка подписки влияет на рассылки)
         await self.clear_user_cache()
 
     async def set_reminder_time(self, user_id: int, minutes: int) -> None:
@@ -236,7 +283,23 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения времени напоминания
+        # Очищаем broadcast кэш
+        await self.clear_user_cache()
+
+    async def set_morning_time(self, user_id: int, time_str: str) -> None:
+        """Устанавливает время утренней рассылки."""
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(morning_time=time_str)
+            await session.execute(stmt)
+            await session.commit()
+        await self.clear_user_cache()
+
+    async def set_evening_time(self, user_id: int, time_str: str) -> None:
+        """Устанавливает время вечерней рассылки."""
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(evening_time=time_str)
+            await session.execute(stmt)
+            await session.commit()
         await self.clear_user_cache()
 
     async def get_full_user_info(self, user_id: int) -> Optional[User]:
@@ -245,8 +308,9 @@ class UserDataManager:
             user = await session.get(User, user_id)
             return user
 
+    @cached(ttl=300)
     async def get_user_theme(self, user_id: int) -> Optional[str]:
-        """Возвращает тему пользователя (standard, light, dark, classic, coffee)."""
+        """Возвращает тему пользователя (кэшируется на 5 минут)."""
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             return user.theme if user else "standard"
@@ -264,13 +328,12 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения темы
-        await self.clear_user_cache()
+        # Очищаем кэш темы конкретного пользователя
+        await self.clear_user_cache(user_id)
 
+    @cached(ttl=300)
     async def get_user_language(self, user_id: int) -> str:
-        """Возвращает язык пользователя (ru/en/zh)."""
-        # Сначала пробуем из кэша (если бы он был для языка, но пока прямой запрос)
-        # TODO: Добавить кэширование языка, так как это частый запрос
+        """Возвращает язык пользователя (кэшируется на 5 минут)."""
         async with self.async_session_maker() as session:
             stmt = select(User.language).where(User.user_id == user_id)
             result = await session.scalar(stmt)
@@ -286,6 +349,7 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
         
+        await self.clear_user_cache(user_id)
         await self.clear_user_cache()
 
     # --- Методы для статистики ---
@@ -393,18 +457,34 @@ class UserDataManager:
 
     # --- Методы для рассылок ---
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_evening_notify(self) -> List[Tuple[int, str, str]]:
-        """Получает пользователей для вечерних уведомлений с кэшированием."""
+    async def get_users_for_evening_notify(self, target_hour: int = 20) -> List[Tuple[int, str, str, str]]:
+        """
+        Получает пользователей для вечерних уведомлений с кэшированием.
+        Возвращает (user_id, group, language, user_type).
+        """
+        target_time = f"{target_hour:02d}:00"
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group, User.language).where(User.evening_notify == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language, User.user_type).where(
+                User.evening_notify == True,
+                User.group.isnot(None),
+                User.evening_time == target_time
+            )
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_morning_summary(self) -> List[Tuple[int, str, str]]:
-        """Получает пользователей для утренних уведомлений с кэшированием."""
+    async def get_users_for_morning_summary(self, target_hour: int = 8) -> List[Tuple[int, str, str, str]]:
+        """
+        Получает пользователей для утренних уведомлений с кэшированием.
+        Возвращает (user_id, group, language, user_type).
+        """
+        target_time = f"{target_hour:02d}:00"
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group, User.language).where(User.morning_summary == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language, User.user_type).where(
+                User.morning_summary == True,
+                User.group.isnot(None),
+                User.morning_time == target_time
+            )
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 

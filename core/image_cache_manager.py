@@ -46,7 +46,8 @@ class ImageCacheManager:
 
     async def is_cached(self, cache_key: str) -> bool:
         """
-        Проверяет, есть ли изображение в кэше (Redis + файловая система).
+        Проверяет, есть ли изображение в кэше.
+        Сначала проверяет файловую систему (быстро), затем Redis (если файл отсутствует).
 
         Args:
             cache_key: Ключ кэша (например, "GROUP_even")
@@ -55,39 +56,32 @@ class ImageCacheManager:
             True если изображение есть в кэше, False иначе
         """
         try:
-            # Проверяем Redis кэш
+            # Сначала проверяем файловую систему (дешёвый syscall)
+            file_path = self.cache_dir / f"{cache_key}.png"
+            if file_path.exists():
+                try:
+                    file_size = file_path.stat().st_size
+                    if file_size > 0:
+                        IMAGE_CACHE_HITS.labels(cache_type="unified").inc()
+                        logger.debug(f"Cache HIT (file) for {cache_key}")
+                        return True
+                    else:
+                        logger.warning(f"⚠️ Cache file is empty: {file_path}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Error checking file size: {e}")
+
+            # Файл не найден — проверяем Redis метаданные
             redis_key = f"{self.cache_data_prefix}{cache_key}"
             redis_cached = await self.redis.exists(redis_key)
 
-            # Проверяем файловую систему
-            file_path = self.cache_dir / f"{cache_key}.png"
-            file_cached = file_path.exists()
-
-            # Дополнительная проверка: файл должен быть не пустым
-            if file_cached:
-                try:
-                    file_size = file_path.stat().st_size
-                    if file_size == 0:
-                        logger.warning(f"⚠️ Cache file is empty: {file_path}")
-                        file_cached = False
-                except Exception as e:
-                    logger.warning(f"⚠️ Error checking file size: {e}")
-                    file_cached = False
-
-            # Логируем состояние кэша
-            logger.debug(f"Cache check for {cache_key}: Redis={redis_cached}, File={file_cached}")
-
-            # Изображение считается кэшированным, если есть либо в Redis, либо в файле
-            is_cached = redis_cached or file_cached
-
-            if is_cached:
+            if redis_cached:
                 IMAGE_CACHE_HITS.labels(cache_type="unified").inc()
-                logger.info(f"Cache HIT for {cache_key}")
-            else:
-                IMAGE_CACHE_MISSES.labels(cache_type="unified").inc()
-                logger.info(f"Cache MISS for {cache_key}")
+                logger.debug(f"Cache HIT (redis) for {cache_key}")
+                return True
 
-            return is_cached
+            IMAGE_CACHE_MISSES.labels(cache_type="unified").inc()
+            logger.debug(f"Cache MISS for {cache_key}")
+            return False
 
         except Exception as e:
             logger.error(f"Error checking cache for {cache_key}: {e}")

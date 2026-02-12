@@ -28,6 +28,8 @@ class User(Base):
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
 
     reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60", nullable=False)
+    morning_time: Mapped[str] = mapped_column(String(5), default="08:00", server_default="08:00", nullable=False)
+    evening_time: Mapped[str] = mapped_column(String(5), default="20:00", server_default="20:00", nullable=False)
 
     # Пользовательская тема оформления (standard, light, dark, classic, coffee)
     theme: Mapped[str] = mapped_column(String, default="standard", server_default="standard", nullable=False)

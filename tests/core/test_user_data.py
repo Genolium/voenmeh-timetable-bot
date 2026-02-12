@@ -86,6 +86,8 @@ async def test_get_user_settings_for_unknown_user_returns_defaults(
         "lesson_reminders": False,
         "reminder_time_minutes": 60,
         "theme": "standard",
+        "morning_time": "08:00",
+        "evening_time": "20:00",
     }
 
 
@@ -138,8 +140,8 @@ async def test_users_for_evening_morning_and_lesson_reminders(
     ev = await manager_db.get_users_for_evening_notify()
     mrn = await manager_db.get_users_for_morning_summary()
     rem = await manager_db.get_users_for_lesson_reminders()
-    assert sorted(ev) == [(1, "G", "ru"), (2, "G", "ru")]
-    assert mrn == [(1, "G", "ru")]
+    assert sorted(ev) == [(1, "G", "ru", "student"), (2, "G", "ru", "student")]
+    assert mrn == [(1, "G", "ru", "student")]
     assert rem == [(1, "G", 20, "ru"), (2, "G", 20, "ru")]
 
 
@@ -182,6 +184,8 @@ class TestUserDataManagerWithSQLAlchemy:
             "lesson_reminders": True,
             "reminder_time_minutes": 60,
             "theme": "standard",
+            "morning_time": "08:00",
+            "evening_time": "20:00",
         }
         await manager_with_db.update_setting(456, "morning_summary", False)
         new_settings = await manager_with_db.get_user_settings(456)
@@ -373,8 +377,8 @@ class TestUserDataManagerCaching:
         # Регистрируем пользователя
         await manager_with_db.register_user(123, "testuser")
 
-        # Проверяем, что кэш был очищен
-        mock_redis.delete.assert_called()
+        # Проверяем, что кэш НЕ был очищен (оптимизация)
+        mock_redis.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_invalidation_on_group_update(self, manager_with_db):

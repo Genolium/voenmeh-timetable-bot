@@ -68,6 +68,13 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     settings_morning_label = _("settings_morning_label")
     settings_reminders_label = _("settings_reminders_label")
 
+    settings_minutes_short = _("settings_minutes_short")
+    
+    # Morning times: 6:00 to 12:00
+    morning_times = [f"{h:02d}:00" for h in range(6, 13)]
+    # Evening times: 16:00 to 23:00
+    evening_times = [f"{h:02d}:00" for h in range(16, 24)]
+
     return {
         "settings_title": _("settings_title", language=lang_name),
         "btn_settings": _("btn_settings"),
@@ -90,7 +97,19 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "current_theme": current_theme,
         "reminder_times": [30, 60, 90, 120],
         "current_reminder_time": reminder_time,
-        "settings_minutes_short": _("settings_minutes_short"),
+        "settings_minutes_short": settings_minutes_short,
+
+        "morning_times": morning_times,
+        "evening_times": evening_times,
+        "current_morning_time": settings.get("morning_time", "08:00"),
+        "current_evening_time": settings.get("evening_time", "20:00"),
+        "btn_time": _("btn_time"), # For reminders
+        "btn_morning_time": settings.get("morning_time", "08:00"),
+        "btn_evening_time": settings.get("evening_time", "20:00"),
+        "is_morning_enabled": settings.get(WidgetIds.MORNING_SUMMARY.value, False),
+        "is_evening_enabled": settings.get(WidgetIds.EVENING_NOTIFY.value, False),
+        "settings_morning_time_title": _("settings_morning_time_title"),
+        "settings_evening_time_title": _("settings_evening_time_title"),
         
         "lang_ru": _("lang_ru"),
         "lang_en": _("lang_en"),
@@ -156,6 +175,24 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
         await plan_reminders_for_user(scheduler, user_data_manager, timetable_manager, user_id)
 
     await callback.answer(f"Время напоминания установлено на {selected_time} минут.")
+    await manager.switch_to(SettingsMenu.main)
+
+
+async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id
+    
+    await user_data_manager.set_morning_time(user_id, item_id)
+    await callback.answer(f"Время утренней рассылки: {item_id}")
+    await manager.switch_to(SettingsMenu.main)
+
+
+async def on_evening_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id
+    
+    await user_data_manager.set_evening_time(user_id, item_id)
+    await callback.answer(f"Время вечерней рассылки: {item_id}")
     await manager.switch_to(SettingsMenu.main)
 
 
@@ -329,15 +366,31 @@ settings_dialog = Dialog(
         Format("{settings_evening_label}: <b>{evening_status_text}</b>"),
         Format("{settings_morning_label}: <b>{morning_status_text}</b>"),
         Format("{settings_reminders_label}: <b>{reminders_status_text}</b>"),
-        Button(
-            Format("{evening_button_text}"),
-            id=WidgetIds.EVENING_NOTIFY,
-            on_click=on_toggle_setting,
+        Row(
+            Button(
+                Format("{morning_button_text}"),
+                id=WidgetIds.MORNING_SUMMARY,
+                on_click=on_toggle_setting,
+            ),
+            SwitchTo(
+                Format("🕒 {btn_morning_time}"),
+                id="to_morning_time",
+                state=SettingsMenu.morning_time,
+                when="is_morning_enabled",
+            ),
         ),
-        Button(
-            Format("{morning_button_text}"),
-            id=WidgetIds.MORNING_SUMMARY,
-            on_click=on_toggle_setting,
+        Row(
+            Button(
+                Format("{evening_button_text}"),
+                id=WidgetIds.EVENING_NOTIFY,
+                on_click=on_toggle_setting,
+            ),
+            SwitchTo(
+                Format("🕒 {btn_evening_time}"),
+                id="to_evening_time",
+                state=SettingsMenu.evening_time,
+                when="is_evening_enabled",
+            ),
         ),
         Row(
             Button(
@@ -382,8 +435,42 @@ settings_dialog = Dialog(
                 on_click=on_time_selected,
             )
         ),
-        Back(Format("{btn_back}")),
+        SwitchTo(Format("{btn_back}"), id="back_from_reminders", state=SettingsMenu.main),
         state=SettingsMenu.reminders_time,
+        getter=get_settings_data,
+    ),
+    Window(
+        Format("{settings_morning_time_title}"),
+        Row(
+            Select(
+                Jinja(
+                    "{% if item == current_morning_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"
+                ),
+                id="select_morning_time",
+                item_id_getter=lambda item: str(item),
+                items="morning_times",
+                on_click=on_morning_time_selected,
+            )
+        ),
+        SwitchTo(Format("{btn_back}"), id="back_from_morning", state=SettingsMenu.main),
+        state=SettingsMenu.morning_time,
+        getter=get_settings_data,
+    ),
+    Window(
+        Format("{settings_evening_time_title}"),
+        Row(
+            Select(
+                Jinja(
+                    "{% if item == current_evening_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"
+                ),
+                id="select_evening_time",
+                item_id_getter=lambda item: str(item),
+                items="evening_times",
+                on_click=on_evening_time_selected,
+            )
+        ),
+        SwitchTo(Format("{btn_back}"), id="back_from_evening", state=SettingsMenu.main),
+        state=SettingsMenu.evening_time,
         getter=get_settings_data,
     ),
     Window(

@@ -78,18 +78,19 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
     tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(tomorrow_9am)
 
-    users_to_notify = await user_data_manager.get_users_for_evening_notify()
+    current_hour = datetime.now(MOSCOW_TZ).hour
+    users_to_notify = await user_data_manager.get_users_for_evening_notify(target_hour=current_hour)
     if not users_to_notify:
-        logger.info("Вечерняя рассылка: нет пользователей для уведомления.")
+        logger.info(f"Вечерняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
         return
 
-    logger.info(f"Вечерняя рассылка: обработка {len(users_to_notify)} пользователей")
+    logger.info(f"Вечерняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
-    for user_id, group_name, lang in users_to_notify:
-        # Получаем тип пользователя
-        user = await user_data_manager.get_full_user_info(user_id)
-        user_type = getattr(user, "user_type", "student")
+    for user_id, group_name, lang, user_type in users_to_notify:
+        # user_type уже получен из базы в одном запросе
+        if not user_type:
+            user_type = "student"
 
         # Генерируем intro с учетом типа пользователя и языка
         intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow, user_type=user_type, lang=lang)
@@ -159,18 +160,19 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
     weather_forecast = await weather_api.get_forecast_for_time(today_9am)
 
-    users_to_notify = await user_data_manager.get_users_for_morning_summary()
+    current_hour = datetime.now(MOSCOW_TZ).hour
+    users_to_notify = await user_data_manager.get_users_for_morning_summary(target_hour=current_hour)
     if not users_to_notify:
-        logger.info("Утренняя рассылка: нет пользователей для уведомления.")
+        logger.info(f"Утренняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
         return
 
-    logger.info(f"Утренняя рассылка: обработка {len(users_to_notify)} пользователей")
+    logger.info(f"Утренняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
-    for user_id, group_name, lang in users_to_notify:
-        # Получаем тип пользователя
-        user = await user_data_manager.get_full_user_info(user_id)
-        user_type = getattr(user, "user_type", "student")
+    for user_id, group_name, lang, user_type in users_to_notify:
+        # user_type уже получен из базы в одном запросе
+        if not user_type:
+            user_type = "student"
 
         # Генерируем intro с учетом типа пользователя и языка
         intro_text = generate_morning_intro(weather_forecast, user_type=user_type, lang=lang)
@@ -827,11 +829,11 @@ def setup_scheduler(
     global global_timetable_manager_instance
     global_timetable_manager_instance = manager
 
-    scheduler.add_job(evening_broadcast, "cron", hour=20, minute=0, args=[user_data_manager, manager])
+    scheduler.add_job(evening_broadcast, "cron", hour="16-23", minute=0, args=[user_data_manager, manager])
     scheduler.add_job(
         morning_summary_broadcast,
         "cron",
-        hour=8,
+        hour="6-12",
         minute=0,
         args=[user_data_manager, manager],
     )
@@ -848,13 +850,13 @@ def setup_scheduler(
         minutes=CHECK_INTERVAL_MINUTES,
         args=[user_data_manager, redis_client, bot],
     )
-    scheduler.add_job(collect_db_metrics, "interval", minutes=1, args=[user_data_manager])
+    scheduler.add_job(collect_db_metrics, "interval", minutes=5, args=[user_data_manager])
     scheduler.add_job(backup_current_schedule, "cron", hour="*/6", args=[redis_client])
     scheduler.add_job(auto_backup, "cron", hour=2, args=[redis_client])
     scheduler.add_job(
         handle_graduated_groups,
-        "interval",
-        minutes=10,
+        "cron",
+        hour=3,
         args=[user_data_manager, manager, redis_client],
     )
 

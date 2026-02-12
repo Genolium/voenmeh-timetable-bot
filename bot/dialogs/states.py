@@ -19,6 +19,8 @@ class Schedule(StatesGroup):
 class SettingsMenu(StatesGroup):
     main = State()
     reminders_time = State()
+    morning_time = State()
+    evening_time = State()
     choose_theme = State()
     theme_subscription_gate = State()
     select_lang = State()

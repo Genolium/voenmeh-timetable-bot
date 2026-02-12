@@ -445,8 +445,8 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     week_key, week_name_full = week_info
     # Определяем тему пользователя для корректного выбора файла
     user_theme_for_original = None
+    udm = manager.middleware_data.get("user_data_manager")
     try:
-        udm = manager.middleware_data.get("user_data_manager")
         if udm and callback.from_user:
             user_theme_for_original = await udm.get_user_theme(callback.from_user.id)
     except Exception:
@@ -454,7 +454,6 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     # Get user language for correct cache key (must match image_service.py format)
     lang = "ru"
     try:
-        udm = manager.middleware_data.get("user_data_manager")
         if udm and callback.from_user:
             lang = await udm.get_user_language(callback.from_user.id) or "ru"
     except Exception:
@@ -475,6 +474,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
     logging.info(f"📂 on_send_original_file: cache_key={cache_key}, output_path={output_path}, exists={output_path.exists()}")
+
     # Проверка подписки на канал, если настроено
     try:
         if SUBSCRIPTION_CHANNEL:
@@ -492,10 +492,8 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                 if channel_link.startswith("@"):
                     channel_link = f"https://t.me/{channel_link[1:]}"
                 elif channel_link.startswith("-"):
-                    # Для каналов с числовым ID используем tg://
                     channel_link = f"tg://resolve?domain={channel_link}"
                 elif not channel_link.startswith("http"):
-                    # Для обычных имен каналов
                     channel_link = f"https://t.me/{channel_link}"
 
                 kb = InlineKeyboardMarkup(
@@ -515,80 +513,78 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                 return
     except Exception:
         pass
-    # Если файла нет – инициируем генерацию (БЕЗ ОТПРАВКИ ФОТО) и попробуем дождаться готовности
+
+    # Если файла нет — генерируем синхронно и отправляем сразу (без поллинга)
     if not output_path.exists():
-        # Trigger generation without sending compressed photo again
         try:
-            image_service = manager.middleware_data.get("image_service")
             timetable_manager: TimetableManager = manager.middleware_data.get("manager")
-            
-            # Prepare minimal data for generation trigger
-            group_schedule = timetable_manager.get_group_schedule(group)
-            week_schedule = group_schedule.get("even" if "Чет" in week_name_full else "odd", {})
-            
-            await image_service.get_or_generate_week_image(
+
+            # Получаем расписание, используя week_key напрямую
+            user_type = ctx.dialog_data.get("user_type", "student")
+            if user_type == "teacher":
+                week_schedule = {}
+                teacher_lessons = timetable_manager._teachers_index.get(group, [])
+                days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+                for day in days:
+                    week_schedule[day] = []
+                for lesson in teacher_lessons:
+                    lesson_week_code = lesson.get("week_code", "0")
+                    is_every_week = lesson_week_code == "0"
+                    is_odd_match = week_key == "odd" and lesson_week_code == "1"
+                    is_even_match = week_key == "even" and lesson_week_code == "2"
+                    if is_every_week or is_odd_match or is_even_match:
+                        day = lesson.get("day")
+                        if day in week_schedule:
+                            week_schedule[day].append(lesson)
+            else:
+                full_schedule = timetable_manager._schedules.get(safe_group, {})
+                week_schedule = full_schedule.get(week_key, {})
+
+            # Создаём кэш-менеджер и image_service для генерации
+            from core.image_service import ImageService
+            cache_manager = ImageCacheManager(manager_obj.redis, cache_ttl_hours=24)
+            bot: Bot = manager.middleware_data.get("bot")
+            image_service = ImageService(cache_manager, bot)
+
+            success, file_path = await image_service.get_or_generate_week_image(
                 group=group,
                 week_key=week_key,
                 week_name=week_name_full,
                 week_schedule=week_schedule,
-                user_id=None, # CRITICAL: Don't send photo again
+                user_id=None,  # Не отправлять сжатое фото
                 user_theme=user_theme_for_original,
-                lang=lang
+                lang=lang,
             )
+            logging.info(f"📦 Generation result: success={success}, file_path={file_path}")
         except Exception as e:
-            logging.error(f"Error triggering background generation in on_send_original_file: {e}")
-        # Подождём до 15 секунд с экспоненциальной задержкой
-        wait_intervals = [0.5, 0.5, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 5.0]
-        for interval in wait_intervals:
+            logging.error(f"Error generating image in on_send_original_file: {e}")
+
+    # Отправляем файл, если он готов
+    if output_path.exists():
+        try:
+            bot: Bot = manager.middleware_data.get("bot")
+            caption = f"📄 {week_name_full} ({safe_group})"
+            doc_file = FSInputFile(output_path, filename=f"Schedule_{safe_group}_{week_key}.png")
+            logging.info(f"📤 Sending document to user {callback.from_user.id}, file={output_path}")
+            await bot.send_document(callback.from_user.id, document=doc_file, caption=caption)
+            logging.info(f"✅ Document sent successfully to user {callback.from_user.id}")
             try:
-                if output_path.exists():
-                    # Показываем успех, если файл внезапно появился
-                    try:
-                        await callback.answer(i18n.get("toast_success", lang=lang))
-                    except Exception:
-                        pass
-                    break
-                await asyncio.sleep(interval)
-            except Exception:
-                await asyncio.sleep(interval)
-        
-        if not output_path.exists():
-            try:
-                await callback.answer("⏳ Готовлю оригинал, вернитесь через пару секунд…")
-            except Exception:
-                pass
-            # Запросим отправку через очередь (после проверки подписки)
-            try:
-                send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
+                await callback.answer(i18n.get("toast_success", lang=lang))
             except Exception:
                 pass
             return
-    # Файл готов — отправим сразу
+        except Exception as e:
+            logging.error(f"❌ Failed to send document directly: {e}")
+
+    # Фолбэк: файл не создался или отправка не удалась — через очередь
     try:
-        bot: Bot = manager.middleware_data.get("bot")
-        # Форсируем отправку как файл (Document) с явным именем
-        caption = f"📄 {week_name_full} ({safe_group})"
-        doc_file = FSInputFile(output_path, filename=f"Schedule_{safe_group}_{week_key}.png")
-        logging.info(f"📤 Attempting to send document to user {callback.from_user.id}, file={output_path}")
-        await bot.send_document(callback.from_user.id, document=doc_file, caption=caption)
-        logging.info(f"✅ Document sent successfully to user {callback.from_user.id}")
-        try:
-            await callback.answer(i18n.get("toast_success", lang=lang))
-        except Exception:
-            pass
-        return
-    except Exception as e:
-        logging.error(f"❌ Failed to send document directly: {e}")
-        # Фолбэк: через очередь
-        try:
-            send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
-            await callback.answer("📤 Отправлю изображение в фоне…")
-        except Exception:
-            pass
-    try:
-        await callback.answer()
+        send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
+        await callback.answer("📤 Отправлю изображение в фоне…")
     except Exception:
-        pass
+        try:
+            await callback.answer()
+        except Exception:
+            pass
 
 
 async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int):
