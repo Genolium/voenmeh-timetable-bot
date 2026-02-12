@@ -73,8 +73,6 @@ services:
   db:
     image: postgres:15-alpine
     container_name: voenmeh_postgres
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     env_file: [ .env ]
@@ -232,8 +230,6 @@ services:
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
       PGADMIN_SERVER_JSON_FILE: '/var/lib/pgadmin/servers.json'
-    ports:
-      - "5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ./pgadmin/servers.json.template:/pgadmin4/servers.json.template:ro
