@@ -254,21 +254,23 @@ if not BOT_TOKEN:
 BOT_INSTANCE = None  # Не используется напрямую; бот создаётся внутри задач
 rate_limiter = AsyncLimiter(25, 1)
 
+_worker_bot = None
+
+async def get_worker_bot() -> Bot:
+    """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
+    global _worker_bot
+    if _worker_bot is None:
+        session = AiohttpSession(timeout=60)
+        _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+    return _worker_bot
+
 
 async def _send_message(user_id: int, text: str):
     """Отправка сообщения с защитой от сетевых таймаутов и пулов соединений."""
     try:
-        # 1. СНАЧАЛА ждем своей очереди в рейт-лимитере (25 сообщений в секунду)
-        # Это не дает открыть 1000 соединений разом и получить Timeout
+        bot = await get_worker_bot()
         async with rate_limiter:
-            
-            # 2. ТОЛЬКО ПОТОМ создаем бота с увеличенным таймаутом
-            session = AiohttpSession(timeout=60)
-            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
-            
-            async with bot:
-                await bot.send_message(user_id, text, disable_web_page_preview=True)
-                
+            await bot.send_message(user_id, text, disable_web_page_preview=True)
         log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
         return
 
@@ -296,10 +298,9 @@ async def _send_message(user_id: int, text: str):
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
     try:
         log.info(f"Попытка копирования сообщения (ID: {message_id}) пользователю {user_id}")
-        bot = _create_bot_with_timeout()
-        async with bot:
-            async with rate_limiter:
-                await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
+        bot = await get_worker_bot()
+        async with rate_limiter:
+            await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
         log.info(f"Сообщение (ID: {message_id}) успешно скопировано пользователю {user_id}")
     except TelegramForbiddenError as e:
         log.info(f"User {user_id} has blocked the bot: {e}. Skipping further attempts.")
