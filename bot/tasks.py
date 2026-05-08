@@ -31,6 +31,7 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
+from dramatiq.errors import RateLimitExceeded
 from dramatiq.encoder import JSONEncoder
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
@@ -288,7 +289,6 @@ async def _send_message(user_id: int, text: str):
         # поставил задачу обратно в очередь с задержкой БЕЗ блокировки потока!
         elapsed = time.time() - start_time
         log.warning(f"[SEND_RATELIMIT] Telegram Rate Limit for {user_id} after {elapsed:.2f}s, delegating to Dramatiq backoff")
-        from dramatiq import RateLimitExceeded
         raise RateLimitExceeded()
         
     except Exception as e:
