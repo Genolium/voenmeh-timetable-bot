@@ -50,11 +50,12 @@ load_dotenv()
 
 def _create_bot_with_timeout():
     """Create a Bot instance with proper HTTP client timeout settings."""
+    # Increase timeouts significantly to handle slow API responses
     timeout = aiohttp.ClientTimeout(
-        total=20,        # Total timeout for entire request
-        connect=10,      # Timeout for connection establishment
-        sock_read=10,    # Timeout for reading response
-        sock_connect=5   # Timeout for socket connection
+        total=60,         # Total timeout for entire request (60 seconds)
+        connect=30,       # Timeout for connection establishment (30 seconds)
+        sock_read=30,     # Timeout for reading response (30 seconds)
+        sock_connect=15   # Timeout for socket connection (15 seconds)
     )
     session = AiohttpSession(timeout=timeout)
     return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
