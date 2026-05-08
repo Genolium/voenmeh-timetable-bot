@@ -170,11 +170,11 @@ class RobustRetries(Retries):
 rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
 try:
     if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
-        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))  # 5 minutes
+        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))  # 30 minutes (соответствует RabbitMQ consumer_timeout)
 except Exception:
     # Fallback: attempt to add once; ignore if duplicated by framework
     try:
-        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
     except Exception:
         pass
 
@@ -209,10 +209,10 @@ if broker_url:
                 rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
                 try:
                     if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
-                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
                 except Exception:
                     try:
-                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=300000))
+                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
                     except Exception:
                         pass
                 dramatiq.set_broker(rabbitmq_broker)
@@ -239,40 +239,45 @@ rate_limiter = AsyncLimiter(25, 1)
 
 async def _send_message(user_id: int, text: str):
     """Enhanced message sending with non-blocking error handling."""
+    start_time = time.time()
     try:
-        log.info(f"Отправляю сообщение пользователю {user_id}")
+        log.info(f"[SEND_START] Отправляю сообщение пользователю {user_id}")
         # Создаём экземпляр бота в рамках текущего event loop,
         # чтобы избежать ошибок повторного использования закрытого лупа/сессии
         bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
         async with bot:
             async with rate_limiter:
                 await bot.send_message(user_id, text, disable_web_page_preview=True)
-        log.info(f"Сообщение успешно отправлено пользователю {user_id}")
+        elapsed = time.time() - start_time
+        log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id} (за {elapsed:.2f}s)")
         return
 
     except TelegramForbiddenError:
         # Пользователь заблокировал бота — не ретраем, просто логируем
-        log.info(f"User {user_id} blocked the bot. Skipping send.")
+        log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Skipping send.")
         return
         
     except TelegramBadRequest as e:
         # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
         text_error = str(e)
         if "bot was blocked by the user" in text_error.lower():
-            log.info(f"User {user_id} blocked the bot (BadRequest). Skipping send.")
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot (BadRequest). Skipping send.")
             return
-        log.error(f"BadRequest sending to {user_id}: {e}")
+        elapsed = time.time() - start_time
+        log.error(f"[SEND_ERROR] BadRequest sending to {user_id} after {elapsed:.2f}s: {e}")
         raise
         
-    except RetryAfter:
+    except RetryAfter as e:
         # Рейт-лимит от Telegram: выбрасываем RateLimitExceeded чтобы Dramatiq
         # поставил задачу обратно в очередь с задержкой БЕЗ блокировки потока!
-        log.warning(f"Telegram Rate Limit for {user_id}, delegating to Dramatiq backoff")
+        elapsed = time.time() - start_time
+        log.warning(f"[SEND_RATELIMIT] Telegram Rate Limit for {user_id} after {elapsed:.2f}s, delegating to Dramatiq backoff")
         from dramatiq import RateLimitExceeded
         raise RateLimitExceeded()
         
     except Exception as e:
-        log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
+        elapsed = time.time() - start_time
+        log.error(f"[SEND_FAIL] Dramatiq task FAILED to send message to {user_id} after {elapsed:.2f}s: {e}")
         raise
 
 
@@ -291,17 +296,17 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
         raise
 
 
-@dramatiq.actor
+@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=900000)  # 15 мин (достаточно для сетевых задержек)
 def send_message_task(user_id: int, text: str):
     run_async(_send_message(user_id, text))
 
 
-@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
+@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
     run_async(_copy_message(user_id, from_chat_id, message_id))
 
 
-@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=30000)
+@dramatiq.actor(max_retries=5, min_backoff=1000, time_limit=600000)  # 10 мин (больше на случай задержек сети)
 def send_lesson_reminder_task(
     user_id: int,
     lesson: Dict[str, Any] | None,
@@ -326,7 +331,7 @@ def send_lesson_reminder_task(
 _generation_semaphore = threading.Semaphore(int(os.getenv("IMAGE_GENERATION_SEMAPHORE", "4")))  # Оптимизировано для 4 ядер
 
 
-@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=300000)
+@dramatiq.actor(max_retries=3, min_backoff=2000, time_limit=1200000)  # 20 мин (для генерации изображений, особенно при нагрузке)
 def generate_week_image_task(
     cache_key: str,
     week_schedule: Dict[str, Any],
@@ -417,7 +422,7 @@ async def _send_error_message(user_id: int, error_text: str):
         log.error(f"❌ Не удалось отправить сообщение об ошибке пользователю {user_id}: {e}")
 
 
-@dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=30000)
+@dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=300000)  # 5 мин (для проверки подписки и отправки сообщений)
 def check_theme_subscription_task(user_id: int, callback_data: str = None):
     """
     Проверяет подписку пользователя на канал для доступа к темам.
@@ -505,7 +510,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
     run_async(_inner())
 
 
-@dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=60000)
+@dramatiq.actor(max_retries=3, min_backoff=1500, time_limit=600000)  # 10 мин (для отправки изображения + проверка)
 def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
     async def _inner():
         try:

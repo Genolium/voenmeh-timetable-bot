@@ -63,14 +63,15 @@ def stop_worker_loop():
 def run_async(coro):
     """
     Runs a coroutine in the global worker loop and waits for the result (synchronously).
+    Timeout должен быть больше чем Dramatiq time_limit, чтобы позволить задаче завершиться.
     """
     try:
         loop = get_worker_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
-        # Блокируем с таймаутом, чтобы не зависнуть навсегда если что-то пошло не так
-        return future.result(timeout=350) # Чуть больше самого длинного лимита Dramatiq
+        # Timeout 1900 сек = ~31 мин (чуть больше consumer_timeout и time_limit в Dramatiq)
+        return future.result(timeout=1900)
     except asyncio.TimeoutError:
-        logger.error("Coroutine timed out in worker loop")
+        logger.error("Coroutine timed out in worker loop after 1900 seconds")
         raise
     except Exception as e:
         logger.error(f"Error running async task: {e}")
