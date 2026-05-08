@@ -10,7 +10,6 @@ from datetime import time, timedelta
 from aiogram import Bot
 from aiogram.types import CallbackQuery
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.date import DateTrigger
 from redis.asyncio.client import Redis
 
 from bot.tasks import send_lesson_reminder_task, send_message_task
@@ -140,7 +139,7 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
 
         text = f"{intro_text}{text_body}{get_footer_with_promo(lang)}"
 
-        send_message_task.send(user_id, text)
+        await asyncio.to_thread(send_message_task.send, user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
         processed_count += 1
 
@@ -192,7 +191,7 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
 
             # "Ваше расписание на сегодня" -> removed or handled by header/intro
             text = f"{intro_text}\n{schedule_text}{get_footer_with_promo(lang)}"
-            send_message_task.send(user_id, text)
+            await asyncio.to_thread(send_message_task.send, user_id, text)
             TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
             processed_count += 1
 
@@ -204,217 +203,91 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     logger.info(f"Утренняя рассылка: завершено. Отправлено сообщений: {processed_count}")
 
 
-async def lesson_reminders_planner(
-    scheduler: AsyncIOScheduler,
+async def minutely_reminders_checker(
     user_data_manager: UserDataManager,
     timetable_manager: TimetableManager,
 ):
-    now_in_moscow = datetime.now(MOSCOW_TZ)
-    today = now_in_moscow.date()
+    """
+    Проверяет каждую минуту, кому из пользователей нужно отправить напоминание.
+    Вместо создания тысяч DateTrigger'ов, просто проверяем каждую минуту актуальное состояние.
+    """
+    now = datetime.now(MOSCOW_TZ)
+    today = now.date()
+    
+    try:
+        users = await user_data_manager.get_users_for_lesson_reminders()
+        if not users:
+            return
 
-    users_to_plan = await user_data_manager.get_users_for_lesson_reminders()
-    if not users_to_plan:
-        return
-
-    logger.info(f"Планирование напоминаний: обработка {len(users_to_plan)} пользователей")
-    processed_count = 0
-
-    for user_id, group_name, reminder_time, lang in users_to_plan:
-        processed_count += 1
-        try:
-            # Пропускаем преподавателей
-            user = await user_data_manager.get_full_user_info(user_id)
-            if getattr(user, "user_type", "student") == "teacher":
-                continue
-        except Exception:
-            pass
-        schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
-        if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
-            continue
-
-        try:
-            lessons = sorted(
-                schedule_info["lessons"],
-                key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
-            )
-        except (ValueError, KeyError):
-            continue
-
-        if lessons:
+        for user_id, group_name, reminder_time, lang in users:
             try:
-                start_time_obj = datetime.strptime(lessons[0]["start_time_raw"], "%H:%M").time()
-                start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
-                reminder_dt = start_dt - timedelta(minutes=reminder_time)
-
-                # Планируем только если время напоминания еще не прошло
-                if reminder_dt >= now_in_moscow:
-                    run_at = reminder_dt
-                    scheduler.add_job(
-                        send_lesson_reminder_task.send,
-                        trigger=DateTrigger(run_date=run_at),
-                        args=(user_id, lessons[0], "first", None, reminder_time, lang),
-                        id=f"reminder_{user_id}_{today.isoformat()}_first",
-                        replace_existing=True,
-                    )
-                else:
-                    # Если время напоминания уже прошло, пропускаем напоминание
+                # Пропускаем преподавателей
+                user = await user_data_manager.get_full_user_info(user_id)
+                if user and getattr(user, "user_type", "student") == "teacher":
                     continue
-            except (ValueError, KeyError) as e:
-                logger.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
+                    
+                schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
+                if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
+                    continue
 
-        for i, lesson in enumerate(lessons):
-            try:
-                end_time_obj = datetime.strptime(lesson["end_time_raw"], "%H:%M").time()
-                reminder_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
-
-                # Планируем только если время напоминания еще не прошло
-                if reminder_dt < now_in_moscow:
-                    continue  # Пропускаем прошедшие напоминания
-                run_at = reminder_dt
-                is_last_lesson = i == len(lessons) - 1
-                reminder_type = "final" if is_last_lesson else "break"
-                next_lesson = lessons[i + 1] if not is_last_lesson else None
-                break_duration = None
-                if next_lesson:
-                    next_start_time_obj = datetime.strptime(next_lesson["start_time_raw"], "%H:%M").time()
-                    break_duration = int(
-                        (datetime.combine(today, next_start_time_obj) - datetime.combine(today, end_time_obj)).total_seconds()
-                        / 60
-                    )
-
-                scheduler.add_job(
-                    send_lesson_reminder_task.send,
-                    trigger=DateTrigger(run_date=run_at),
-                    args=(user_id, next_lesson, reminder_type, break_duration, None, lang),
-                    id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}",
-                    replace_existing=True,
-                )
-            except (ValueError, KeyError) as e:
-                logger.warning(f"Ошибка планирования напоминания в перерыве для user_id={user_id}: {e}")
-
-        # Периодически освобождаем event loop для обработки других событий
-        if processed_count % 50 == 0:
-            await asyncio.sleep(0)
-            logger.debug(f"Планирование напоминаний: обработано {processed_count}/{len(users_to_plan)} пользователей")
-
-    logger.info(f"Планирование напоминаний: завершено. Обработано {processed_count} пользователей")
-
-
-async def cancel_reminders_for_user(scheduler: AsyncIOScheduler, user_id: int):
-    try:
-        now_in_moscow = datetime.now(MOSCOW_TZ)
-        today_iso = now_in_moscow.date().isoformat()
-        for job in list(scheduler.get_jobs()):
-            if job.id and job.id.startswith(f"reminder_{user_id}_{today_iso}"):
                 try:
-                    scheduler.remove_job(job.id)
-                except Exception:
+                    lessons = sorted(
+                        schedule_info["lessons"],
+                        key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
+                    )
+                except (ValueError, KeyError):
+                    continue
+
+                if not lessons:
+                    continue
+
+                # 1. Проверяем напоминание перед началом первой пары
+                try:
+                    start_time_obj = datetime.strptime(lessons[0]["start_time_raw"], "%H:%M").time()
+                    start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
+                    reminder_dt = start_dt - timedelta(minutes=reminder_time)
+                    
+                    # Если наступила ровно та самая минута (проверяем часы и минуты)
+                    if reminder_dt.hour == now.hour and reminder_dt.minute == now.minute:
+                        await asyncio.to_thread(
+                            send_lesson_reminder_task.send,
+                            user_id, lessons[0], "first", None, reminder_time, lang
+                        )
+                        logger.info(f"Отправлено напоминание о первой паре для {user_id}")
+                except (ValueError, KeyError):
                     pass
-    except Exception as e:
-        logger.warning(f"cancel_reminders_for_user failed for {user_id}: {e}")
 
-
-async def plan_reminders_for_user(
-    scheduler: AsyncIOScheduler,
-    user_data_manager: UserDataManager,
-    timetable_manager: TimetableManager,
-    user_id: int,
-):
-    try:
-        # Получаем группу и время напоминания
-        user = await user_data_manager.get_full_user_info(user_id)
-        # Пропускаем преподавателей
-        if user and getattr(user, "user_type", "student") == "teacher":
-            return
-        if not user or not user.group or not user.lesson_reminders:
-            return
-        today = datetime.now(MOSCOW_TZ).date()
-        now_in_moscow = datetime.now(MOSCOW_TZ)
-
-        # Сначала проверяем, есть ли вообще смысл планировать напоминания
-        # Получаем расписание только если время напоминания еще актуально
-        schedule_info = await timetable_manager.get_schedule_for_day(user.group, target_date=today)
-        if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
-            return
-
-        # Сортируем пары
-        try:
-            lessons = sorted(
-                schedule_info["lessons"],
-                key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
-            )
-        except (ValueError, KeyError):
-            return
-
-        # Первая пара с учётом времени напоминания
-        if lessons:
-            try:
-                start_time_obj = datetime.strptime(lessons[0]["start_time_raw"], "%H:%M").time()
-                start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
-                reminder_dt = start_dt - timedelta(minutes=(user.reminder_time_minutes or 60))
-
-                # ИСПРАВЛЕНИЕ: Проверяем время напоминания ПЕРЕД любыми действиями
-                if reminder_dt < now_in_moscow:
-                    logger.info(
-                        f"Время напоминания уже прошло для пользователя {user_id} (напоминание должно было быть в {reminder_dt}, сейчас {now_in_moscow}), пропускаем"
-                    )
-                    return
-
-                run_at = reminder_dt
-                scheduler.add_job(
-                    send_lesson_reminder_task.send,
-                    trigger=DateTrigger(run_date=run_at),
-                    args=(
-                        user_id,
-                        lessons[0],
-                        "first",
-                        None,
-                        user.reminder_time_minutes,
-                        user.language,
-                    ),
-                    id=f"reminder_{user_id}_{today.isoformat()}_first",
-                    replace_existing=True,
-                )
-                logger.info(f"Запланировано напоминание для пользователя {user_id} на {reminder_dt}")
+                # 2. Проверяем напоминания об окончании пар и перерывах
+                for i, lesson in enumerate(lessons):
+                    try:
+                        end_time_obj = datetime.strptime(lesson["end_time_raw"], "%H:%M").time()
+                        end_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
+                        
+                        # Если наступило время конца пары
+                        if end_dt.hour == now.hour and end_dt.minute == now.minute:
+                            is_last = i == len(lessons) - 1
+                            next_lesson = lessons[i + 1] if not is_last else None
+                            break_duration = None
+                            
+                            if next_lesson:
+                                next_start_time_obj = datetime.strptime(next_lesson["start_time_raw"], "%H:%M").time()
+                                break_duration = int(
+                                    (datetime.combine(today, next_start_time_obj) - datetime.combine(today, end_time_obj)).total_seconds() / 60
+                                )
+                            
+                            await asyncio.to_thread(
+                                send_lesson_reminder_task.send,
+                                user_id, next_lesson, "final" if is_last else "break", break_duration, None, lang
+                            )
+                            logger.info(f"Отправлено напоминание об окончании пары для {user_id}")
+                    except (ValueError, KeyError):
+                        pass
+                        
             except Exception as e:
-                logger.warning(f"Ошибка планирования напоминания о первой паре для user_id={user_id}: {e}")
-        # Перерывы/конец
-        for i, lesson in enumerate(lessons):
-            try:
-                end_time_obj = datetime.strptime(lesson["end_time_raw"], "%H:%M").time()
-                reminder_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
-                # Планируем только если время напоминания еще не прошло
-                if reminder_dt < now_in_moscow:
-                    continue  # Пропускаем прошедшие напоминания
-                run_at = reminder_dt
-                is_last = i == len(lessons) - 1
-                next_lesson = lessons[i + 1] if not is_last else None
-                break_duration = None
-                if next_lesson:
-                    next_start_time_obj = datetime.strptime(next_lesson["start_time_raw"], "%H:%M").time()
-                    break_duration = int(
-                        (datetime.combine(today, next_start_time_obj) - datetime.combine(today, end_time_obj)).total_seconds()
-                        / 60
-                    )
-                scheduler.add_job(
-                    send_lesson_reminder_task.send,
-                    trigger=DateTrigger(run_date=run_at),
-                    args=(
-                        user_id,
-                        next_lesson,
-                        ("final" if is_last else "break"),
-                        break_duration,
-                        None,
-                        user.language,
-                    ),
-                    id=f"reminder_{user_id}_{today.isoformat()}_{lesson['end_time_raw']}",
-                    replace_existing=True,
-                )
-            except Exception:
-                continue
+                logger.error(f"Ошибка проверки напоминаний для {user_id}: {e}")
+                
     except Exception as e:
-        logger.warning(f"plan_reminders_for_user failed for {user_id}: {e}")
-
+        logger.error(f"Ошибка в minutely_reminders_checker: {e}")
 
 async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot):
     logger.info("Проверка изменений в расписании...")
@@ -486,7 +359,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
                     "⏱️ Обработка займет несколько минут"
                 )
                 for admin_id in admin_users:
-                    send_message_task.send(admin_id, admin_message)
+                    await asyncio.to_thread(send_message_task.send, admin_id, admin_message)
                     TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
             except Exception as e:
                 logger.warning(f"Не удалось уведомить администраторов: {e}")
@@ -662,7 +535,7 @@ async def send_schedule_diff_notifications(
                         if message:
                             # Отправляем уведомление всем пользователям группы
                             for user_id in user_ids:
-                                send_message_task.send(user_id, message)
+                                await asyncio.to_thread(send_message_task.send, user_id, message)
                                 TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
                                 total_notifications_sent += 1
 
@@ -696,7 +569,7 @@ async def send_schedule_diff_notifications(
                     f"⏱️ Проверены даты: {len(dates_to_check)} дней вперед"
                 )
                 for admin_id in admin_users:
-                    send_message_task.send(admin_id, admin_message)
+                    await asyncio.to_thread(send_message_task.send, admin_id, admin_message)
                     TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
             except Exception as e:
                 logger.warning(f"Не удалось уведомить администраторов о дифф-уведомлениях: {e}")
@@ -779,7 +652,7 @@ async def handle_graduated_groups(
                 )
 
                 # Используем фоновую задачу для отправки уведомлений
-                send_message_task.send(user_id, message_text)
+                await asyncio.to_thread(send_message_task.send, user_id, message_text)
                 TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
 
                 # Очищаем группу пользователя
@@ -838,11 +711,10 @@ def setup_scheduler(
         args=[user_data_manager, manager],
     )
     scheduler.add_job(
-        lesson_reminders_planner,
+        minutely_reminders_checker,
         "cron",
-        hour=6,
-        minute=0,
-        args=[scheduler, user_data_manager, manager],
+        minute="*",  # Запускать каждую минуту
+        args=[user_data_manager, manager],
     )
     scheduler.add_job(
         monitor_schedule_changes,

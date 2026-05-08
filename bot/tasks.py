@@ -192,8 +192,8 @@ if broker_url:
 
         _parsed = urlparse(broker_url)
         _q = dict(parse_qsl(_parsed.query, keep_blank_values=True))
-        _q.setdefault("heartbeat", "120")
-        _q.setdefault("blocked_connection_timeout", "300")
+        _q.setdefault("heartbeat", "600")  # Большой heartbeat для жёсткой нагрузки
+        _q.setdefault("blocked_connection_timeout", "600")  # Больше времени на блокированное соединение
         _q.setdefault("connection_attempts", "10")
         _q.setdefault("retry_delay", "5")
         # Ensure socket-level timeout to avoid lingering dead connections
@@ -237,55 +237,43 @@ BOT_INSTANCE = None  # Не используется напрямую; бот с
 rate_limiter = AsyncLimiter(25, 1)
 
 
-async def _send_message(user_id: int, text: str, max_retries: int = 3):
-    """Enhanced message sending with connection error handling."""
-    last_exception = None
+async def _send_message(user_id: int, text: str):
+    """Enhanced message sending with non-blocking error handling."""
+    try:
+        log.info(f"Отправляю сообщение пользователю {user_id}")
+        # Создаём экземпляр бота в рамках текущего event loop,
+        # чтобы избежать ошибок повторного использования закрытого лупа/сессии
+        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+        async with bot:
+            async with rate_limiter:
+                await bot.send_message(user_id, text, disable_web_page_preview=True)
+        log.info(f"Сообщение успешно отправлено пользователю {user_id}")
+        return
 
-    for attempt in range(max_retries):
-        try:
-            log.info(f"Попытка отправки сообщения пользователю {user_id} (попытка {attempt + 1}/{max_retries})")
-            # Создаём экземпляр бота в рамках текущего event loop,
-            # чтобы избежать ошибок повторного использования закрытого лупа/сессии
-            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
-            async with bot:
-                async with rate_limiter:
-                    await bot.send_message(user_id, text, disable_web_page_preview=True)
-            log.info(f"Сообщение успешно отправлено пользователю {user_id}")
-            return  # Success, exit retry loop
-
-        except TelegramForbiddenError as e:
-            # Пользователь заблокировал бота — не ретраем, просто фиксируем
-            log.info(f"User {user_id} blocked the bot. Skipping send.")
+    except TelegramForbiddenError:
+        # Пользователь заблокировал бота — не ретраем, просто логируем
+        log.info(f"User {user_id} blocked the bot. Skipping send.")
+        return
+        
+    except TelegramBadRequest as e:
+        # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
+        text_error = str(e)
+        if "bot was blocked by the user" in text_error.lower():
+            log.info(f"User {user_id} blocked the bot (BadRequest). Skipping send.")
             return
-        except TelegramBadRequest as e:
-            # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
-            text_error = str(e)
-            if "bot was blocked by the user" in text_error.lower():
-                log.info(f"User {user_id} blocked the bot (BadRequest). Skipping send.")
-                return
-            log.error(f"BadRequest sending to {user_id}: {e}")
-            raise
-        except RetryAfter as e:
-            # Рейт-лимит от Telegram: пробросим исключение, чтобы сработал dramatiq retry/backoff
-            log.warning(f"RetryAfter while sending to {user_id}: {e}")
-            raise
-        except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
-            # Network connection issues - retry with backoff
-            last_exception = e
-            if attempt < max_retries - 1:
-                backoff_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
-                log.warning(f"Connection error sending to {user_id}, retrying in {backoff_time}s: {e}")
-                await asyncio.sleep(backoff_time)
-                continue
-            log.error(f"All retry attempts failed for user {user_id}: {e}")
-            raise
-        except Exception as e:
-            log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
-            raise
-
-    # If we reach here, all retries failed
-    if last_exception:
-        raise last_exception
+        log.error(f"BadRequest sending to {user_id}: {e}")
+        raise
+        
+    except RetryAfter:
+        # Рейт-лимит от Telegram: выбрасываем RateLimitExceeded чтобы Dramatiq
+        # поставил задачу обратно в очередь с задержкой БЕЗ блокировки потока!
+        log.warning(f"Telegram Rate Limit for {user_id}, delegating to Dramatiq backoff")
+        from dramatiq import RateLimitExceeded
+        raise RateLimitExceeded()
+        
+    except Exception as e:
+        log.error(f"Dramatiq task FAILED to send message to {user_id}: {e}")
+        raise
 
 
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):

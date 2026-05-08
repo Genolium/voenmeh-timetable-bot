@@ -6,7 +6,6 @@ from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
-from bot.scheduler import cancel_reminders_for_user, plan_reminders_for_user
 from core.user_data import UserDataManager
 from core.i18n import i18n
 
@@ -137,8 +136,6 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
 
 async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
-    scheduler = manager.middleware_data.get("scheduler")
-    timetable_manager = manager.middleware_data.get("manager")
     user_id = callback.from_user.id
     setting_name = button.widget_id
 
@@ -148,13 +145,9 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
     new_status = not current_status
     await user_data_manager.update_setting(user_id, setting_name, new_status)
 
-    # Управляем ближайшими задачами для напоминаний о парах
-    if setting_name == WidgetIds.LESSON_REMINDERS and scheduler and timetable_manager:
-        if not new_status:
-            await cancel_reminders_for_user(scheduler, user_id)
-        else:
-            await cancel_reminders_for_user(scheduler, user_id)
-            await plan_reminders_for_user(scheduler, user_data_manager, timetable_manager, user_id)
+    # Напоминания теперь проверяются каждую минуту в minutely_reminders_checker,
+    # поэтому нет необходимости вручную планировать/отменять напоминания.
+    # Система автоматически учтёт изменения в следующую минуту.
 
     await callback.answer("Настройка обновлена.")
     await manager.switch_to(SettingsMenu.main)
@@ -168,17 +161,13 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
     selected_time = int(item_id)
 
     await user_data_manager.set_reminder_time(user_id, selected_time)
+user_id = callback.from_user.id
+    selected_time = int(item_id)
 
-    # Перепланировать с новым окном
-    if scheduler and timetable_manager:
-        await cancel_reminders_for_user(scheduler, user_id)
-        await plan_reminders_for_user(scheduler, user_data_manager, timetable_manager, user_id)
+    await user_data_manager.set_reminder_time(user_id, selected_time)
 
-    await callback.answer(f"Время напоминания установлено на {selected_time} минут.")
-    await manager.switch_to(SettingsMenu.main)
-
-
-async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    # Напоминания теперь проверяются каждую минуту в minutely_reminders_checker,
+    # поэтому изменение времени напоминания автоматически учтётся в следующую минуту.ger, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     
