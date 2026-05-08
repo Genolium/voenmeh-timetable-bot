@@ -155,20 +155,6 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
 
 async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
-    scheduler = manager.middleware_data.get("scheduler")
-    timetable_manager = manager.middleware_data.get("manager")
-    user_id = callback.from_user.id
-    selected_time = int(item_id)
-
-    await user_data_manager.set_reminder_time(user_id, selected_time)
-user_id = callback.from_user.id
-    selected_time = int(item_id)
-
-    await user_data_manager.set_reminder_time(user_id, selected_time)
-
-    # Напоминания теперь проверяются каждую минуту в minutely_reminders_checker,
-    # поэтому изменение времени напоминания автоматически учтётся в следующую минуту.ger, item_id: str):
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     
     await user_data_manager.set_morning_time(user_id, item_id)
