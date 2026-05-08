@@ -10,6 +10,7 @@ import aiohttp
 import dramatiq
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
+from dramatiq.errors import RateLimitExceeded
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 # Compatibility layer for RetryAfter across aiogram versions
@@ -255,45 +256,40 @@ rate_limiter = AsyncLimiter(25, 1)
 
 
 async def _send_message(user_id: int, text: str):
-    """Enhanced message sending with non-blocking error handling."""
-    start_time = time.time()
+    """Отправка сообщения с защитой от сетевых таймаутов и пулов соединений."""
     try:
-        log.info(f"[SEND_START] Отправляю сообщение пользователю {user_id}")
-        # Создаём экземпляр бота в рамках текущего event loop,
-        # чтобы избежать ошибок повторного использования закрытого лупа/сессии
-        bot = _create_bot_with_timeout()
-        async with bot:
-            async with rate_limiter:
+        # 1. СНАЧАЛА ждем своей очереди в рейт-лимитере (25 сообщений в секунду)
+        # Это не дает открыть 1000 соединений разом и получить Timeout
+        async with rate_limiter:
+            
+            # 2. ТОЛЬКО ПОТОМ создаем бота с увеличенным таймаутом
+            session = AiohttpSession(timeout=60)
+            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+            
+            async with bot:
                 await bot.send_message(user_id, text, disable_web_page_preview=True)
-        elapsed = time.time() - start_time
-        log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id} (за {elapsed:.2f}s)")
+                
+        log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
         return
 
     except TelegramForbiddenError:
-        # Пользователь заблокировал бота — не ретраем, просто логируем
         log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Skipping send.")
         return
-        
     except TelegramBadRequest as e:
-        # Частые кейсы, которые не нужно ретраить, например 'bot was blocked by the user'
-        text_error = str(e)
-        if "bot was blocked by the user" in text_error.lower():
-            log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot (BadRequest). Skipping send.")
+        if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot or deleted chat. Skipping.")
             return
-        elapsed = time.time() - start_time
-        log.error(f"[SEND_ERROR] BadRequest sending to {user_id} after {elapsed:.2f}s: {e}")
+        log.error(f"BadRequest sending to {user_id}: {e}")
         raise
-        
     except RetryAfter as e:
-        # Рейт-лимит от Telegram: выбрасываем RateLimitExceeded чтобы Dramatiq
-        # поставил задачу обратно в очередь с задержкой БЕЗ блокировки потока!
-        elapsed = time.time() - start_time
-        log.warning(f"[SEND_RATELIMIT] Telegram Rate Limit for {user_id} after {elapsed:.2f}s, delegating to Dramatiq backoff")
-        raise RateLimitExceeded()
-        
+        log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
+        # Выбрасываем ошибку Dramatiq, чтобы вернуть задачу в очередь
+        raise RateLimitExceeded() 
+    except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
+        log.warning(f"Network error sending to {user_id}: {e}. Will be retried by Dramatiq.")
+        raise
     except Exception as e:
-        elapsed = time.time() - start_time
-        log.error(f"[SEND_FAIL] Dramatiq task FAILED to send message to {user_id} after {elapsed:.2f}s: {e}")
+        log.error(f"[SEND_FAIL] Dramatiq task FAILED to send message to {user_id}: {e}")
         raise
 
 
