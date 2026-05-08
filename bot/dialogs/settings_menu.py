@@ -157,6 +157,15 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     
+    await user_data_manager.set_reminder_time(user_id, int(item_id))
+    await callback.answer(f"Время напоминаний: {item_id} минут")
+    await manager.switch_to(SettingsMenu.main)
+
+
+async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id
+    
     await user_data_manager.set_morning_time(user_id, item_id)
     await callback.answer(f"Время утренней рассылки: {item_id}")
     await manager.switch_to(SettingsMenu.main)
