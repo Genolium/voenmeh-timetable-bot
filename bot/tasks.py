@@ -6,8 +6,10 @@ import threading
 import time
 from typing import Any, Dict
 
+import aiohttp
 import dramatiq
 from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
 # Compatibility layer for RetryAfter across aiogram versions
@@ -44,6 +46,19 @@ from core.user_data import UserDataManager
 from bot.utils.worker_loop import run_async
 
 load_dotenv()
+
+
+def _create_bot_with_timeout():
+    """Create a Bot instance with proper HTTP client timeout settings."""
+    timeout = aiohttp.ClientTimeout(
+        total=20,        # Total timeout for entire request
+        connect=10,      # Timeout for connection establishment
+        sock_read=10,    # Timeout for reading response
+        sock_connect=5   # Timeout for socket connection
+    )
+    session = AiohttpSession(timeout=timeout)
+    return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+
 
 TELEMETRY_HANDLES = None
 if settings.OTEL_ENABLED:
@@ -244,7 +259,7 @@ async def _send_message(user_id: int, text: str):
         log.info(f"[SEND_START] Отправляю сообщение пользователю {user_id}")
         # Создаём экземпляр бота в рамках текущего event loop,
         # чтобы избежать ошибок повторного использования закрытого лупа/сессии
-        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+        bot = _create_bot_with_timeout()
         async with bot:
             async with rate_limiter:
                 await bot.send_message(user_id, text, disable_web_page_preview=True)
@@ -284,7 +299,7 @@ async def _send_message(user_id: int, text: str):
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
     try:
         log.info(f"Попытка копирования сообщения (ID: {message_id}) пользователю {user_id}")
-        bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+        bot = _create_bot_with_timeout()
         async with bot:
             async with rate_limiter:
                 await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
@@ -432,7 +447,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
     async def _inner():
         try:
             r = get_redis_client(decode_responses=True)
-            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+            bot = _create_bot_with_timeout()
             async with bot:
                 is_subscribed = False
                 cache_key = f"theme_sub_status:{user_id}"
@@ -515,7 +530,7 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
     async def _inner():
         try:
             r = get_redis_client(decode_responses=True)
-            bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+            bot = _create_bot_with_timeout()
             async with bot:
                 # ... (subscription check logic remains the same) ...
                 
