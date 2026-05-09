@@ -260,52 +260,95 @@ async def get_worker_bot() -> Bot:
     """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
     global _worker_bot
     if _worker_bot is None:
-        session = AiohttpSession(timeout=60)
+        # Настраиваем комфортные таймауты
+        timeout = aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)
+        
+        # МАГИЯ ЗДЕСЬ: limit=15 ограничивает количество одновременных TCP-соединений.
+        # Этого с запасом хватит для отправки 100+ сообщений в секунду, 
+        # но Telegram и ваш хостер больше не будут блокировать нас за "DDoS".
+        connector = aiohttp.TCPConnector(limit=15, force_close=False)
+
+        session = AiohttpSession(timeout=timeout, connector=connector)
         _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        
     return _worker_bot
 
 
 async def _send_message(user_id: int, text: str):
-    """Отправка сообщения с защитой от сетевых таймаутов и пулов соединений."""
+    """Отправка сообщения с защитой от дублирования."""
     try:
         bot = await get_worker_bot()
         async with rate_limiter:
             await bot.send_message(user_id, text, disable_web_page_preview=True)
+            
         log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
         return
 
     except TelegramForbiddenError:
-        log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Skipping send.")
+        log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Skipping.")
         return
     except TelegramBadRequest as e:
         if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
-            log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot or deleted chat. Skipping.")
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat.")
             return
         log.error(f"BadRequest sending to {user_id}: {e}")
-        raise
+        raise # Неизвестная ошибка API, отправляем на ретрай для разбора
     except RetryAfter as e:
         log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
-        # Выбрасываем ошибку Dramatiq, чтобы вернуть задачу в очередь
         raise RateLimitExceeded() 
-    except (ConnectionError, TimeoutError, asyncio.TimeoutError) as e:
-        log.warning(f"Network error sending to {user_id}: {e}. Will be retried by Dramatiq.")
-        raise
     except Exception as e:
-        log.error(f"[SEND_FAIL] Dramatiq task FAILED to send message to {user_id}: {e}")
+        error_msg = str(e).lower()
+        
+        # Если ошибка соединения (мы даже не достучались до серверов Telegram) - ретраим
+        if "connect call failed" in error_msg or "cannot connect" in error_msg:
+            log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
+            raise 
+            
+        # Если это Read Timeout (мы отправили данные, но ответ завис) - НЕ РЕТРАИМ!
+        # Telegram с вероятностью 99% уже доставил сообщение. Ретрай вызовет дубликат.
+        if "timeout" in error_msg:
+            log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
+            return 
+            
+        log.error(f"[SEND_FAIL] Unknown error sending to {user_id}: {e}")
         raise
 
 
 async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
+    """Копирование сообщения с защитой от дублирования."""
     try:
         log.info(f"Попытка копирования сообщения (ID: {message_id}) пользователю {user_id}")
         bot = await get_worker_bot()
         async with rate_limiter:
             await bot.copy_message(chat_id=user_id, from_chat_id=from_chat_id, message_id=message_id)
         log.info(f"Сообщение (ID: {message_id}) успешно скопировано пользователю {user_id}")
-    except TelegramForbiddenError as e:
-        log.info(f"User {user_id} has blocked the bot: {e}. Skipping further attempts.")
+        return
+    except TelegramForbiddenError:
+        log.info(f"User {user_id} blocked the bot. Skipping.")
+        return
+    except TelegramBadRequest as e:
+        if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat.")
+            return
+        log.error(f"BadRequest copying message to {user_id}: {e}")
+        raise
+    except RetryAfter as e:
+        log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
+        raise RateLimitExceeded()
     except Exception as e:
-        log.error(f"Dramatiq task FAILED to copy message (ID: {message_id}) to {user_id}: {e}")
+        error_msg = str(e).lower()
+        
+        # Если ошибка соединения - ретраим
+        if "connect call failed" in error_msg or "cannot connect" in error_msg:
+            log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
+            raise 
+            
+        # Если это Read Timeout - НЕ РЕТРАИМ!
+        if "timeout" in error_msg:
+            log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
+            return 
+            
+        log.error(f"[COPY_FAIL] Unknown error copying message to {user_id}: {e}")
         raise
 
 
