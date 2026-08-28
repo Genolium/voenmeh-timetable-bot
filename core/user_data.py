@@ -109,6 +109,7 @@ class UserDataManager:
 
     async def init_db(self) -> None:
         """Создает все необходимые таблицы в базе данных при первом запуске."""
+        import core.db  # noqa: F401 - гарантирует регистрацию всех моделей в Base.metadata
         from core.db.models import Base
         try:
             async with self.engine.begin() as conn:

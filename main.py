@@ -147,11 +147,22 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
         logging.error("Message.from_user is None or does not have an 'id' attribute.")
         return
 
-    saved_group = await user_data_manager.get_user_group(message.from_user.id)
-    if saved_group:
-        await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
-    else:
-        await dialog_manager.start(MainMenu.select_language, mode=StartMode.RESET_STACK)
+    try:
+        saved_group = await user_data_manager.get_user_group(message.from_user.id)
+        if saved_group:
+            await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
+        else:
+            await dialog_manager.start(MainMenu.select_language, mode=StartMode.RESET_STACK)
+    except Exception as e:
+        logging.error(f"Ошибка при запуске команды /start: {e}", exc_info=True)
+        try:
+            await message.answer(
+                "👋 <b>Добро пожаловать в бот расписания БГТУ «ВОЕНМЕХ»!</b>\n\n"
+                "Для начала работы выберите группу через /start или воспользуйтесь поиском.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
 
 
 async def about_command_handler(message: Message, dialog_manager: DialogManager):
