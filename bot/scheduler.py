@@ -500,7 +500,9 @@ async def send_schedule_diff_notifications(
 
         # Проверяем изменения для каждой группы на следующие несколько дней
         from datetime import date, timedelta
+        from core.audit_manager import AuditManager
 
+        audit_manager = AuditManager(user_data_manager.session_factory)
         today = date.today()
         dates_to_check = [today + timedelta(days=i) for i in range(7)]  # Проверяем неделю вперед
 
@@ -530,6 +532,15 @@ async def send_schedule_diff_notifications(
                     if diff.has_changes():
                         group_has_changes = True
                         groups_with_changes.add(group_name)  # Добавляем группу в список с изменениями
+                        
+                        # Сохраняем аудит-лог изменений в базе данных
+                        await audit_manager.record_changes(
+                            target_name=group_name,
+                            schedule_date=check_date,
+                            changes=diff.changes,
+                            target_type="group",
+                        )
+
                         message = ScheduleDiffFormatter.format_group_diff(diff)
 
                         if message:

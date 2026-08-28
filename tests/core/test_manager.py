@@ -682,3 +682,29 @@ async def test_timetable_manager_create_updates_fallback_from_fallback_data(monk
 
         # Проверяем что save_fallback_schedule был вызван с fallback данными
         mock_save.assert_called_once_with(fallback_data)
+
+
+@pytest.mark.asyncio
+async def test_cache_and_load_indexes(sample_schedules):
+    """Тест кэширования и загрузки индексов преподавателей и аудиторий."""
+    redis_storage = {}
+
+    class MockRedisStorage:
+        async def set(self, key, value, ex=None):
+            redis_storage[key] = value
+
+        async def get(self, key):
+            return redis_storage.get(key)
+
+    mock_redis = MockRedisStorage()
+    manager = TimetableManager(sample_schedules, mock_redis)
+
+    await manager.cache_indexes()
+    assert "timetable:index:teachers" in redis_storage
+    assert "timetable:index:classrooms" in redis_storage
+
+    new_manager = TimetableManager({"__metadata__": {}}, mock_redis)
+    loaded = await new_manager.load_indexes_from_cache()
+    assert loaded is True
+    assert "Иванов И.И." in new_manager._teachers_index
+    assert "418" in new_manager._classrooms_index

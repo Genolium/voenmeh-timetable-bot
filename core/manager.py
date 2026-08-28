@@ -179,6 +179,30 @@ class TimetableManager:
         # Используем сжатие для экономии места в Redis
         compressed_data = self._compress_data(data_to_save)
         await self.redis.set(REDIS_SCHEDULE_CACHE_KEY, compressed_data, ex=CACHE_LIFETIME)
+        await self.cache_indexes()
+
+    async def cache_indexes(self):
+        """Сохраняет сжатые индексы преподавателей и аудиторий в отдельные быстрые ключи Redis."""
+        try:
+            compressed_teachers = self._compress_data(self._teachers_index)
+            compressed_classrooms = self._compress_data(self._classrooms_index)
+            await self.redis.set("timetable:index:teachers", compressed_teachers, ex=CACHE_LIFETIME)
+            await self.redis.set("timetable:index:classrooms", compressed_classrooms, ex=CACHE_LIFETIME)
+        except Exception as e:
+            print(f"Ошибка кэширования индексов: {e}")
+
+    async def load_indexes_from_cache(self) -> bool:
+        """Загружает быстрые индексы напрямую из Redis."""
+        try:
+            raw_teachers = await self.redis.get("timetable:index:teachers")
+            raw_classrooms = await self.redis.get("timetable:index:classrooms")
+            if raw_teachers and raw_classrooms:
+                self._teachers_index = self._decompress_data(raw_teachers)
+                self._classrooms_index = self._decompress_data(raw_classrooms)
+                return True
+        except Exception as e:
+            print(f"Ошибка загрузки индексов из кэша: {e}")
+        return False
 
     def get_week_type(self, target_date: date) -> tuple[str, str] | None:
         """

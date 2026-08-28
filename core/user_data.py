@@ -107,6 +107,16 @@ class UserDataManager:
         self._redis_url = redis_url
         self._redis_client = None
 
+    async def init_db(self) -> None:
+        """Создает все необходимые таблицы в базе данных при первом запуске."""
+        from core.db.models import Base
+        try:
+            async with self.engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("✅ Таблицы базы данных успешно инициализированы.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации таблиц базы данных: {e}", exc_info=True)
+
     async def _get_redis_client(self) -> Redis:
         """Получает Redis клиент, создавая его при необходимости."""
         if self._redis_client is None and self._redis_url:

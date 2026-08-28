@@ -102,3 +102,46 @@ class Feedback(Base):
         Index("idx_feedback_is_answered", "is_answered"),
         Index("idx_feedback_created_at", "created_at"),
     )
+
+
+class ScheduleChangeLog(Base):
+    """Журнал аудита изменений расписания (Audit Trail)."""
+    __tablename__ = "schedule_change_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    target_name: Mapped[str] = mapped_column(String(100), nullable=False)  # Группа или ФИО преподавателя
+    target_type: Mapped[str] = mapped_column(String(20), default="group", nullable=False)  # 'group' или 'teacher'
+    schedule_date: Mapped[datetime] = mapped_column(Date, nullable=False)  # Дата изменённого дня
+    change_type: Mapped[str] = mapped_column(String(50), nullable=False)  # added, removed, time_changed, room_changed, teacher_changed
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    lesson_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_schedule_change_target", "target_name", "target_type"),
+        Index("idx_schedule_change_date", "schedule_date"),
+        Index("idx_schedule_change_created", "created_at"),
+    )
+
+
+class FailedMessage(Base):
+    """Таблица Dead-Letter Queue (DLQ) для аудита неотправленных сообщений."""
+    __tablename__ = "failed_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(50), default="text", nullable=False)  # text, photo, reminder, etc.
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # Текст сообщения или JSON
+    error_message: Mapped[str] = mapped_column(Text, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="failed", nullable=False)  # failed, resolved, discarded
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_failed_msg_user", "user_id"),
+        Index("idx_failed_msg_status", "status"),
+        Index("idx_failed_msg_created", "created_at"),
+    )

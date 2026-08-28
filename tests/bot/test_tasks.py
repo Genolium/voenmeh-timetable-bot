@@ -336,14 +336,19 @@ class TestTasks:
         assert copy_message_task.options.get("max_retries") == 5
         assert copy_message_task.options.get("min_backoff") == 1000
         assert copy_message_task.options.get("time_limit") == 300000
+        assert copy_message_task.queue_name == "high_priority"
+
+        assert send_message_task.queue_name == "high_priority"
 
         assert send_lesson_reminder_task.options.get("max_retries") == 5
         assert send_lesson_reminder_task.options.get("min_backoff") == 1000
         assert send_lesson_reminder_task.options.get("time_limit") == 600000
+        assert send_lesson_reminder_task.queue_name == "medium_priority"
 
         assert generate_week_image_task.options.get("max_retries") == 3
         assert generate_week_image_task.options.get("min_backoff") == 2000
         assert generate_week_image_task.options.get("time_limit") == 1200000
+        assert generate_week_image_task.queue_name == "high_priority"
 
     def test_environment_variables_validation(self):
         """Тест валидации переменных окружения."""
