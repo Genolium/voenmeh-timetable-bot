@@ -7,15 +7,13 @@ import pytest
 from bot.scheduler import (
     auto_backup,
     backup_current_schedule,
-    cancel_reminders_for_user,
     cleanup_image_cache,
     collect_db_metrics,
     evening_broadcast,
     handle_graduated_groups,
-    lesson_reminders_planner,
+    minutely_reminders_checker,
     monitor_schedule_changes,
     morning_summary_broadcast,
-    plan_reminders_for_user,
     print_progress_bar,
     send_daily_reports,
     send_monthly_reports,
@@ -29,8 +27,8 @@ from core.config import MOSCOW_TZ
 @pytest.fixture
 def mock_user_data_manager():
     manager = AsyncMock()
-    manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru"), (2, "О735А", "ru")]
-    manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru"), (2, "О735А", "ru")]
+    manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru", "student"), (2, "О735А", "ru", "student")]
+    manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru", "student"), (2, "О735А", "ru", "student")]
     manager.get_users_for_lesson_reminders.return_value = [
         (1, "О735Б", 20, "ru"),
         (2, "О735А", 15, "ru"),
@@ -236,192 +234,88 @@ async def test_morning_summary_broadcast_no_lessons(mock_user_data_manager, mock
 
 
 @pytest.mark.asyncio
-async def test_lesson_reminders_planner_success(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
-    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: mock_now))
+async def test_minutely_reminders_checker_first_lesson(mock_user_data_manager, mock_timetable_manager, monkeypatch):
+    # Урок в 09:00, reminder_time = 20 мин -> напоминание в 08:40
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
+    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
+        now=lambda tz: mock_now,
+        strptime=datetime.strptime,
+        combine=datetime.combine,
+    ))
 
-    # Mock datetime.combine to return naive datetime
-    def mock_combine(date_obj, time_obj):
-        return datetime.combine(date_obj, time_obj)
-
-    monkeypatch.setattr("bot.scheduler.datetime.combine", mock_combine)
-
-    # Mock MOSCOW_TZ.localize to return timezone-aware datetime
-    def mock_localize(dt):
-        return dt.replace(tzinfo=MOSCOW_TZ)
-
-    monkeypatch.setattr("bot.scheduler.MOSCOW_TZ.localize", mock_localize)
-
-    # Mock datetime.strptime to return proper time objects
-    def mock_strptime(time_str, format_str):
-        if format_str == "%H:%M":
-            hour, minute = map(int, time_str.split(":"))
-            return MagicMock(time=lambda: time(hour, minute))
-        raise ValueError(f"Unknown format: {format_str}")
-
-    monkeypatch.setattr("bot.scheduler.datetime.strptime", mock_strptime)
-
-    await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
-
-    # Проверяем, что задачи добавлены в планировщик
-    assert mock_scheduler.add_job.call_count > 0
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        # Должна быть отправлена задача о первой паре для user_id=1
+        assert mock_task.send.called
 
 
 @pytest.mark.asyncio
-async def test_lesson_reminders_planner_no_users(mock_scheduler, mock_timetable_manager):
+async def test_minutely_reminders_checker_break_and_final(mock_user_data_manager, mock_timetable_manager, monkeypatch):
+    # Конец первого урока в 10:30
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=10, minute=30, second=0, microsecond=0)
+    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
+        now=lambda tz: mock_now,
+        strptime=datetime.strptime,
+        combine=datetime.combine,
+    ))
+
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        assert mock_task.send.called
+
+
+@pytest.mark.asyncio
+async def test_minutely_reminders_checker_skip_teacher(mock_user_data_manager, mock_timetable_manager, monkeypatch):
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
+    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
+        now=lambda tz: mock_now,
+        strptime=datetime.strptime,
+        combine=datetime.combine,
+    ))
+    mock_user_data_manager.get_full_user_info.return_value = MagicMock(user_type="teacher")
+
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        mock_task.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_minutely_reminders_checker_no_users(mock_timetable_manager):
     mock_user_data_manager = AsyncMock()
     mock_user_data_manager.get_users_for_lesson_reminders.return_value = []
 
-    await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
-
-    # Не должно добавлять задачи
-    mock_scheduler.add_job.assert_not_called()
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        mock_task.send.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_lesson_reminders_planner_invalid_time_format(mock_scheduler, mock_user_data_manager, mock_timetable_manager):
-    # Мокаем расписание с невалидным форматом времени
+async def test_minutely_reminders_checker_invalid_time_format(mock_user_data_manager, mock_timetable_manager, monkeypatch):
+    mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
+    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
+        now=lambda tz: mock_now,
+        strptime=datetime.strptime,
+        combine=datetime.combine,
+    ))
     invalid_schedule = {
-        "date": datetime.now(MOSCOW_TZ).date(),
-        "lessons": [
-            {
-                "time": "09:00-10:30",
-                "start_time_raw": "invalid",
-                "end_time_raw": "10:30",
-            }
-        ],
+        "date": mock_now.date(),
+        "lessons": [{"time": "09:00-10:30", "start_time_raw": "invalid", "end_time_raw": "10:30"}],
     }
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value=invalid_schedule)
 
-    await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
-
-    # Не должно добавлять задачи с невалидным временем
-    mock_scheduler.add_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_lesson_reminders_planner_past_lessons(
-    mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch
-):
-    # Мокаем текущее время в прошлом относительно уроков
-    past_time = datetime.now(MOSCOW_TZ) - timedelta(hours=2)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: past_time))
-
-    # Mock datetime.strptime to return proper time objects
-    def mock_strptime(time_str, format_str):
-        if format_str == "%H:%M":
-            hour, minute = map(int, time_str.split(":"))
-            return MagicMock(time=lambda: time(hour, minute))
-        raise ValueError(f"Unknown format: {format_str}")
-
-    monkeypatch.setattr("bot.scheduler.datetime.strptime", mock_strptime)
-
-    await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
-
-    # Не должно добавлять задачи для прошедших уроков
-    mock_scheduler.add_job.assert_not_called()
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        mock_task.send.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_cancel_reminders_for_user_success(mock_scheduler, monkeypatch):
-    # Мокаем datetime для корректной работы
-    mock_now = datetime.now(MOSCOW_TZ)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: mock_now))
+async def test_minutely_reminders_checker_exception_handling(mock_user_data_manager, mock_timetable_manager):
+    mock_user_data_manager.get_users_for_lesson_reminders.side_effect = Exception("DB error")
 
-    await cancel_reminders_for_user(mock_scheduler, 1)
-
-    # Проверяем, что задачи удалены
-    assert mock_scheduler.remove_job.call_count > 0
-
-
-@pytest.mark.asyncio
-async def test_cancel_reminders_for_user_exception_handling(mock_scheduler):
-    # Мокаем исключение при удалении задачи
-    mock_scheduler.remove_job.side_effect = Exception("Test error")
-
-    # Не должно падать
-    await cancel_reminders_for_user(mock_scheduler, 1)
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_success(mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch):
-    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
-    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: mock_now))
-
-    # Mock datetime.combine to return naive datetime
-    def mock_combine(date_obj, time_obj):
-        return datetime.combine(date_obj, time_obj)
-
-    monkeypatch.setattr("bot.scheduler.datetime.combine", mock_combine)
-
-    # Mock MOSCOW_TZ.localize to return timezone-aware datetime
-    def mock_localize(dt):
-        return dt.replace(tzinfo=MOSCOW_TZ)
-
-    monkeypatch.setattr("bot.scheduler.MOSCOW_TZ.localize", mock_localize)
-
-    # Mock datetime.strptime to return proper time objects
-    def mock_strptime(time_str, format_str):
-        if format_str == "%H:%M":
-            hour, minute = map(int, time_str.split(":"))
-            return MagicMock(time=lambda: time(hour, minute))
-        raise ValueError(f"Unknown format: {format_str}")
-
-    monkeypatch.setattr("bot.scheduler.datetime.strptime", mock_strptime)
-
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
-
-    # Проверяем, что задачи добавлены
-    assert mock_scheduler.add_job.call_count > 0
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_no_user_info(mock_scheduler, mock_timetable_manager):
-    mock_user_data_manager = AsyncMock()
-    mock_user_data_manager.get_full_user_info.return_value = None
-
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
-
-    # Не должно добавлять задачи
-    mock_scheduler.add_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_no_group(mock_scheduler, mock_timetable_manager):
-    mock_user_data_manager = AsyncMock()
-    mock_user_data_manager.get_full_user_info.return_value = MagicMock(group=None, lesson_reminders=True)
-
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
-
-    # Не должно добавлять задачи
-    mock_scheduler.add_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_no_lessons(mock_scheduler, mock_user_data_manager, mock_timetable_manager):
-    mock_user_data_manager = AsyncMock()
-    mock_user_data_manager.get_full_user_info.return_value = MagicMock(
-        group="О735Б", lesson_reminders=True, reminder_time_minutes=60
-    )
-
-    # Мокаем расписание без уроков
-    mock_timetable_manager.get_schedule_for_day.return_value = {"error": "Нет данных"}
-
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
-
-    # Не должно добавлять задачи
-    mock_scheduler.add_job.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_exception_handling(mock_scheduler, mock_user_data_manager, mock_timetable_manager):
-    # Мокаем исключение в get_full_user_info
-    mock_user_data_manager.get_full_user_info.side_effect = Exception("Test error")
-
-    # Не должно падать
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
+    with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
+        # Не должно выбрасывать необработанное исключение
+        await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
+        mock_task.send.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -662,7 +556,7 @@ async def test_evening_broadcast_weather_api_error(mock_user_data_manager, mock_
     monkeypatch.setattr("bot.scheduler.TASKS_SENT_TO_QUEUE", mock_metrics)
 
     # Мокаем пользователей для уведомления
-    mock_user_data_manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru")]
+    mock_user_data_manager.get_users_for_evening_notify.return_value = [(1, "О735Б", "ru", "student")]
 
     # Мокаем расписание
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={"lessons": []})
@@ -695,7 +589,7 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
     monkeypatch.setattr("bot.scheduler.TASKS_SENT_TO_QUEUE", mock_metrics)
 
     # Мокаем пользователей для уведомления
-    mock_user_data_manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru")]
+    mock_user_data_manager.get_users_for_morning_summary.return_value = [(1, "О735Б", "ru", "student")]
 
     # Мокаем расписание
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={"lessons": [{"time": "09:00-10:30"}]})
@@ -718,88 +612,7 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
 
 
 @pytest.mark.asyncio
-async def test_lesson_reminders_planner_with_break_duration_calculation(
-    mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch
-):
-    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
-    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: mock_now))
 
-    # Mock datetime.combine to return naive datetime
-    def mock_combine(date_obj, time_obj):
-        return datetime.combine(date_obj, time_obj)
-
-    monkeypatch.setattr("bot.scheduler.datetime.combine", mock_combine)
-
-    # Mock MOSCOW_TZ.localize to return timezone-aware datetime
-    def mock_localize(dt):
-        return dt.replace(tzinfo=MOSCOW_TZ)
-
-    monkeypatch.setattr("bot.scheduler.MOSCOW_TZ.localize", mock_localize)
-
-    # Mock datetime.strptime to return proper time objects
-    def mock_strptime(time_str, format_str):
-        if format_str == "%H:%M":
-            hour, minute = map(int, time_str.split(":"))
-            return MagicMock(time=lambda: time(hour, minute))
-        raise ValueError(f"Unknown format: {format_str}")
-
-    monkeypatch.setattr("bot.scheduler.datetime.strptime", mock_strptime)
-
-    # Мокаем расписание с уроками для проверки расчета длительности перерыва
-    schedule_with_breaks = {
-        "date": datetime.now(MOSCOW_TZ).date(),
-        "lessons": [
-            {"time": "09:00-10:30", "start_time_raw": "09:00", "end_time_raw": "10:30"},
-            {"time": "11:00-12:30", "start_time_raw": "11:00", "end_time_raw": "12:30"},
-        ],
-    }
-    mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value=schedule_with_breaks)
-
-    await lesson_reminders_planner(mock_scheduler, mock_user_data_manager, mock_timetable_manager)
-
-    # Проверяем, что задачи добавлены
-    assert mock_scheduler.add_job.call_count > 0
-
-
-@pytest.mark.asyncio
-async def test_plan_reminders_for_user_with_custom_reminder_time(
-    mock_scheduler, mock_user_data_manager, mock_timetable_manager, monkeypatch
-):
-    # Мокаем datetime: фиксируем раннее утро, чтобы время напоминаний было в будущем
-    mock_now = datetime.now(MOSCOW_TZ).replace(hour=6, minute=0, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(now=lambda tz: mock_now))
-
-    # Mock datetime.combine to return naive datetime
-    def mock_combine(date_obj, time_obj):
-        return datetime.combine(date_obj, time_obj)
-
-    monkeypatch.setattr("bot.scheduler.datetime.combine", mock_combine)
-
-    # Mock MOSCOW_TZ.localize to return timezone-aware datetime
-    def mock_localize(dt):
-        return dt.replace(tzinfo=MOSCOW_TZ)
-
-    monkeypatch.setattr("bot.scheduler.MOSCOW_TZ.localize", mock_localize)
-
-    # Mock datetime.strptime to return proper time objects
-    def mock_strptime(time_str, format_str):
-        if format_str == "%H:%M":
-            hour, minute = map(int, time_str.split(":"))
-            return MagicMock(time=lambda: time(hour, minute))
-        raise ValueError(f"Unknown format: {format_str}")
-
-    monkeypatch.setattr("bot.scheduler.datetime.strptime", mock_strptime)
-
-    # Мокаем пользователя с кастомным временем напоминания
-    mock_user_data_manager.get_full_user_info.return_value = MagicMock(
-        group="О735Б", lesson_reminders=True, reminder_time_minutes=30
-    )
-
-    await plan_reminders_for_user(mock_scheduler, mock_user_data_manager, mock_timetable_manager, 1)
-
-    # Проверяем, что задачи добавлены
-    assert mock_scheduler.add_job.call_count > 0
 
 
 @pytest.mark.asyncio

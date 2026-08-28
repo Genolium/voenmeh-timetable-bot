@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboar
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo
 from aiogram_dialog.widgets.media import StaticMedia
+from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.text import Const, Format
 
 from bot.tasks import generate_week_image_task, send_week_original_if_subscribed_task
@@ -724,10 +725,10 @@ schedul_dialog_windows = [
                 when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
         ),
+        LinkPreview(is_disabled=True),
         state=Schedule.view,
         getter=get_schedule_data,
         parse_mode="HTML",
-        disable_web_page_preview=True,
     ),
     Window(
         Const(

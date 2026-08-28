@@ -72,7 +72,8 @@ async def generate_all_schedule_images():
         # Создаем менеджер расписания
         from redis.asyncio import Redis
 
-        redis_client = Redis.from_url("redis://localhost:6379/0")
+        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        redis_client = Redis.from_url(redis_url)
         manager = TimetableManager(schedule_data, redis_client)
 
         # Получаем список всех групп

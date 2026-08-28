@@ -27,31 +27,32 @@ async def test_webhook_sends_to_admins(mocker):
     bot = DummyBot()
     app = create_alert_app(bot, [1, 2])
 
-    from aiohttp.test_utils import TestClient, TestServer
+    from aiohttp.test_utils import make_mocked_request
 
-    server = TestServer(app)
-    await server.start_server()
-    client = TestClient(server)
-    await client.start_server()
+    payload = {
+        "status": "firing",
+        "alerts": [
+            {
+                "labels": {"alertname": "ScheduleStale", "severity": "critical"},
+                "annotations": {"description": "No update > 1h"},
+                "startsAt": "2025-01-01T00:00:00Z",
+            }
+        ],
+    }
 
-    try:
-        payload = {
-            "status": "firing",
-            "alerts": [
-                {
-                    "labels": {"alertname": "ScheduleStale", "severity": "critical"},
-                    "annotations": {"description": "No update > 1h"},
-                    "startsAt": "2025-01-01T00:00:00Z",
-                }
-            ],
-        }
+    req = make_mocked_request("POST", "/alerts", headers={"Content-Type": "application/json"}, app=app)
+    req.json = AsyncMock(return_value=payload)
 
-        resp = await client.post("/alerts", json=payload)
-        assert resp.status == 200
-        assert any(c[0] in (1, 2) for c in bot.sent)
-    finally:
-        await client.close()
-        await server.close()
+    handler = None
+    for route in app.router.routes():
+        if route.resource.canonical == "/alerts" and route.method == "POST":
+            handler = route.handler
+            break
+
+    assert handler is not None
+    resp = await handler(req)
+    assert resp.status == 200
+    assert any(c[0] in (1, 2) for c in bot.sent)
 
 
 def test_format_alertmanager_message_single_alert():

@@ -18,14 +18,16 @@ from bot.dialogs.states import SettingsMenu
 
 def test_get_status_text():
     """Тестирует хелпер для получения текстового статуса."""
-    assert get_status_text(True) == "✅ Включена"
-    assert get_status_text(False) == "❌ Отключена"
+    assert get_status_text(True, "ru") == "✅ Включена"
+    assert get_status_text(False, "ru") == "❌ Отключена"
 
 
 def test_get_button_text():
     """Тестирует хелпер для получения текста кнопки."""
-    assert get_button_text(True, "уведомления") == "Отключить уведомления"
-    assert get_button_text(False, "рассылку") == "Включить рассылку"
+    assert get_button_text(True, "evening", "ru") == "Отключить сводку на завтра"
+    assert get_button_text(False, "morning", "ru") == "Включить утреннюю сводку"
+    assert get_button_text(True, "reminders", "ru") == "Отключить напоминания о парах"
+    assert get_button_text(False, "reminders", "ru") == "Включить напоминания о парах"
 
 
 # --- Тесты для асинхронных обработчиков и геттеров ---

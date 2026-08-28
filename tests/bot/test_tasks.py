@@ -52,13 +52,13 @@ class TestTasks:
 
     def test_send_message_task_success(self, mock_bot):
         """Тест успешной отправки сообщения через задачу."""
-        with patch("bot.tasks.asyncio.run") as mock_run:
+        with patch("bot.tasks.run_async") as mock_run:
             send_message_task(123456789, "Test message")
             mock_run.assert_called_once()
 
     def test_copy_message_task_success(self, mock_bot):
         """Тест успешного копирования сообщения через задачу."""
-        with patch("bot.tasks.asyncio.run") as mock_run:
+        with patch("bot.tasks.run_async") as mock_run:
             copy_message_task(123456789, 987654321, 1)
             mock_run.assert_called_once()
 
@@ -202,8 +202,8 @@ class TestTasks:
 
     def test_send_week_original_if_subscribed_task(self):
         """Тест задачи отправки оригинала недельного расписания."""
-        with patch("bot.tasks.asyncio.run") as mock_run:
-            send_week_original_if_subscribed_task(123456789, "TEST_GROUP", "even")
+        with patch("bot.tasks.run_async") as mock_run:
+            send_week_original_if_subscribed_task(123456789, "test_cache_key")
             mock_run.assert_called_once()
 
     @pytest.mark.asyncio
@@ -211,14 +211,9 @@ class TestTasks:
         """Тест успешной отправки сообщения."""
         user_id = 123456789
         text = "Test message"
+        mock_bot = AsyncMock()
 
-        with patch("bot.tasks.Bot") as mock_bot_class:
-            mock_bot = AsyncMock()
-            mock_bot_class.return_value = mock_bot
-            mock_bot.__aenter__ = AsyncMock(return_value=mock_bot)
-            mock_bot.__aexit__ = AsyncMock(return_value=None)
-            mock_bot.send_message = AsyncMock()
-
+        with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
                 mock_rate_limiter.__aenter__ = AsyncMock()
                 mock_rate_limiter.__aexit__ = AsyncMock()
@@ -233,14 +228,10 @@ class TestTasks:
 
         user_id = 123456789
         text = "Test message"
+        mock_bot = AsyncMock()
+        mock_bot.send_message.side_effect = TelegramForbiddenError(method=MagicMock(), message="Forbidden")
 
-        with patch("bot.tasks.Bot") as mock_bot_class:
-            mock_bot = AsyncMock()
-            mock_bot_class.return_value = mock_bot
-            mock_bot.__aenter__ = AsyncMock(return_value=mock_bot)
-            mock_bot.__aexit__ = AsyncMock(return_value=None)
-            mock_bot.send_message = AsyncMock(side_effect=TelegramForbiddenError("Forbidden", "User blocked bot"))
-
+        with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
                 mock_rate_limiter.__aenter__ = AsyncMock()
                 mock_rate_limiter.__aexit__ = AsyncMock()
@@ -254,14 +245,10 @@ class TestTasks:
 
         user_id = 123456789
         text = "Test message"
+        mock_bot = AsyncMock()
+        mock_bot.send_message.side_effect = TelegramBadRequest(method=MagicMock(), message="bot was blocked by the user")
 
-        with patch("bot.tasks.Bot") as mock_bot_class:
-            mock_bot = AsyncMock()
-            mock_bot_class.return_value = mock_bot
-            mock_bot.__aenter__ = AsyncMock(return_value=mock_bot)
-            mock_bot.__aexit__ = AsyncMock(return_value=None)
-            mock_bot.send_message = AsyncMock(side_effect=TelegramBadRequest("Bad Request", "bot was blocked by the user"))
-
+        with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
                 mock_rate_limiter.__aenter__ = AsyncMock()
                 mock_rate_limiter.__aexit__ = AsyncMock()
@@ -270,20 +257,14 @@ class TestTasks:
 
     def test_send_message_bad_request_other(self):
         """Тест обработки TelegramBadRequest с другой ошибкой."""
-        # Тест проверяет, что исключения TelegramBadRequest с другими текстами пробрасываются
-        # Это покрывается функциональными тестами
         assert True
 
     def test_send_message_retry_after(self):
         """Тест обработки RetryAfter исключения."""
-        # Тест проверяет, что RetryAfter исключения пробрасываются для retry механизма
-        # Это покрывается функциональными тестами
         assert True
 
     def test_send_message_generic_exception(self):
         """Тест обработки общего исключения."""
-        # Тест проверяет, что общие исключения пробрасываются
-        # Это покрывается функциональными тестами
         assert True
 
     @pytest.mark.asyncio
@@ -292,14 +273,9 @@ class TestTasks:
         user_id = 123456789
         from_chat_id = 987654321
         message_id = 1
+        mock_bot = AsyncMock()
 
-        with patch("bot.tasks.Bot") as mock_bot_class:
-            mock_bot = AsyncMock()
-            mock_bot_class.return_value = mock_bot
-            mock_bot.__aenter__ = AsyncMock(return_value=mock_bot)
-            mock_bot.__aexit__ = AsyncMock(return_value=None)
-            mock_bot.copy_message = AsyncMock()
-
+        with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
                 mock_rate_limiter.__aenter__ = AsyncMock()
                 mock_rate_limiter.__aexit__ = AsyncMock()
@@ -311,8 +287,6 @@ class TestTasks:
 
     def test_copy_message_exception(self):
         """Тест обработки исключения при копировании сообщения."""
-        # Тест проверяет, что исключения при копировании пробрасываются
-        # Это покрывается функциональными тестами
         assert True
 
     @pytest.mark.asyncio
@@ -324,7 +298,6 @@ class TestTasks:
         with patch("bot.tasks._send_message", AsyncMock()) as mock_send:
             await _send_error_message(user_id, error_text)
 
-            # Проверяем, что _send_message был вызван с правильными параметрами
             mock_send.assert_called_once()
             args, kwargs = mock_send.call_args
             assert args[0] == user_id
@@ -345,9 +318,9 @@ class TestTasks:
         """Тест автоматической генерации изображения недели."""
         week_schedule = {"ПОНЕДЕЛЬНИК": [{"subject": "Test", "time": "9:00-10:30"}]}
 
-        with patch("bot.tasks.asyncio.run") as mock_run:
+        with patch("bot.tasks.run_async") as mock_run:
             # user_id=None означает автогенерацию
-            generate_week_image_task("test_cache_even", week_schedule, "Test Week", "TEST_GROUP")
+            generate_week_image_task("test_cache_even", week_schedule, "Test Week", "TEST_GROUP", "even")
             mock_run.assert_called_once()
 
     def test_dramatiq_actors_decorated(self):
@@ -360,30 +333,25 @@ class TestTasks:
 
     def test_dramatiq_actor_options(self):
         """Тест настроек dramatiq actors."""
-        # copy_message_task должен иметь настройки retry
         assert copy_message_task.options.get("max_retries") == 5
         assert copy_message_task.options.get("min_backoff") == 1000
-        assert copy_message_task.options.get("time_limit") == 30000
+        assert copy_message_task.options.get("time_limit") == 300000
 
-        # send_lesson_reminder_task тоже
         assert send_lesson_reminder_task.options.get("max_retries") == 5
         assert send_lesson_reminder_task.options.get("min_backoff") == 1000
-        assert send_lesson_reminder_task.options.get("time_limit") == 30000
+        assert send_lesson_reminder_task.options.get("time_limit") == 600000
 
-        # generate_week_image_task
         assert generate_week_image_task.options.get("max_retries") == 3
         assert generate_week_image_task.options.get("min_backoff") == 2000
-        assert generate_week_image_task.options.get("time_limit") == 300000
+        assert generate_week_image_task.options.get("time_limit") == 1200000
 
     def test_environment_variables_validation(self):
         """Тест валидации переменных окружения."""
-        # Просто проверяем, что BOT_TOKEN установлен
         assert BOT_TOKEN is not None
         assert len(BOT_TOKEN) > 0
 
     def test_broker_configuration(self):
         """Тест конфигурации брокера."""
-        # Проверяем, что брокер был настроен
         from bot.tasks import rabbitmq_broker
 
         assert rabbitmq_broker is not None
@@ -391,8 +359,7 @@ class TestTasks:
 
     def test_counter_increment(self, mock_bot):
         """Тест увеличения счетчика сообщений."""
-        # Простой тест, что задачи выполняются
-        with patch("bot.tasks.asyncio.run") as mock_run:
+        with patch("bot.tasks.run_async") as mock_run:
             send_message_task(123456789, "Test message")
             assert mock_run.called
 
@@ -401,169 +368,47 @@ class TestTasks:
 
 
 @pytest.mark.asyncio
-async def test_send_message_success():
+async def test_standalone_send_message_success():
     """Тест успешной отправки сообщения."""
-    with patch("bot.tasks.Bot") as mock_bot_class:
-        mock_bot_instance = AsyncMock()
-        mock_bot_class.return_value = mock_bot_instance
-
+    mock_bot_instance = AsyncMock()
+    with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot_instance)):
         await _send_message(123456789, "Test message")
-
-        mock_bot_class.assert_called_once()
-        mock_bot_instance.send_message.assert_called_once_with(123456789, "Test message", disable_web_page_preview=True)
-
-
-# Пропускаем тесты с импортом исключений из-за проблем совместимости
-# @pytest.mark.asyncio
-# async def test_send_message_forbidden_error():
-#     """Тест обработки TelegramForbiddenError."""
-#     from aiogram.exceptions import TelegramForbiddenError
-
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-#         mock_bot_instance.send_message.side_effect = TelegramForbiddenError("Forbidden")
-
-#         # Не должно падать при TelegramForbiddenError
-#         await _send_message(123456789, "Test message")
-
-
-# @pytest.mark.asyncio
-# async def test_send_message_bad_request_blocked():
-#     """Тест обработки TelegramBadRequest с блокировкой."""
-#     try:
-#         from aiogram.exceptions import TelegramBadRequest
-#     except ImportError:
-#         from aiogram.utils.exceptions import BadRequest as TelegramBadRequest
-
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-#         mock_bot_instance.send_message.side_effect = TelegramBadRequest("bot was blocked by the user")
-
-#         # Не должно падать при блокировке
-#         await _send_message(123456789, "Test message")
-
-
-# @pytest.mark.asyncio
-# async def test_send_message_bad_request_other():
-#     """Тест обработки TelegramBadRequest с другими ошибками."""
-#     try:
-#         from aiogram.exceptions import TelegramBadRequest
-#     except ImportError:
-#         from aiogram.utils.exceptions import BadRequest as TelegramBadRequest
-
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-#         mock_bot_instance.send_message.side_effect = TelegramBadRequest("Some other error")
-
-#         # Должно падать при других BadRequest ошибках
-#         with pytest.raises(TelegramBadRequest):
-#             await _send_message(123456789, "Test message")
-
-
-# @pytest.mark.asyncio
-# async def test_send_message_retry_after():
-#     """Тест обработки RetryAfter."""
-#     try:
-#         from aiogram.exceptions import TelegramRetryAfter as RetryAfter
-#     except ImportError:
-#         try:
-#             from aiogram.utils.exceptions import RetryAfter
-#         except ImportError:
-#             # Fallback: define a stub to keep logic working
-#             class RetryAfter(Exception):
-#                 pass
-
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-#         mock_bot_instance.send_message.side_effect = RetryAfter("Retry after")
-
-#         # Должно падать при RetryAfter
-#         with pytest.raises(RetryAfter):
-#             await _send_message(123456789, "Test message")
+        mock_bot_instance.send_message.assert_called_once_with(
+            123456789, "Test message", disable_web_page_preview=True
+        )
 
 
 @pytest.mark.asyncio
-async def test_send_message_generic_exception():
+async def test_standalone_send_message_generic_exception():
     """Тест обработки общих исключений."""
-    with patch("bot.tasks.Bot") as mock_bot_class:
-        mock_bot_instance = AsyncMock()
-        mock_bot_class.return_value = mock_bot_instance
-        mock_bot_instance.send_message.side_effect = Exception("Generic error")
-
-        # Должно падать при общих исключениях
+    mock_bot_instance = AsyncMock()
+    mock_bot_instance.send_message.side_effect = Exception("Generic error")
+    with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot_instance)):
         with pytest.raises(Exception):
             await _send_message(123456789, "Test message")
 
 
-# Пропускаем тесты _copy_message, так как эта функция не экспортируется
-# @pytest.mark.asyncio
-# async def test_copy_message_success():
-#     """Тест успешного копирования сообщения."""
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-
-#         await _copy_message(123456789, 987654321, 123)
-
-#         mock_bot_class.assert_called_once()
-#         mock_bot_instance.copy_message.assert_called_once_with(
-#             123456789, 987654321, 123
-#         )
-
-
-# @pytest.mark.asyncio
-# async def test_copy_message_exception():
-#     """Тест обработки исключений при копировании сообщения."""
-#     with patch('bot.tasks.Bot') as mock_bot_class:
-#         mock_bot_instance = AsyncMock()
-#         mock_bot_class.return_value = mock_bot_instance
-#         mock_bot_instance.copy_message.side_effect = Exception("Copy failed")
-
-#         # Должно падать при исключениях
-#         with pytest.raises(Exception):
-#             await _copy_message(123456789, 987654321, 123)
-
-
 @pytest.mark.asyncio
-async def test_send_error_message():
+async def test_standalone_send_error_message():
     """Тест отправки сообщения об ошибке."""
-    with patch("bot.tasks.Bot") as mock_bot_class:
-        mock_bot_instance = AsyncMock()
-        mock_bot_class.return_value = mock_bot_instance
-
+    with patch("bot.tasks._send_message", AsyncMock()) as mock_send:
         await _send_error_message(123456789, "Error occurred")
-
-        mock_bot_class.assert_called_once()
-        mock_bot_instance.send_message.assert_called_once()
-        args, kwargs = mock_bot_instance.send_message.call_args
-        assert 123456789 in args
+        mock_send.assert_called_once()
+        args, kwargs = mock_send.call_args
+        assert args[0] == 123456789
         assert "Error occurred" in args[1]
 
 
 @pytest.mark.asyncio
-async def test_send_error_message_exception():
+async def test_standalone_send_error_message_exception():
     """Тест обработки исключений при отправке сообщения об ошибке."""
-    with patch("bot.tasks.Bot") as mock_bot_class:
-        mock_bot_instance = AsyncMock()
-        mock_bot_class.return_value = mock_bot_instance
-        mock_bot_instance.send_message.side_effect = Exception("Send failed")
-
+    with patch("bot.tasks._send_message", AsyncMock(side_effect=Exception("Send failed"))):
         # Функция должна обработать исключение без падения
-        try:
-            await _send_error_message(123456789, "Error occurred")
-            # Если дошли сюда, значит исключение обработано
-            assert True
-        except Exception:
-            pytest.fail("_send_error_message не должна падать при исключениях")
+        await _send_error_message(123456789, "Error occurred")
 
 
 def test_log_configuration():
     """Тест конфигурации логирования."""
-    # Проверяем что логгер существует и настроен
     assert log is not None
     assert hasattr(log, "info")
     assert hasattr(log, "error")

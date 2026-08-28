@@ -200,7 +200,7 @@ class TestAdminMenuHandlers:
         """Тест функции тестирования напоминаний с пользователями."""
         # Настраиваем моки
         mock_manager.middleware_data["user_data_manager"].get_users_for_lesson_reminders.return_value = [
-            (123, "TEST_GROUP", "test@example.com")
+            (123, "TEST_GROUP", 15, "ru")
         ]
         mock_manager.middleware_data["manager"].get_schedule_for_day.return_value = {
             "lessons": [{"subject": "TEST", "time": "9:00-10:30"}]

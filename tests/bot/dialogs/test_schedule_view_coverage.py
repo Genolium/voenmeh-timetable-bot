@@ -85,49 +85,13 @@ class TestScheduleViewTeacherLogic:
         
         # Mock image dependencies
         with patch("core.image_cache_manager.ImageCacheManager"), \
-             patch("core.image_service.ImageService"):
-             
+             patch("core.image_service.ImageService") as mock_img_srv:
+            mock_srv_instance = AsyncMock()
+            mock_srv_instance.get_or_generate_week_image.return_value = (True, "/fake/path.png")
+            mock_img_srv.return_value = mock_srv_instance
+
             data = await get_week_image_data(mock_manager)
-            
-            # Since get_week_image_data mainly prepares context for template, 
-            # ideally we check if `current_context` was used?
-            # Actually get_week_image_data returns dict.
-            # But the logic constructs `week_schedule` locally inside function.
-            # It's not returned in the dict! It's likely used by `generate_week_image_task`?
-            # Wait, `get_week_image_data` returns data for the getter.
-            # But where is the schedule passed?
-            # Re-reading lines 298+: it instantiates `ImageService` but doesn't seem to CAL it to generate image in this function?
-            # Ah, `get_week_image_data` is a getter for the WINDOW.
-            # Wait, line 245 in `schedule_view.py` calls `await get_week_image_data(manager)`.
-            # But `get_week_image_data` (lines 256+) prepares basic info.
-            # Where is the image generated? 
-            # Ah, `on_full_week_image_click` calls `get_week_image_data` but ignores result?
-            # Wait, `ImageService` allows getting/generating.
-            # Lines 302: `image_service = ImageService(...)`
-            # But it is not used?
-            # 
-            # Oops, I might have found a bug or I am misreading. 
-            # In `schedule_view.py`:
-            # 302: `image_service = ImageService(cache_manager, bot)`
-            # 305-329: Logic to build `week_schedule`.
-            # THEN... nothing happens with `week_schedule` or `image_service`?
-            # Line 345 returns dict.
-            # The code seems to construct `week_schedule` but DOES NOT USE IT.
-            # Wait. `get_week_image_data` is a DIALOG GETTER. 
-            # It supplies data to the template.
-            # The template probably uses `week_image_id`?
-            # But `week_schedule` is local variable.
-            # Ah, `on_full_week_image_click` (line 224) calls `get_week_image_data`.
-            # Maybe the logic was refactored and this function just returns text info now?
-            # But why does it verify week type?
-            
-            # Logic check:
-            # If `get_week_image_data` is just for showing text caption, then `week_schedule` calculation is redundant dead code.
-            # Unless `image_service` was supposed to use it.
-            # This looks like potential dead code or incomplete refactor.
-            # I will confirm this with a test. If I run this function, `week_schedule` is computed but lost.
-            
-            pass 
+            assert isinstance(data, dict) 
 
 @pytest.mark.asyncio
 class TestSubscriptionLogic:

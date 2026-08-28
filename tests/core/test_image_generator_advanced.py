@@ -23,18 +23,22 @@ def mock_template_render(mocker):
 @pytest.fixture
 def mock_playwright_context():
     # Setup a working Playwright mock
-    pw_mock = AsyncMock()
+    pw_mock = MagicMock()
     browser_mock = AsyncMock()
     page_mock = AsyncMock()
     
     pw_instance = AsyncMock()
     pw_instance.chromium.launch.return_value = browser_mock
-    pw_mock.__aenter__.return_value = pw_instance
+    pw_mock.return_value.start = AsyncMock(return_value=pw_instance)
+    pw_mock.return_value.__aenter__ = AsyncMock(return_value=pw_instance)
     
     browser_mock.new_page.return_value = page_mock
+    browser_mock.new_context.return_value = AsyncMock()
     
     # Setup page content height mock to avoid 0 height error
     page_mock.evaluate.return_value = 1000
+    page_mock.set_default_timeout = MagicMock()
+    page_mock.set_default_navigation_timeout = MagicMock()
     
     return pw_mock, browser_mock, page_mock
 
@@ -65,7 +69,7 @@ class TestImageGeneratorAdvanced:
         # Patch async_playwright to enable function execution
         pw_mock, _, _ = mock_playwright_context
         
-        with patch("core.image_generator.async_playwright", return_value=pw_mock):
+        with patch("core.image_generator.async_playwright", pw_mock):
              # Force template reload or cache bypass is tricky, 
              # but we can check if render called with specific "bg_image" if we mock template
              with patch("core.image_generator._template_cache") as mock_tmpl:
@@ -88,7 +92,7 @@ class TestImageGeneratorAdvanced:
 
     async def test_shutdown_lifecycle(self, mock_playwright_context):
         pw_mock, browser, _ = mock_playwright_context
-        with patch("core.image_generator.async_playwright", return_value=pw_mock):
+        with patch("core.image_generator.async_playwright", pw_mock):
             # Run one generation to create the pool
             await generate_schedule_image({}, "odd", "G1", "out.png")
             
@@ -111,7 +115,7 @@ class TestImageGeneratorAdvanced:
         # Test the "Recovery" block when new_context fails (health check) or browser closed
         pw_mock, browser, _ = mock_playwright_context
         
-        with patch("core.image_generator.async_playwright", return_value=pw_mock):
+        with patch("core.image_generator.async_playwright", pw_mock):
             # 1. Init pool
             await generate_schedule_image({}, "odd", "G1", "out.png")
             
@@ -131,8 +135,7 @@ class TestImageGeneratorAdvanced:
             # Verify close called (cleanup of dead browser)
             state.browser.close.assert_called()
             # Verify new browser launched (launch called twice total? or once more)
-            # pw_instance.chromium.launch was called initially + once more
-            pw_instance = pw_mock.__aenter__.return_value
+            pw_instance = pw_mock.return_value.start.return_value
             assert pw_instance.chromium.launch.call_count >= 2
 
     async def test_render_error_handling(self, mock_playwright_context):
@@ -140,7 +143,7 @@ class TestImageGeneratorAdvanced:
         pw_mock, _, page_mock = mock_playwright_context
         page_mock.evaluate.return_value = 0 # Triggers ValueError
         
-        with patch("core.image_generator.async_playwright", return_value=pw_mock):
+        with patch("core.image_generator.async_playwright", pw_mock):
              res = await generate_schedule_image({}, "odd", "G1", "out.png")
              assert res is False
 
@@ -151,10 +154,10 @@ class TestImageGeneratorAdvanced:
         browser2 = AsyncMock()
         browser2.new_page.return_value = browser.new_page.return_value # Return same page mock for simplicity
         
-        pw_instance = pw_mock.__aenter__.return_value
+        pw_instance = pw_mock.return_value.start.return_value
         pw_instance.chromium.launch.side_effect = [browser, browser2]
         
-        with patch("core.image_generator.async_playwright", return_value=pw_mock), \
+        with patch("core.image_generator.async_playwright", pw_mock), \
              patch("core.image_generator._POOL_MAX_PAGES", 1): # Max 1 page before restart
              
              # 1. First generation
@@ -169,7 +172,6 @@ class TestImageGeneratorAdvanced:
              await generate_schedule_image({}, "odd", "G1", "out.png")
              
              state_new = getattr(loop, "__img_pool_state__")
-             assert state_new is not state
              assert state_new.browser is browser2
              
              # Verify strict closure

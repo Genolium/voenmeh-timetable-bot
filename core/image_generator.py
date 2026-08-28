@@ -376,7 +376,7 @@ async def generate_schedule_image(
                         pass
                     finally:
                         # Пересоздаем
-                        new_ctx = await async_playwright().__aenter__()
+                        new_ctx = await async_playwright().start()
                         try:
                             new_browser = await asyncio.wait_for(new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
                             state.ctx = new_ctx

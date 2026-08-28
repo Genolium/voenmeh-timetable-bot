@@ -8,7 +8,13 @@ from bot.dialogs.feedback_menu import on_feedback_received
 @pytest.fixture
 def mock_manager(mocker):
     manager = AsyncMock()
-    manager.middleware_data = {"bot": AsyncMock(), "session_factory": AsyncMock()}
+    mock_udm = AsyncMock()
+    mock_udm.get_user_language.return_value = "ru"
+    manager.middleware_data = {
+        "bot": AsyncMock(),
+        "session_factory": AsyncMock(),
+        "user_data_manager": mock_udm,
+    }
     return manager
 
 

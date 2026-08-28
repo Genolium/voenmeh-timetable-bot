@@ -52,14 +52,7 @@ load_dotenv()
 
 def _create_bot_with_timeout():
     """Create a Bot instance with proper HTTP client timeout settings."""
-    # Increase timeouts significantly to handle slow API responses
-    timeout = aiohttp.ClientTimeout(
-        total=60,         # Total timeout for entire request (60 seconds)
-        connect=30,       # Timeout for connection establishment (30 seconds)
-        sock_read=30,     # Timeout for reading response (30 seconds)
-        sock_connect=15   # Timeout for socket connection (15 seconds)
-    )
-    session = AiohttpSession(timeout=timeout)
+    session = AiohttpSession(timeout=60.0, limit=15)
     return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
 
 
@@ -260,15 +253,8 @@ async def get_worker_bot() -> Bot:
     """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
     global _worker_bot
     if _worker_bot is None:
-        # Настраиваем комфортные таймауты
-        timeout = aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)
-        
-        # МАГИЯ ЗДЕСЬ: limit=15 ограничивает количество одновременных TCP-соединений.
-        # Этого с запасом хватит для отправки 100+ сообщений в секунду, 
-        # но Telegram и ваш хостер больше не будут блокировать нас за "DDoS".
-        connector = aiohttp.TCPConnector(limit=15, force_close=False)
-
-        session = AiohttpSession(timeout=timeout, connector=connector)
+        # limit=15 ограничивает количество одновременных TCP-соединений
+        session = AiohttpSession(timeout=45.0, limit=15)
         _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
         
     return _worker_bot

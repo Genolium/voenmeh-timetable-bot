@@ -6,6 +6,7 @@ from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.media import StaticMedia
+from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.text import Const, Format
 
 from bot.text_formatters import format_classroom_schedule_text, format_teacher_schedule_text
@@ -179,27 +180,27 @@ find_dialog = Dialog(
             id=WidgetIds.BACK_TO_MAIN_SCHEDULE,
             on_click=on_back_to_main_menu,
         ),
+        LinkPreview(is_disabled=True),
         state=FindMenu.choice,
         getter=get_find_data,
-        disable_web_page_preview=True,
     ),
     Window(
         StaticMedia(path=TEACHER_IMAGE_PATH),
         Format("{find_enter_teacher}"),
         MessageInput(on_teacher_input),
         SwitchTo(Format("{btn_back}"), id=f"{WidgetIds.BACK_TO_CHOICE}_1", state=FindMenu.choice),
+        LinkPreview(is_disabled=True),
         state=FindMenu.enter_teacher,
         getter=get_find_data,
-        disable_web_page_preview=True,
     ),
     Window(
         StaticMedia(path=CLASSROOM_IMAGE_PATH),
         Format("{find_enter_classroom}"),
         MessageInput(on_classroom_input),
         SwitchTo(Format("{btn_back}"), id=f"{WidgetIds.BACK_TO_CHOICE}_2", state=FindMenu.choice),
+        LinkPreview(is_disabled=True),
         state=FindMenu.enter_classroom,
         getter=get_find_data,
-        disable_web_page_preview=True,
     ),
     Window(
         Format("{find_select_match}"),
@@ -224,10 +225,10 @@ find_dialog = Dialog(
             when=lambda data, w, m: m.dialog_data.get(DialogDataKeys.SEARCH_TYPE) == "classroom",
             state=FindMenu.enter_classroom,
         ),
+        LinkPreview(is_disabled=True),
         state=FindMenu.select_item,
         getter=get_find_data,
         parse_mode="HTML",
-        disable_web_page_preview=True,
     ),
     Window(
         Format("{result_text}"),
@@ -259,9 +260,9 @@ find_dialog = Dialog(
             id=f"{WidgetIds.BACK_TO_CHOICE}_3",
             state=FindMenu.choice,
         ),
+        LinkPreview(is_disabled=True),
         state=FindMenu.view_result,
         getter=get_find_data,
         parse_mode="HTML",
-        disable_web_page_preview=True,
     ),
 )

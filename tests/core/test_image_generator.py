@@ -38,6 +38,11 @@ def mock_playwright(mocker):
     mock_browser = AsyncMock()
     mock_page = AsyncMock()
     mock_browser.new_page.return_value = mock_page
+    mock_browser.new_context.return_value = AsyncMock()
+
+    mock_page.evaluate.return_value = 1000
+    mock_page.set_default_timeout = MagicMock()
+    mock_page.set_default_navigation_timeout = MagicMock()
 
     # Мокируем логику измерения высоты контента
     mock_content_element = AsyncMock()
@@ -53,7 +58,9 @@ def mock_playwright(mocker):
     mock_launcher.launch.return_value = mock_browser
 
     mock_pw_context = AsyncMock()
-    mock_pw_context.__aenter__.return_value.chromium = mock_launcher
+    mock_pw_context.chromium = mock_launcher
+    mock_pw_context.start = AsyncMock(return_value=mock_pw_context)
+    mock_pw_context.__aenter__.return_value = mock_pw_context
 
     mocker.patch("core.image_generator.async_playwright", return_value=mock_pw_context)
 
