@@ -501,10 +501,12 @@ class UserDataManager:
 
     @cached(ttl=3600)  # Кэшируем на 1 час
     async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int, str]]:
-        """Получает пользователей для напоминаний о парах, включая время напоминания с кэшированием."""
+        """Получает пользователей для напоминаний о парах (только студентов), включая время напоминания с кэшированием."""
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes, User.language).where(
-                User.lesson_reminders == True, User.group.isnot(None)
+                User.lesson_reminders == True,
+                User.group.isnot(None),
+                or_(User.user_type != "teacher", User.user_type.is_(None)),
             )
             result = await session.execute(stmt)
             rows = result.all()

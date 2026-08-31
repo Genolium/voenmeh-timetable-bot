@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -75,8 +76,7 @@ _POOL_HEADLESS_ARGS = [
 # Глобальный семафор для ограничения страниц на ОДИН процесс/браузер
 # (чтобы не убить память если слишком много тасков)
 _MAX_CONCURRENT_PAGES = int(os.getenv("IMAGE_BROWSER_CONCURRENT_PAGES", "4"))
-_page_semaphore: Optional[asyncio.Semaphore] = None
-_init_lock = asyncio.Lock()
+_init_thread_lock = threading.Lock()
 
 
 def _time_to_minutes(t: str) -> int:
@@ -308,15 +308,24 @@ async def generate_schedule_image(
             setattr(loop, "__img_pool_state__", None)
 
         async def _ensure_browser() -> _PoolState:
-            global _page_semaphore
-            if _page_semaphore is None:
-                _page_semaphore = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+            page_sem = getattr(loop, "__img_page_semaphore__", None)
+            if page_sem is None:
+                page_sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+                setattr(loop, "__img_page_semaphore__", page_sem)
+
+            init_lock = getattr(loop, "__img_init_async_lock__", None)
+            if init_lock is None:
+                with _init_thread_lock:
+                    init_lock = getattr(loop, "__img_init_async_lock__", None)
+                    if init_lock is None:
+                        init_lock = asyncio.Lock()
+                        setattr(loop, "__img_init_async_lock__", init_lock)
             
             state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
             
-            # 1. Инициализация если пусто (под спец. локом)
+            # 1. Инициализация если пусто (под спец. локом текущего лупа)
             if state is None:
-                async with _init_lock:
+                async with init_lock:
                     # Double check
                     state = getattr(loop, "__img_pool_state__")
                     if state is None:
@@ -391,9 +400,13 @@ async def generate_schedule_image(
                 return state
 
         state = await _ensure_browser()
+        page_sem = getattr(loop, "__img_page_semaphore__", None)
+        if page_sem is None:
+            page_sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+            setattr(loop, "__img_page_semaphore__", page_sem)
 
         # Используем семафор для ограничения количества открытых вкладок
-        async with _page_semaphore:
+        async with page_sem:
             # Открываем страницу БЕЗ блокировки всего браузера (state.lock)
             # Добавляем таймаут на создание страницы
             try:
@@ -503,10 +516,13 @@ async def generate_schedule_image(
                         last_error = inner_e
                         logging.warning(f"Попытка {attempt}/{max_attempts} провалилась: {inner_e}")
                         await asyncio.sleep(1)
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
                         # Если целевой краш — перезапустим пул и повторим
                         if attempt < max_attempts:
                             try:
-                                # Жёсткий перезапуск только браузера; контекст переоткроется при ensure
                                 try:
                                     await state.browser.close()
                                 except Exception:

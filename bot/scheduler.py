@@ -221,11 +221,6 @@ async def minutely_reminders_checker(
 
         for user_id, group_name, reminder_time, lang in users:
             try:
-                # Пропускаем преподавателей
-                user = await user_data_manager.get_full_user_info(user_id)
-                if user and getattr(user, "user_type", "student") == "teacher":
-                    continue
-                    
                 schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
                 if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
                     continue

@@ -179,7 +179,9 @@ async def fetch_and_parse_all_schedules() -> dict | None:
             while True:
                 try:
                     attempts += 1
-                    async with session.get(API_URL, timeout=15) as response:
+                    async with session.get(
+                        API_URL, timeout=aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)
+                    ) as response:
                         response.raise_for_status()
                         if response.status == 304:
                             return None
@@ -239,7 +241,12 @@ async def fetch_and_parse_all_schedules() -> dict | None:
             import asyncio
 
             async with asyncio.timeout(30):
-                xml_data = xml_bytes.decode("utf-16").strip()
+                try:
+                    xml_data = xml_bytes.decode("utf-16").strip()
+                except UnicodeDecodeError:
+                    if len(xml_bytes) % 2 != 0:
+                        xml_bytes = xml_bytes[:-1]
+                    xml_data = xml_bytes.decode("utf-16", errors="replace").strip()
                 current_hash = hashlib.md5(xml_bytes).hexdigest()
                 root = ET.fromstring(xml_data)
         except Exception as e:
@@ -364,7 +371,8 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                         if lecturer not in teachers_index:
                             teachers_index[lecturer] = {}
                         if lesson_key in teachers_index[lecturer]:
-                            teachers_index[lecturer][lesson_key]["groups"].append(lesson_info["group"])
+                            if lesson_info["group"] not in teachers_index[lecturer][lesson_key]["groups"]:
+                                teachers_index[lecturer][lesson_key]["groups"].append(lesson_info["group"])
                         else:
                             teachers_index[lecturer][lesson_key] = lesson_for_index.copy()
 
@@ -372,7 +380,8 @@ async def fetch_and_parse_all_schedules() -> dict | None:
                         if classroom not in classrooms_index:
                             classrooms_index[classroom] = {}
                         if lesson_key in classrooms_index[classroom]:
-                            classrooms_index[classroom][lesson_key]["groups"].append(lesson_info["group"])
+                            if lesson_info["group"] not in classrooms_index[classroom][lesson_key]["groups"]:
+                                classrooms_index[classroom][lesson_key]["groups"].append(lesson_info["group"])
                         else:
                             classrooms_index[classroom][lesson_key] = lesson_for_index.copy()
 

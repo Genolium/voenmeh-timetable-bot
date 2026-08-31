@@ -416,13 +416,19 @@ def generate_week_image_task(
                     async with bot_for_images:
                         # Вычисляем тему пользователя, если доступен user_id
                         user_theme = None
-                        try:
-                            if user_id is not None:
-                                db_url = os.getenv("DATABASE_URL")
-                                udm = UserDataManager(db_url=db_url or "", redis_url=redis_url)
-                                user_theme = await udm.get_user_theme(user_id)
-                        except Exception:
-                            user_theme = None
+                        if user_id is not None:
+                            db_url = os.getenv("DATABASE_URL")
+                            if db_url:
+                                udm = UserDataManager(db_url=db_url, redis_url=redis_url)
+                                try:
+                                    user_theme = await udm.get_user_theme(user_id)
+                                except Exception:
+                                    user_theme = None
+                                finally:
+                                    try:
+                                        await udm.engine.dispose()
+                                    except Exception:
+                                        pass
                         success, _ = await image_service.get_or_generate_week_image(
                             group=group,
                             week_key=week_key,

@@ -272,7 +272,7 @@ async def test_minutely_reminders_checker_skip_teacher(mock_user_data_manager, m
         strptime=datetime.strptime,
         combine=datetime.combine,
     ))
-    mock_user_data_manager.get_full_user_info.return_value = MagicMock(user_type="teacher")
+    mock_user_data_manager.get_users_for_lesson_reminders.return_value = []
 
     with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
         await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
