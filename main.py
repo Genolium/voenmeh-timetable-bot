@@ -269,6 +269,11 @@ async def main():
 
     user_data_manager = UserDataManager(db_url=db_url or "", redis_url=redis_url)
     await user_data_manager.init_db()
+
+    from core.semester_settings import SemesterSettingsManager
+    semester_settings_manager = SemesterSettingsManager(user_data_manager.async_session_maker)
+    timetable_manager.set_semester_settings_manager(semester_settings_manager)
+
     logging.info("Менеджеры данных инициализированы.")
 
     storage = RedisStorage(redis=redis_client, key_builder=DefaultKeyBuilder(with_destiny=True))

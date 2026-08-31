@@ -331,6 +331,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
             # Создаем новый менеджер с обновленными данными
             new_manager = TimetableManager(new_schedule_data, redis_client)
+            new_manager.set_semester_settings_manager(SemesterSettingsManager(user_data_manager.async_session_maker))
             await new_manager.save_to_cache()
 
             # Отправляем дифф-уведомления пользователям (ОТКЛЮЧЕНО)
