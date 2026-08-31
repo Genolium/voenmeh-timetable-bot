@@ -335,12 +335,15 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             new_manager.set_semester_settings_manager(SemesterSettingsManager(user_data_manager.async_session_maker))
             await new_manager.save_to_cache()
 
-            # Отправляем дифф-уведомления пользователям (ОТКЛЮЧЕНО)
-            # await send_schedule_diff_notifications(
-            #     user_data_manager=user_data_manager,
-            #     old_manager=global_timetable_manager_instance,
-            #     new_manager=new_manager
-            # )
+            # Обновляем данные в существующем глобальном менеджере, чтобы все Middleware и диалоги сразу видели новое расписание
+            if global_timetable_manager_instance is not None:
+                global_timetable_manager_instance._schedules = new_manager._schedules
+                global_timetable_manager_instance._teachers_index = new_manager._teachers_index
+                global_timetable_manager_instance._classrooms_index = new_manager._classrooms_index
+                global_timetable_manager_instance._current_xml_hash = new_manager._current_xml_hash
+                global_timetable_manager_instance.metadata = new_manager.metadata
+                global_timetable_manager_instance.semester_start_date = new_manager.semester_start_date
+                global_timetable_manager_instance._semester_settings_manager = new_manager._semester_settings_manager
 
             # Переприсваиваем глобальный экземпляр
             global_timetable_manager_instance = new_manager

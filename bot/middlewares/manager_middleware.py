@@ -16,5 +16,8 @@ class ManagerMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        data["manager"] = self.manager
+        import bot.scheduler as scheduler_mod
+
+        active_mgr = getattr(scheduler_mod, "global_timetable_manager_instance", None) or self.manager
+        data["manager"] = active_mgr
         return await handler(event, data)
