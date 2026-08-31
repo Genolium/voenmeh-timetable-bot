@@ -1,15 +1,13 @@
-"""
-Менеджер для работы с настройками семестров.
-"""
-
+import logging
 from datetime import date, datetime
 from typing import Optional, Tuple
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from core.config import MOSCOW_TZ
 from core.db.models import SemesterSettings
+
+logger = logging.getLogger(__name__)
 
 
 class SemesterSettingsManager:
@@ -59,7 +57,7 @@ class SemesterSettingsManager:
                         .values(
                             fall_semester_start=fall_semester_start,
                             spring_semester_start=spring_semester_start,
-                            updated_at=datetime.now(MOSCOW_TZ),
+                            updated_at=func.now(),
                             updated_by=updated_by,
                         )
                     )
@@ -76,7 +74,7 @@ class SemesterSettingsManager:
                 return True
 
         except Exception as e:
-            print(f"Ошибка обновления настроек семестров: {e}")
+            logger.error(f"Ошибка обновления настроек семестров: {e}", exc_info=True)
             return False
 
     async def get_formatted_settings(self) -> str:
