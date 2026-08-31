@@ -38,6 +38,7 @@ from core.manager import TimetableManager
 from core.metrics import ERRORS_TOTAL, LAST_SCHEDULE_UPDATE_TS, SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL
 from core.parser import fetch_and_parse_all_schedules
 from core.schedule_diff import ScheduleDiffDetector, ScheduleDiffFormatter
+from core.semester_settings import SemesterSettingsManager
 from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
 
