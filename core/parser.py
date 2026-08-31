@@ -241,12 +241,19 @@ async def fetch_and_parse_all_schedules() -> dict | None:
             import asyncio
 
             async with asyncio.timeout(30):
-                try:
-                    xml_data = xml_bytes.decode("utf-16").strip()
-                except UnicodeDecodeError:
-                    if len(xml_bytes) % 2 != 0:
-                        xml_bytes = xml_bytes[:-1]
-                    xml_data = xml_bytes.decode("utf-16", errors="replace").strip()
+                xml_data = None
+                for encoding in ("utf-8", "utf-16", "windows-1251", "utf-8-sig"):
+                    try:
+                        candidate = xml_bytes.decode(encoding).strip()
+                        if "<Timetable" in candidate or "<?xml" in candidate:
+                            xml_data = candidate
+                            break
+                    except (UnicodeDecodeError, UnicodeError):
+                        continue
+
+                if xml_data is None:
+                    xml_data = xml_bytes.decode("utf-8", errors="replace").strip()
+
                 current_hash = hashlib.md5(xml_bytes).hexdigest()
                 root = ET.fromstring(xml_data)
         except Exception as e:
