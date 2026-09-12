@@ -18,15 +18,23 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "users",
-        sa.Column("is_blocked", sa.Boolean(), server_default="f", nullable=False),
-    )
-    op.add_column(
-        "users",
-        sa.Column("blocked_date", sa.TIMESTAMP(), nullable=True),
-    )
-    op.create_index("idx_user_blocked", "users", ["is_blocked"], unique=False)
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    columns = [c["name"] for c in inspector.get_columns("users")]
+
+    if "is_blocked" not in columns:
+        op.add_column(
+            "users",
+            sa.Column("is_blocked", sa.Boolean(), server_default="f", nullable=False),
+        )
+    if "blocked_date" not in columns:
+        op.add_column(
+            "users",
+            sa.Column("blocked_date", sa.TIMESTAMP(), nullable=True),
+        )
+    indexes = [i["name"] for i in inspector.get_indexes("users")]
+    if "idx_user_blocked" not in indexes:
+        op.create_index("idx_user_blocked", "users", ["is_blocked"], unique=False)
 
 
 def downgrade() -> None:

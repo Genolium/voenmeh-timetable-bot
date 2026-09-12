@@ -45,7 +45,7 @@ class TestThemeDialog:
             # Должны вернуться данные для окна выбора темы (пользователь подписан)
             assert "themes" in data
             assert "current_theme" in data
-            assert len(data["themes"]) == 5  # 5 тем
+            assert len(data["themes"]) == 16  # 16 тем (5 стандартных + 11 новых)
 
             # Проверяем, что тема пользователя правильно определена
             assert data["current_theme"] == "☀️ Светлая"

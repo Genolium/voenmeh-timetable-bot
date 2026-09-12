@@ -109,11 +109,18 @@ class UserDataManager:
 
     async def init_db(self) -> None:
         """Создает все необходимые таблицы в базе данных при первом запуске."""
+        import sqlalchemy as sa
         import core.db  # noqa: F401 - гарантирует регистрацию всех моделей в Base.metadata
         from core.db.models import Base
         try:
             async with self.engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                # Безопасное добавление новых колонок к существующим таблицам
+                await conn.execute(sa.text("""
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE NOT NULL;
+                    ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_date TIMESTAMP WITHOUT TIME ZONE;
+                    CREATE INDEX IF NOT EXISTS idx_user_blocked ON users (is_blocked);
+                """))
             logger.info("✅ Таблицы базы данных успешно инициализированы.")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации таблиц базы данных: {e}", exc_info=True)

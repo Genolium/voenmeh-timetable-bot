@@ -47,6 +47,17 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "dark": _("theme_dark_name"),
         "classic": _("theme_classic_name"),
         "coffee": _("theme_coffee_name"),
+        "blueprint": _("theme_blueprint_name"),
+        "space": _("theme_space_name"),
+        "nord": _("theme_nord_name"),
+        "cyberpunk": _("theme_cyberpunk_name"),
+        "matrix": _("theme_matrix_name"),
+        "matcha": _("theme_matcha_name"),
+        "sunset": _("theme_sunset_name"),
+        "lavender": _("theme_lavender_name"),
+        "oled": _("theme_oled_name"),
+        "paper": _("theme_paper_name"),
+        "rain": _("theme_rain_name"),
     }
 
     # Безопасное получение имени темы
@@ -300,6 +311,50 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
         "coffee": {
             "name": _("theme_coffee_name"),
             "description": _("theme_coffee_desc"),
+        },
+        "blueprint": {
+            "name": _("theme_blueprint_name"),
+            "description": _("theme_blueprint_desc"),
+        },
+        "space": {
+            "name": _("theme_space_name"),
+            "description": _("theme_space_desc"),
+        },
+        "nord": {
+            "name": _("theme_nord_name"),
+            "description": _("theme_nord_desc"),
+        },
+        "cyberpunk": {
+            "name": _("theme_cyberpunk_name"),
+            "description": _("theme_cyberpunk_desc"),
+        },
+        "matrix": {
+            "name": _("theme_matrix_name"),
+            "description": _("theme_matrix_desc"),
+        },
+        "matcha": {
+            "name": _("theme_matcha_name"),
+            "description": _("theme_matcha_desc"),
+        },
+        "sunset": {
+            "name": _("theme_sunset_name"),
+            "description": _("theme_sunset_desc"),
+        },
+        "lavender": {
+            "name": _("theme_lavender_name"),
+            "description": _("theme_lavender_desc"),
+        },
+        "oled": {
+            "name": _("theme_oled_name"),
+            "description": _("theme_oled_desc"),
+        },
+        "paper": {
+            "name": _("theme_paper_name"),
+            "description": _("theme_paper_desc"),
+        },
+        "rain": {
+            "name": _("theme_rain_name"),
+            "description": _("theme_rain_desc"),
         },
     }
 

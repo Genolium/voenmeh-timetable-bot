@@ -242,6 +242,20 @@ async def generate_schedule_image(
                 return "coffee"
             if theme == "classic":
                 return "official"
+            if theme in (
+                "blueprint",
+                "space",
+                "nord",
+                "cyberpunk",
+                "matrix",
+                "matcha",
+                "sunset",
+                "lavender",
+                "oled",
+                "paper",
+                "rain",
+            ):
+                return ""
             # 'standard' или None — старое поведение: разные фоны для нечётной/чётной
             return "orange" if slug == "odd" else "purple"
 
