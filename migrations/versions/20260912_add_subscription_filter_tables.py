@@ -1,6 +1,6 @@
 """Add subscription filter settings and required channels tables
 
-Revision ID: 20260912_add_subscription_filter_tables
+Revision ID: 20260912_sub_filter
 Revises: 20260912_add_blocked_fields
 Create Date: 2026-09-12 22:30:00.000000
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "20260912_add_subscription_filter_tables"
+revision: str = "20260912_sub_filter"
 down_revision: Union[str, tuple[str, ...], None] = "20260912_add_blocked_fields"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
