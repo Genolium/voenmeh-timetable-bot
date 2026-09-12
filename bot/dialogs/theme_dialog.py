@@ -8,6 +8,7 @@ from bot.tasks import check_theme_subscription_task
 from core.config import SUBSCRIPTION_CHANNEL
 from core.user_data import UserDataManager
 from core.i18n import i18n
+from core.themes import THEMES, get_theme_meta, DEFAULT_THEME
 
 from .constants import WidgetIds
 from .states import SettingsMenu
@@ -21,46 +22,21 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
-    # Определяем названия тем с эмодзи
-    themes_info = {
-        "standard": (_("theme_standard_name"), _("theme_standard_desc")),
-        "light": (_("theme_light_name"), _("theme_light_desc")),
-        "dark": (_("theme_dark_name"), _("theme_dark_desc")),
-        "classic": (_("theme_classic_name"), _("theme_classic_desc")),
-        "coffee": (_("theme_coffee_name"), _("theme_coffee_desc")),
-        "blueprint": (_("theme_blueprint_name"), _("theme_blueprint_desc")),
-        "space": (_("theme_space_name"), _("theme_space_desc")),
-        "nord": (_("theme_nord_name"), _("theme_nord_desc")),
-        "cyberpunk": (_("theme_cyberpunk_name"), _("theme_cyberpunk_desc")),
-        "matrix": (_("theme_matrix_name"), _("theme_matrix_desc")),
-        "matcha": (_("theme_matcha_name"), _("theme_matcha_desc")),
-        "sunset": (_("theme_sunset_name"), _("theme_sunset_desc")),
-        "lavender": (_("theme_lavender_name"), _("theme_lavender_desc")),
-        "oled": (_("theme_oled_name"), _("theme_oled_desc")),
-        "paper": (_("theme_paper_name"), _("theme_paper_desc")),
-        "rain": (_("theme_rain_name"), _("theme_rain_desc")),
-    }
-
-    current_theme = await user_data_manager.get_user_theme(user_id) if user_data_manager else "standard"
-
-    current_theme_key = themes_info.get(current_theme)
-    if not current_theme_key:
-        current_theme_name = _("theme_standard_name")
-        current_theme_desc = _("theme_standard_desc")
-    else:
-        current_theme_name, current_theme_desc = current_theme_key
+    current_theme = await user_data_manager.get_user_theme(user_id) if user_data_manager else DEFAULT_THEME
+    current_meta = get_theme_meta(current_theme)
+    current_theme_name = _(current_meta.name_key)
+    current_theme_desc = _(current_meta.desc_key)
 
     # Создаем список тем с информацией о текущей выбранной
-    themes = []
-    for theme_id, (name, description) in themes_info.items():
-        themes.append(
-            {
-                "id": theme_id,
-                "name": name,
-                "description": description,
-                "is_current": theme_id == current_theme,
-            }
-        )
+    themes = [
+        {
+            "id": t.id,
+            "name": _(t.name_key),
+            "description": _(t.desc_key),
+            "is_current": t.id == current_theme,
+        }
+        for t in THEMES
+    ]
 
     is_subscribed = await _check_theme_subscription(user_id, dialog_manager)
 
@@ -142,26 +118,8 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
     user_lang = await user_data_manager.get_user_language(user_id) or "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
-    themes_info_names = {
-        "standard": _("theme_standard_name"),
-        "light": _("theme_light_name"),
-        "dark": _("theme_dark_name"),
-        "classic": _("theme_classic_name"),
-        "coffee": _("theme_coffee_name"),
-        "blueprint": _("theme_blueprint_name"),
-        "space": _("theme_space_name"),
-        "nord": _("theme_nord_name"),
-        "cyberpunk": _("theme_cyberpunk_name"),
-        "matrix": _("theme_matrix_name"),
-        "matcha": _("theme_matcha_name"),
-        "sunset": _("theme_sunset_name"),
-        "lavender": _("theme_lavender_name"),
-        "oled": _("theme_oled_name"),
-        "paper": _("theme_paper_name"),
-        "rain": _("theme_rain_name"),
-    }
-
-    theme_name = themes_info_names.get(item_id, _("theme_standard_name"))
+    meta = get_theme_meta(item_id)
+    theme_name = _(meta.name_key)
 
     await callback.answer(_("theme_changed_success", theme=theme_name) if i18n.get("theme_changed_success") else f"✅ {theme_name}")
     await manager.switch_to(SettingsMenu.main)

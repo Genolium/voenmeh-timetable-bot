@@ -8,6 +8,7 @@ from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from core.user_data import UserDataManager
 from core.i18n import i18n
+from core.themes import THEMES, get_theme_meta, DEFAULT_THEME
 
 from .constants import WidgetIds
 from .states import SettingsMenu
@@ -38,33 +39,9 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     reminders_status = settings.get(WidgetIds.LESSON_REMINDERS.value, False)
     reminder_time = settings.get("reminder_time_minutes", 60)
     # Normalize theme ID
-    current_theme = str(settings.get("theme", "standard")).lower()
-
-    # Определяем названия тем с эмодзи из локалей
-    themes_info = {
-        "standard": _("theme_standard_name"),
-        "light": _("theme_light_name"),
-        "dark": _("theme_dark_name"),
-        "classic": _("theme_classic_name"),
-        "coffee": _("theme_coffee_name"),
-        "blueprint": _("theme_blueprint_name"),
-        "space": _("theme_space_name"),
-        "nord": _("theme_nord_name"),
-        "cyberpunk": _("theme_cyberpunk_name"),
-        "matrix": _("theme_matrix_name"),
-        "matcha": _("theme_matcha_name"),
-        "sunset": _("theme_sunset_name"),
-        "lavender": _("theme_lavender_name"),
-        "oled": _("theme_oled_name"),
-        "paper": _("theme_paper_name"),
-        "rain": _("theme_rain_name"),
-    }
-
-    # Безопасное получение имени темы
-    current_theme_name = themes_info.get(current_theme)
-    if not current_theme_name:
-        # Если тема не найдена (например старая база), используем стандартную
-        current_theme_name = _("theme_standard_name")
+    current_theme = str(settings.get("theme", DEFAULT_THEME)).lower()
+    current_meta = get_theme_meta(current_theme)
+    current_theme_name = _(current_meta.name_key)
     
     language_map = {
         "ru": _("lang_ru"),
@@ -284,92 +261,25 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     
-    current_theme = "standard"
+    current_theme = DEFAULT_THEME
     try:
         if user_data_manager:
-            current_theme = await user_data_manager.get_user_theme(user_id) or "standard"
+            current_theme = await user_data_manager.get_user_theme(user_id) or DEFAULT_THEME
     except Exception:
-        current_theme = "standard"
+        current_theme = DEFAULT_THEME
 
-    themes_info = {
-        "standard": {
-            "name": _("theme_standard_name"),
-            "description": _("theme_standard_desc"),
-        },
-        "light": {
-            "name": _("theme_light_name"),
-            "description": _("theme_light_desc"),
-        },
-        "dark": {
-            "name": _("theme_dark_name"),
-            "description": _("theme_dark_desc"),
-        },
-        "classic": {
-            "name": _("theme_classic_name"),
-            "description": _("theme_classic_desc"),
-        },
-        "coffee": {
-            "name": _("theme_coffee_name"),
-            "description": _("theme_coffee_desc"),
-        },
-        "blueprint": {
-            "name": _("theme_blueprint_name"),
-            "description": _("theme_blueprint_desc"),
-        },
-        "space": {
-            "name": _("theme_space_name"),
-            "description": _("theme_space_desc"),
-        },
-        "nord": {
-            "name": _("theme_nord_name"),
-            "description": _("theme_nord_desc"),
-        },
-        "cyberpunk": {
-            "name": _("theme_cyberpunk_name"),
-            "description": _("theme_cyberpunk_desc"),
-        },
-        "matrix": {
-            "name": _("theme_matrix_name"),
-            "description": _("theme_matrix_desc"),
-        },
-        "matcha": {
-            "name": _("theme_matcha_name"),
-            "description": _("theme_matcha_desc"),
-        },
-        "sunset": {
-            "name": _("theme_sunset_name"),
-            "description": _("theme_sunset_desc"),
-        },
-        "lavender": {
-            "name": _("theme_lavender_name"),
-            "description": _("theme_lavender_desc"),
-        },
-        "oled": {
-            "name": _("theme_oled_name"),
-            "description": _("theme_oled_desc"),
-        },
-        "paper": {
-            "name": _("theme_paper_name"),
-            "description": _("theme_paper_desc"),
-        },
-        "rain": {
-            "name": _("theme_rain_name"),
-            "description": _("theme_rain_desc"),
-        },
-    }
+    current_meta = get_theme_meta(current_theme)
+    current_theme_name = _(current_meta.name_key)
 
-    themes = []
-    for key, info in themes_info.items():
-        themes.append(
-            {
-                "id": key,
-                "name": info["name"],
-                "description": info["description"],
-                "is_current": key == current_theme,
-            }
-        )
-
-    current_theme_name = themes_info.get(current_theme, {"name": _("theme_standard_name")})["name"]
+    themes = [
+        {
+            "id": t.id,
+            "name": _(t.name_key),
+            "description": _(t.desc_key),
+            "is_current": t.id == current_theme,
+        }
+        for t in THEMES
+    ]
     return {
         "current_theme": current_theme_name,
         "themes": themes,

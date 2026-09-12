@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from core.config import MOSCOW_TZ
 from core.db import User
+from core.themes import DEFAULT_THEME, get_all_theme_ids, is_valid_theme
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -349,31 +350,13 @@ class UserDataManager:
             user = await session.get(User, user_id)
             return user.theme if user else "standard"
 
-    VALID_THEMES = [
-        "standard",
-        "light",
-        "dark",
-        "classic",
-        "coffee",
-        "blueprint",
-        "space",
-        "nord",
-        "cyberpunk",
-        "matrix",
-        "matcha",
-        "sunset",
-        "lavender",
-        "oled",
-        "paper",
-        "rain",
-    ]
+    VALID_THEMES = tuple(get_all_theme_ids())
 
     async def set_user_theme(self, user_id: int, theme: str) -> None:
         """Устанавливает тему пользователя."""
-        # Проверяем, что тема валидная
-        if theme not in self.VALID_THEMES:
-            logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using 'standard'.")
-            theme = "standard"
+        if not is_valid_theme(theme):
+            logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using '{DEFAULT_THEME}'.")
+            theme = DEFAULT_THEME
 
         async with self.async_session_maker() as session:
             stmt = update(User).where(User.user_id == user_id).values(theme=theme)

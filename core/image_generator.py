@@ -234,29 +234,14 @@ async def generate_schedule_image(
 
         # Выбираем фон по теме пользователя
         def _resolve_bg_key(theme: Optional[str], slug: str) -> str:
-            if theme == "light":
-                return "light"
-            if theme == "dark":
-                return "dark"
-            if theme == "coffee":
-                return "coffee"
-            if theme == "classic":
-                return "official"
-            if theme in (
-                "blueprint",
-                "space",
-                "nord",
-                "cyberpunk",
-                "matrix",
-                "matcha",
-                "sunset",
-                "lavender",
-                "oled",
-                "paper",
-                "rain",
-            ):
+            from core.themes import get_theme_meta
+
+            meta = get_theme_meta(theme)
+            if meta.is_procedural:
                 return ""
-            # 'standard' или None — старое поведение: разные фоны для нечётной/чётной
+            if meta.bg_image_key:
+                return meta.bg_image_key
+            # 'standard' или fallback — разные растровые фоны для нечётной/чётной
             return "orange" if slug == "odd" else "purple"
 
         bg_key = _resolve_bg_key(user_theme, week_slug)

@@ -11,6 +11,8 @@ from core.config import SUBSCRIPTION_CHANNEL
 def mock_manager():
     """Создает мок DialogManager для тестов."""
     mock_udm = AsyncMock()
+    mock_udm.get_user_theme.return_value = "standard"
+    mock_udm.get_user_language.return_value = "ru"
     mock_bot = AsyncMock()
     manager = AsyncMock()
 
