@@ -482,7 +482,7 @@ class TestUserDataManagerCaching:
         # Регистрируем пользователя
         await user_data_manager.register_user(12345, "test_user")
 
-        valid_themes = ["standard", "light", "dark", "classic", "coffee"]
+        valid_themes = user_data_manager.VALID_THEMES
 
         for theme in valid_themes:
             # Устанавливаем тему

@@ -349,11 +349,29 @@ class UserDataManager:
             user = await session.get(User, user_id)
             return user.theme if user else "standard"
 
+    VALID_THEMES = [
+        "standard",
+        "light",
+        "dark",
+        "classic",
+        "coffee",
+        "blueprint",
+        "space",
+        "nord",
+        "cyberpunk",
+        "matrix",
+        "matcha",
+        "sunset",
+        "lavender",
+        "oled",
+        "paper",
+        "rain",
+    ]
+
     async def set_user_theme(self, user_id: int, theme: str) -> None:
         """Устанавливает тему пользователя."""
         # Проверяем, что тема валидная
-        valid_themes = ["standard", "light", "dark", "classic", "coffee"]
-        if theme not in valid_themes:
+        if theme not in self.VALID_THEMES:
             logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using 'standard'.")
             theme = "standard"
 
