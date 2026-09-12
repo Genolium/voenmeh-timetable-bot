@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from aiogram import Bot
-from aiogram.types import CallbackQuery, ContentType, FSInputFile, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
@@ -1311,15 +1311,52 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs):
     new_users = await user_data_manager.get_new_users_count(days=period)
     active_users = await user_data_manager.get_active_users_by_period(days=period)
 
+    blocked_count = 0
+    if hasattr(user_data_manager, "get_blocked_users_count"):
+        blocked_count = await user_data_manager.get_blocked_users_count(days=period)
+
+    users_without_group = 0
+    if hasattr(user_data_manager, "get_users_without_group_count"):
+        users_without_group = await user_data_manager.get_users_without_group_count()
+
+    total_users_val = total_users if isinstance(total_users, (int, float)) else 0
+    new_users_val = new_users if isinstance(new_users, (int, float)) else 0
+    blocked_count_val = blocked_count if isinstance(blocked_count, (int, float)) else 0
+    users_without_group_val = users_without_group if isinstance(users_without_group, (int, float)) else 0
+
+    users_with_group = max(0, total_users_val - users_without_group_val)
+    conv_pct = round((users_with_group / total_users_val * 100), 1) if total_users_val > 0 else 0.0
+    net_growth = new_users_val - blocked_count_val
+    net_growth_str = f"+{net_growth}" if net_growth >= 0 else str(net_growth)
+
+    # Топ функций
+    top_features = []
+    try:
+        from core.analytics import get_top_features
+        redis_client = await user_data_manager._get_redis_client()
+        top_features = await get_top_features(redis_client, days=period, limit=4)
+    except Exception:
+        pass
+
+    if top_features:
+        top_features_text = "\n".join([f"  - {name}: <b>{count}</b>" for _, name, count in top_features])
+    else:
+        top_features_text = "  - Нет данных"
+
     period_map = {1: "День", 7: "Неделя", 30: "Месяц"}
 
-    top_groups_text = "\n".join([f"  - {g or 'Не указана'}: {c}" for g, c in top_groups])
+    top_groups_list = top_groups if isinstance(top_groups, list) else []
+    top_groups_text = "\n".join([f"  - {g or 'Не указана'}: {c}" for g, c in top_groups_list])
+
+    subs_breakdown_dict = subs_breakdown if isinstance(subs_breakdown, dict) else {}
     subs_breakdown_text = (
-        f"  - Вечер: {subs_breakdown.get('evening', 0)}\n"
-        f"  - Утро: {subs_breakdown.get('morning', 0)}\n"
-        f"  - Пары: {subs_breakdown.get('reminders', 0)}"
+        f"  - Вечер: {subs_breakdown_dict.get('evening', 0)}\n"
+        f"  - Утро: {subs_breakdown_dict.get('morning', 0)}\n"
+        f"  - Пары: {subs_breakdown_dict.get('reminders', 0)}"
     )
-    group_dist_text = "\n".join([f"  - {category}: {count}" for category, count in group_dist.items()])
+
+    group_dist_dict = group_dist if isinstance(group_dist, dict) else {}
+    group_dist_text = "\n".join([f"  - {category}: {count}" for category, count in group_dist_dict.items()])
 
     stats_text = (
         f"📊 <b>Статистика бота</b> (Период: <b>{period_map.get(period, '')}</b>)\n\n"
@@ -1329,10 +1366,16 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs):
         f"🏃‍♂️ <b>Активность</b>\n"
         f"  - Активных за период: <b>{active_users}</b>\n"
         f"  - DAU / WAU / MAU: <b>{dau} / {wau} / {mau}</b>\n\n"
+        f"🚪 <b>Отток и воронка</b>\n"
+        f"  - Заблокировали за период: <b>{blocked_count}</b>\n"
+        f"  - Чистый прирост: <b>{net_growth_str}</b>\n"
+        f"  - Без группы: <b>{users_without_group}</b> (онбординг: <b>{conv_pct}%</b>)\n\n"
         f"🔔 <b>Вовлеченность</b>\n"
         f"  - С подписками: <b>{subscribed_total}</b>\n"
         f"  - Отписались от всего: <b>{unsubscribed_total}</b>\n"
         f"  <u>Разбивка по подпискам:</u>\n{subs_breakdown_text}\n\n"
+        f"🏆 <b>Топ функций</b>\n"
+        f"{top_features_text}\n\n"
         f"🎓 <b>Группы</b>\n"
         f"  <u>Топ-5 групп:</u>\n{top_groups_text}\n"
         f"  <u>Распределение по размеру:</u>\n{group_dist_text}"
@@ -1343,6 +1386,40 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs):
         "period": period,
         "periods": [("День", 1), ("Неделя", 7), ("Месяц", 30)],
     }
+
+
+async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Генерирует и отправляет график динамики за выбранный период."""
+    await callback.answer("⏳ Генерирую график...", show_alert=False)
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    period = manager.dialog_data.get("stats_period", 7)
+    period_title = {1: "1 день", 7: "7 дней", 30: "30 дней"}.get(period, f"{period} дн.")
+
+    dates, new_users, active_users = [], [], []
+    if user_data_manager and hasattr(user_data_manager, "get_activity_history"):
+        try:
+            dates, new_users, active_users = await user_data_manager.get_activity_history(days=period)
+        except Exception as e:
+            logger.error(f"Error fetching activity history: {e}")
+
+    try:
+        from core.analytics import generate_dynamics_chart
+
+        chart_buf = generate_dynamics_chart(
+            dates=dates,
+            new_users=new_users,
+            active_users=active_users,
+            period_title=period_title,
+        )
+        photo = BufferedInputFile(chart_buf.getvalue(), filename=f"stats_chart_{period}d.png")
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=f"📈 <b>График динамики активности за {period_title}</b>",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Error generating stats chart: {e}")
+        await callback.message.answer("❌ Не удалось сгенерировать график. Проверьте логи.")
 
 
 async def on_broadcast_received(*args, **kwargs):
@@ -1737,6 +1814,7 @@ admin_dialog = Dialog(
                 on_click=on_period_selected,
             )
         ),
+        Button(Const("📈 График динамики"), id="stats_send_chart", on_click=on_send_stats_chart),
         SwitchTo(Const("◀️ В админ-панель"), id="stats_back", state=Admin.menu),
         getter=get_stats_data,
         state=Admin.stats,

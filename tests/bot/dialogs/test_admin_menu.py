@@ -56,6 +56,7 @@ from bot.dialogs.admin_menu import (
     on_period_selected,
     on_segment_criteria_input,
     on_semester_settings,
+    on_send_stats_chart,
     on_spring_semester_input,
     on_template_input_message,
     on_test_alert,
@@ -413,6 +414,29 @@ class TestAdminMenuHandlers:
 
         assert "stats_text" in result
         assert "periods" in result
+
+    @pytest.mark.asyncio
+    async def test_on_send_stats_chart(self, mock_callback, mock_manager):
+        """Тест генерации и отправки графика динамики из админ-меню."""
+        from datetime import datetime, timedelta
+        mock_user_mgr = mock_manager.middleware_data["user_data_manager"]
+        mock_user_mgr.get_activity_history = AsyncMock(
+            return_value=(
+                [datetime.now() - timedelta(days=i) for i in reversed(range(7))],
+                [5, 10, 15, 8, 12, 14, 20],
+                [50, 60, 55, 70, 65, 80, 75],
+            )
+        )
+        mock_manager.dialog_data = {"stats_period": 7}
+        mock_callback.message.answer_photo = AsyncMock()
+
+        await on_send_stats_chart(mock_callback, MagicMock(), mock_manager)
+
+        mock_callback.answer.assert_called_once()
+        mock_callback.message.answer_photo.assert_called_once()
+        call_kwargs = mock_callback.message.answer_photo.call_args[1]
+        assert "photo" in call_kwargs
+        assert "7 дней" in call_kwargs["caption"]
 
     @pytest.mark.asyncio
     async def test_get_preview_data(self, mock_manager):

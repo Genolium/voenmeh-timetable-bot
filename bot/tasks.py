@@ -260,6 +260,16 @@ async def get_worker_bot() -> Bot:
     return _worker_bot
 
 
+async def _mark_user_as_blocked(user_id: int) -> None:
+    """Помечает пользователя как заблокировавшего бота (is_blocked = True)."""
+    try:
+        udm = UserDataManager(db_url=settings.DATABASE_URL, redis_url=settings.REDIS_URL)
+        await udm.set_user_blocked(user_id, True)
+        log.info(f"User {user_id} marked as is_blocked=True in database.")
+    except Exception as e:
+        log.warning(f"Failed to mark user {user_id} as blocked in DB: {e}")
+
+
 async def _send_message(user_id: int, text: str):
     """Отправка сообщения с защитой от дублирования."""
     try:
@@ -271,11 +281,13 @@ async def _send_message(user_id: int, text: str):
         return
 
     except TelegramForbiddenError:
-        log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Skipping.")
+        log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Marking as blocked.")
+        await _mark_user_as_blocked(user_id)
         return
     except TelegramBadRequest as e:
         if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
-            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat.")
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat. Marking as blocked.")
+            await _mark_user_as_blocked(user_id)
             return
         log.error(f"BadRequest sending to {user_id}: {e}")
         raise # Неизвестная ошибка API, отправляем на ретрай для разбора
@@ -310,11 +322,13 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
         log.info(f"Сообщение (ID: {message_id}) успешно скопировано пользователю {user_id}")
         return
     except TelegramForbiddenError:
-        log.info(f"User {user_id} blocked the bot. Skipping.")
+        log.info(f"User {user_id} blocked the bot. Marking as blocked.")
+        await _mark_user_as_blocked(user_id)
         return
     except TelegramBadRequest as e:
         if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
-            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat.")
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat. Marking as blocked.")
+            await _mark_user_as_blocked(user_id)
             return
         log.error(f"BadRequest copying message to {user_id}: {e}")
         raise

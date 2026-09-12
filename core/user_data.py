@@ -192,6 +192,9 @@ class UserDataManager:
             user = await session.get(User, user_id)
             if user:
                 user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
+                if user.is_blocked:
+                    user.is_blocked = False
+                    user.blocked_date = None
             else:
                 user = User(user_id=user_id, username=username)
                 session.add(user)
@@ -204,12 +207,25 @@ class UserDataManager:
             user = await session.get(User, user_id)
             if user:
                 user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
+                if user.is_blocked:
+                    user.is_blocked = False
+                    user.blocked_date = None
             else:
                 user = User(user_id=user_id, username=username)
                 session.add(user)
             await session.commit()
             await session.refresh(user)
             return user
+
+    async def set_user_blocked(self, user_id: int, is_blocked: bool = True) -> None:
+        """Устанавливает статус блокировки бота пользователем (отток)."""
+        async with self.async_session_maker() as session:
+            user = await session.get(User, user_id)
+            if user:
+                user.is_blocked = is_blocked
+                user.blocked_date = datetime.now(timezone.utc).replace(tzinfo=None) if is_blocked else None
+                await session.commit()
+        await self.clear_user_cache(user_id)
 
     async def set_user_group(self, user_id: int, group: str) -> None:
         """Устанавливает или обновляет учебную группу пользователя."""
@@ -392,6 +408,134 @@ class UserDataManager:
             result = await session.scalar(stmt)
             return result or 0
 
+    async def get_blocked_users_count(self, days: Optional[int] = None) -> int:
+        """Возвращает количество пользователей, заблокировавших бота (всего или за указанное число дней)."""
+        async with self.async_session_maker() as session:
+            stmt = select(func.count(User.user_id)).where(User.is_blocked.is_(True))
+            if days is not None:
+                start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+                stmt = stmt.where(User.blocked_date >= start_date)
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_users_without_group_count(self) -> int:
+        """Возвращает количество пользователей, застрявших на онбординге (без выбранной группы)."""
+        async with self.async_session_maker() as session:
+            stmt = select(func.count(User.user_id)).where(User.group.is_(None))
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_dau_previous_day(self) -> int:
+        """Возвращает количество активных пользователей за позапрошлые сутки (от 24 до 48 часов назад)."""
+        async with self.async_session_maker() as session:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            start_date = now - timedelta(days=2)
+            end_date = now - timedelta(days=1)
+            stmt = select(func.count(User.user_id)).where(
+                User.last_active_date >= start_date,
+                User.last_active_date < end_date,
+            )
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_daily_dynamics(
+        self,
+        total_users: int,
+        dau: int,
+        subscribed_total: int,
+        new_users_day: int,
+    ) -> Dict[str, Any]:
+        """
+        Рассчитывает дельты метрик по сравнению с предыдущим днём (+/-),
+        сохраняет текущий снепшот в Redis.
+        """
+        redis_client = await self._get_redis_client()
+        today = datetime.now(MOSCOW_TZ)
+        yesterday = today - timedelta(days=1)
+        today_key = f"timetable:stats:snapshot:{today.strftime('%Y%m%d')}"
+        yesterday_key = f"timetable:stats:snapshot:{yesterday.strftime('%Y%m%d')}"
+
+        delta_users_str = f"+{new_users_day}"
+        delta_dau_pct = 0
+        delta_subs_str = "+0"
+
+        if redis_client:
+            try:
+                raw_yesterday = await redis_client.get(yesterday_key)
+                if raw_yesterday:
+                    y_data = json.loads(raw_yesterday)
+                    y_total = y_data.get("total_users", total_users)
+                    y_dau = y_data.get("dau", 0)
+                    y_subs = y_data.get("subscribed_total", subscribed_total)
+
+                    diff_total = total_users - y_total
+                    delta_users_str = f"+{diff_total}" if diff_total >= 0 else str(diff_total)
+
+                    if y_dau > 0:
+                        delta_dau_pct = round(((dau - y_dau) / y_dau) * 100)
+
+                    diff_subs = subscribed_total - y_subs
+                    delta_subs_str = f"+{diff_subs}" if diff_subs >= 0 else str(diff_subs)
+            except Exception as e:
+                logger.warning(f"Error reading yesterday stats snapshot: {e}")
+
+        # Если в Redis ещё нет вчерашнего снепшота, рассчитываем дельту DAU из базы
+        if delta_dau_pct == 0:
+            dau_prev = await self.get_dau_previous_day()
+            if dau_prev > 0:
+                delta_dau_pct = round(((dau - dau_prev) / dau_prev) * 100)
+
+        dau_pct_str = f"+{delta_dau_pct}%" if delta_dau_pct >= 0 else f"{delta_dau_pct}%"
+
+        # Сохраняем текущий снепшот в Redis на 14 дней
+        if redis_client:
+            try:
+                snapshot_data = {
+                    "total_users": total_users,
+                    "dau": dau,
+                    "subscribed_total": subscribed_total,
+                    "new_users": new_users_day,
+                }
+                await redis_client.set(today_key, json.dumps(snapshot_data), ex=86400 * 14)
+            except Exception as e:
+                logger.warning(f"Error saving today stats snapshot: {e}")
+
+        return {
+            "delta_users_str": delta_users_str,
+            "delta_dau_pct_str": dau_pct_str,
+            "delta_subs_str": delta_subs_str,
+        }
+
+    async def get_activity_history(self, days: int = 7) -> Tuple[List[datetime], List[int], List[int]]:
+        """
+        Возвращает историю активности по дням: (список дат, новые пользователи, активные DAU).
+        """
+        now = datetime.now(MOSCOW_TZ)
+        dates = [now - timedelta(days=i) for i in reversed(range(days))]
+        new_users = []
+        active_users = []
+
+        async with self.async_session_maker() as session:
+            for d in dates:
+                start = datetime(d.year, d.month, d.day, 0, 0, 0)
+                end = datetime(d.year, d.month, d.day, 23, 59, 59)
+
+                stmt_new = select(func.count(User.user_id)).where(
+                    User.registration_date >= start,
+                    User.registration_date <= end,
+                )
+                cnt_new = await session.scalar(stmt_new) or 0
+                new_users.append(cnt_new)
+
+                stmt_act = select(func.count(User.user_id)).where(
+                    User.last_active_date >= start,
+                    User.last_active_date <= end,
+                )
+                cnt_act = await session.scalar(stmt_act) or 0
+                active_users.append(cnt_act)
+
+        return dates, new_users, active_users
+
     async def get_all_users_with_groups(self) -> List[Tuple[int, Optional[str]]]:
         """Получает всех пользователей с их группами."""
         async with self.async_session_maker() as session:
@@ -478,6 +622,7 @@ class UserDataManager:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
                 User.evening_notify == True,
                 User.group.isnot(None),
+                User.is_blocked.is_(False),
                 User.evening_time == target_time
             )
             result = await session.execute(stmt)
@@ -494,6 +639,7 @@ class UserDataManager:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
                 User.morning_summary == True,
                 User.group.isnot(None),
+                User.is_blocked.is_(False),
                 User.morning_time == target_time
             )
             result = await session.execute(stmt)
@@ -506,6 +652,7 @@ class UserDataManager:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes, User.language).where(
                 User.lesson_reminders == True,
                 User.group.isnot(None),
+                User.is_blocked.is_(False),
                 or_(User.user_type != "teacher", User.user_type.is_(None)),
             )
             result = await session.execute(stmt)

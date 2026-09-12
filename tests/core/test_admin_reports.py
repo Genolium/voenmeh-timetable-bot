@@ -12,6 +12,7 @@ def mock_bot():
     """Фикстура для мока Bot."""
     bot = AsyncMock(spec=Bot)
     bot.send_message = AsyncMock()
+    bot.send_document = AsyncMock()
     return bot
 
 
@@ -43,6 +44,13 @@ def mock_user_data_manager():
         "11+ студентов": 8,
     }
     manager.get_new_users_count.return_value = 100
+    manager.get_blocked_users_count.return_value = 5
+    manager.get_users_without_group_count.return_value = 50
+    manager.get_daily_dynamics.return_value = {
+        "delta_users_str": "+100",
+        "delta_dau_pct_str": "+8%",
+        "delta_subs_str": "-2",
+    }
     return manager
 
 
@@ -87,7 +95,14 @@ class TestAdminReportsGenerator:
             assert "📊" in report
             assert "Ежедневный отчёт" in report
             assert "1000" in report  # total users
+            assert "Новых за день: <b>100</b>" in report  # new users count
             assert "500" in report  # daily active
+            assert "+8% к вчера" in report  # DAU delta
+            assert "Отток и чистый прирост" in report
+            assert "Заблокировали бота: <b>5</b>" in report
+            assert "Чистый прирост (Net Growth): <b>+95</b>" in report
+            assert "Воронка онбординга" in report
+            assert "Без группы (застряли): <b>50</b>" in report
             assert "О735Б" in report  # top group
             assert "150" in report  # tasks sent
 
@@ -193,6 +208,7 @@ class TestAdminReportsGenerator:
             [("О735Б", 150), ("О735А", 120)],
             {"1 студент": 5, "2-5 студентов": 15},
             prometheus_metrics,
+            new_users_day=25,
         )
 
         # Проверяем структуру отчёта
@@ -202,6 +218,7 @@ class TestAdminReportsGenerator:
         assert "🎓" in report  # Группы
         assert "⚡" in report  # Метрики
         assert "1000" in report
+        assert "Новых за день: <b>25</b>" in report
         assert "О735Б" in report
 
     def test_format_weekly_report_structure(self, admin_reports_generator):
@@ -290,6 +307,73 @@ class TestAdminReportsSending:
 
         # Должно попытаться отправить сообщения
         assert mock_bot.send_message.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_send_daily_reports_with_backup_success(self, mock_bot, mock_user_data_manager, tmp_path):
+        """Тест успешной отправки ежедневного отчёта вместе с бэкапом БД."""
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
+            mock_generator = AsyncMock()
+            mock_generator.generate_daily_report.return_value = "📊 Daily Report"
+            mock_generator_class.return_value = mock_generator
+
+            # Создаем реальный временный файл бэкапа
+            fake_backup = tmp_path / "db_backup_20260912_090000.sql"
+            fake_backup.write_text("CREATE TABLE test();")
+
+            with patch("core.admin_reports.create_db_backup", new=AsyncMock(return_value=fake_backup)):
+                await send_daily_reports(mock_bot, mock_user_data_manager)
+
+                # Проверяем, что сообщения и документы были отправлены обоим админам
+                assert mock_bot.send_message.call_count == 2
+                assert mock_bot.send_document.call_count == 2
+
+                # Проверяем аргументы отправки документа
+                first_call_args = mock_bot.send_document.call_args_list[0]
+                assert first_call_args.kwargs["chat_id"] == 123456789
+                assert "Резервная копия БД" in first_call_args.kwargs["caption"]
+                assert fake_backup.name in first_call_args.kwargs["caption"]
+
+                # Проверяем, что временный файл бэкапа был удален в finally
+                assert not fake_backup.exists()
+
+    @pytest.mark.asyncio
+    async def test_send_daily_reports_backup_error(self, mock_bot, mock_user_data_manager):
+        """Тест отправки отчёта при ошибке создания бэкапа БД."""
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
+            mock_generator = AsyncMock()
+            mock_generator.generate_daily_report.return_value = "📊 Daily Report"
+            mock_generator_class.return_value = mock_generator
+
+            with patch("core.admin_reports.create_db_backup", new=AsyncMock(side_effect=Exception("pg_dump error"))):
+                await send_daily_reports(mock_bot, mock_user_data_manager)
+
+                # Текстовый отчёт должен быть отправлен
+                assert mock_bot.send_message.call_count == 2
+                # Документ бэкапа не должен отправляться
+                assert mock_bot.send_document.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_send_daily_reports_backup_send_error(self, mock_bot, mock_user_data_manager, tmp_path):
+        """Тест корректной очистки файла при ошибке отправки документа в Telegram."""
+        with patch("core.admin_reports.AdminReportsGenerator") as mock_generator_class:
+            mock_generator = AsyncMock()
+            mock_generator.generate_daily_report.return_value = "📊 Daily Report"
+            mock_generator_class.return_value = mock_generator
+
+            fake_backup = tmp_path / "db_backup_20260912_090000.sql"
+            fake_backup.write_text("CREATE TABLE test();")
+
+            mock_bot.send_document.side_effect = Exception("Telegram API timeout")
+
+            with patch("core.admin_reports.create_db_backup", new=AsyncMock(return_value=fake_backup)):
+                await send_daily_reports(mock_bot, mock_user_data_manager)
+
+                # Сообщения всё равно отправлены
+                assert mock_bot.send_message.call_count == 2
+                # Попытки отправить документ совершены
+                assert mock_bot.send_document.call_count == 2
+                # Временный файл бэкапа должен быть очищен несмотря на ошибку
+                assert not fake_backup.exists()
 
     @pytest.mark.asyncio
     async def test_send_weekly_reports_success(self, mock_bot, mock_user_data_manager):

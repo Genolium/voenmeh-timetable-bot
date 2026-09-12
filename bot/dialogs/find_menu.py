@@ -78,6 +78,13 @@ async def on_teacher_input(message: Message, message_input: MessageInput, manage
 
     manager.dialog_data[DialogDataKeys.SEARCH_TYPE] = "teacher"
 
+    try:
+        from core.analytics import track_feature_click
+        if timetable_manager and hasattr(timetable_manager, "redis"):
+            await track_feature_click(timetable_manager.redis, "teacher_search")
+    except Exception:
+        pass
+
     if len(found_teachers) == 1:
         manager.dialog_data[DialogDataKeys.TEACHER_NAME] = found_teachers[0]
         manager.dialog_data.pop(DialogDataKeys.CLASSROOM_NUMBER, None)
@@ -107,6 +114,13 @@ async def on_classroom_input(message: Message, message_input: MessageInput, mana
         return
 
     manager.dialog_data[DialogDataKeys.SEARCH_TYPE] = "classroom"
+
+    try:
+        from core.analytics import track_feature_click
+        if timetable_manager and hasattr(timetable_manager, "redis"):
+            await track_feature_click(timetable_manager.redis, "classroom_search")
+    except Exception:
+        pass
 
     if len(found_classrooms) == 1:
         manager.dialog_data[DialogDataKeys.CLASSROOM_NUMBER] = found_classrooms[0]

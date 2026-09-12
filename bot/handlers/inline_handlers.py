@@ -68,6 +68,13 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager):
     Пример запроса: @bot_name О735Б завтра
     """
     query_text = query.query.strip()
+
+    try:
+        from core.analytics import track_feature_click
+        from core.config import get_redis_client
+        await track_feature_click(get_redis_client(), "inline_teacher")
+    except Exception:
+        pass
     
     # Пустой запрос - показать подсказку
     if not query_text:

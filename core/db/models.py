@@ -34,12 +34,17 @@ class User(Base):
     # Пользовательская тема оформления (standard, light, dark, classic, coffee)
     theme: Mapped[str] = mapped_column(String, default="standard", server_default="standard", nullable=False)
 
+    # Статус блокировки бота пользователем (отток / Churn)
+    is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="f", nullable=False)
+    blocked_date: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+
     # Индексы для оптимизации частых запросов
     __table_args__ = (
         Index("idx_user_group", "group"),  # Для поиска по группам
         Index("idx_user_type", "user_type"),  # Для поиска по типу пользователя
         Index("idx_user_last_active", "last_active_date"),  # Для статистики активности
         Index("idx_user_registration", "registration_date"),  # Для статистики регистраций
+        Index("idx_user_blocked", "is_blocked"),  # Для фильтрации заблокированных
         Index(
             "idx_user_notifications",
             "evening_notify",

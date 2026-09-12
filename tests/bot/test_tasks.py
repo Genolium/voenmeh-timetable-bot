@@ -233,10 +233,12 @@ class TestTasks:
 
         with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
-                mock_rate_limiter.__aenter__ = AsyncMock()
-                mock_rate_limiter.__aexit__ = AsyncMock()
-                # Не должно поднимать исключение
-                await _send_message(user_id, text)
+                with patch("bot.tasks._mark_user_as_blocked", AsyncMock()) as mock_mark:
+                    mock_rate_limiter.__aenter__ = AsyncMock()
+                    mock_rate_limiter.__aexit__ = AsyncMock(return_value=False)
+                    # Не должно поднимать исключение
+                    await _send_message(user_id, text)
+                    mock_mark.assert_called_once_with(user_id)
 
     @pytest.mark.asyncio
     async def test_send_message_bad_request_blocked(self):
@@ -250,10 +252,12 @@ class TestTasks:
 
         with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
             with patch("bot.tasks.rate_limiter") as mock_rate_limiter:
-                mock_rate_limiter.__aenter__ = AsyncMock()
-                mock_rate_limiter.__aexit__ = AsyncMock()
-                # Не должно поднимать исключение
-                await _send_message(user_id, text)
+                with patch("bot.tasks._mark_user_as_blocked", AsyncMock()) as mock_mark:
+                    mock_rate_limiter.__aenter__ = AsyncMock()
+                    mock_rate_limiter.__aexit__ = AsyncMock(return_value=False)
+                    # Не должно поднимать исключение
+                    await _send_message(user_id, text)
+                    mock_mark.assert_called_once_with(user_id)
 
     def test_send_message_bad_request_other(self):
         """Тест обработки TelegramBadRequest с другой ошибкой."""

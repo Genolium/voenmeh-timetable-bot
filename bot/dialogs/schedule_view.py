@@ -240,6 +240,8 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
             return
         # Устанавливаем блокировку на 3 секунды
         await manager_obj.redis.set(last_click_key, "1", ex=3)
+        from core.analytics import track_feature_click
+        await track_feature_click(manager_obj.redis, "image_export")
     except Exception:
         pass
 
@@ -593,10 +595,24 @@ async def on_date_shift(callback: CallbackQuery, button: Button, manager: Dialog
     current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
     new_date = current_date + timedelta(days=days)
     ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = new_date.isoformat()
+    try:
+        from core.analytics import track_feature_click
+        manager_obj = manager.middleware_data.get("manager")
+        if manager_obj and hasattr(manager_obj, "redis"):
+            await track_feature_click(manager_obj.redis, "day_nav")
+    except Exception:
+        pass
 
 
 async def on_today_click(callback: CallbackQuery, button: Button, manager: DialogManager):
     manager.current_context().dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
+    try:
+        from core.analytics import track_feature_click
+        manager_obj = manager.middleware_data.get("manager")
+        if manager_obj and hasattr(manager_obj, "redis"):
+            await track_feature_click(manager_obj.redis, "day_nav")
+    except Exception:
+        pass
 
 
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
