@@ -150,3 +150,28 @@ class FailedMessage(Base):
         Index("idx_failed_msg_status", "status"),
         Index("idx_failed_msg_created", "created_at"),
     )
+
+
+class SubscriptionFilterSetting(Base):
+    """Глобальные настройки фильтра обязательной подписки на каналы."""
+    __tablename__ = "subscription_filter_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="f", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
+
+
+class RequiredChannel(Base):
+    """Канал для обязательной подписки пользователей."""
+    __tablename__ = "required_channels"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    channel_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)  # Например, '-100123456789' или '@channel'
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    invite_link: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_required_channels_channel_id", "channel_id"),
+    )
+

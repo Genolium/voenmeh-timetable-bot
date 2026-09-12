@@ -1,9 +1,11 @@
 import asyncio
+import logging
 import os
 import random
 import tempfile
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
+from typing import Any
 
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
@@ -23,10 +25,13 @@ from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.semester_settings import SemesterSettingsManager
+from core.subscription_filter import SubscriptionFilterManager
 from core.user_data import UserDataManager
 
 from .constants import WidgetIds
 from .states import Admin
+
+logger = logging.getLogger(__name__)
 
 # Генерация полного расписания отключена; переменная сохраняется для совместимости тестов UI
 active_generations = {}
@@ -63,7 +68,7 @@ def _is_empty_field(value: str) -> bool:
 
 
 def _is_cancel(text: str) -> bool:
-    raw = (text or "").strip().lower()
+    raw = (text or "").strip().lower().lstrip("/")
     return raw in {"отмена", "cancel", "отменить"}
 
 
@@ -289,6 +294,118 @@ async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs):
         "ℹ️ Ожидаем результат восстановления...",
     )
     return {"backup_upload_status": status}
+
+
+async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs):
+    session_factory = dialog_manager.middleware_data.get("session_factory")
+    redis_client = dialog_manager.middleware_data.get("redis_client")
+    mgr = SubscriptionFilterManager(session_factory, redis_client)
+
+    is_enabled = await mgr.is_filter_enabled()
+    channels = await mgr.get_required_channels()
+
+    status_text = "🟢 <b>Включен</b>" if is_enabled else "🔴 <b>Выключен</b>"
+    toggle_btn_text = "🔴 Выключить фильтр" if is_enabled else "🟢 Включить фильтр"
+
+    if channels:
+        lines = []
+        for i, ch in enumerate(channels, 1):
+            title = ch.get("title", "Без названия")
+            link = ch.get("invite_link") or ""
+            cid = ch.get("channel_id", "")
+            lines.append(f"{i}. <a href='{link}'>{title}</a> (<code>{cid}</code>)")
+        channels_text = "\n".join(lines)
+    else:
+        channels_text = "<i>Каналы ещё не добавлены. При пустом списке фильтр не блокирует пользователей.</i>"
+
+    return {
+        "is_enabled": is_enabled,
+        "status_text": status_text,
+        "toggle_btn_text": toggle_btn_text,
+        "channels": channels,
+        "channels_count": len(channels),
+        "channels_text": channels_text,
+    }
+
+
+async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager: DialogManager):
+    session_factory = manager.middleware_data.get("session_factory")
+    redis_client = manager.middleware_data.get("redis_client")
+    mgr = SubscriptionFilterManager(session_factory, redis_client)
+
+    current_enabled = await mgr.is_filter_enabled()
+    new_state = not current_enabled
+    await mgr.set_filter_enabled(new_state)
+
+    state_str = "включен" if new_state else "выключен"
+    await callback.answer(f"Фильтр обязательной подписки {state_str}!", show_alert=False)
+
+
+async def on_add_channel_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+    raw = (message.text or "").strip()
+    if _is_cancel(raw):
+        await message.answer("↩️ Отменено")
+        await manager.switch_to(Admin.sub_filter_menu)
+        return
+
+    session_factory = manager.middleware_data.get("session_factory")
+    redis_client = manager.middleware_data.get("redis_client")
+    bot: Bot = manager.middleware_data.get("bot")
+    mgr = SubscriptionFilterManager(session_factory, redis_client)
+
+    clean_target = raw
+    invite_link = None
+
+    if raw.startswith("https://t.me/") or raw.startswith("t.me/"):
+        path = raw.split("t.me/", 1)[1].strip("/")
+        if path.startswith("+") or path.startswith("joinchat/"):
+            invite_link = raw if raw.startswith("http") else f"https://{raw}"
+            clean_target = path
+        else:
+            username = path.split("/")[0]
+            clean_target = f"@{username}"
+            invite_link = f"https://t.me/{username}"
+
+    title = clean_target
+    target_chat_id = clean_target
+    if (clean_target.startswith("-") and clean_target[1:].isdigit()) or clean_target.isdigit():
+        target_chat_id = int(clean_target)
+
+    if bot:
+        try:
+            chat = await bot.get_chat(target_chat_id)
+            title = chat.title or chat.username or str(clean_target)
+            clean_target = str(chat.id)
+            if chat.username:
+                invite_link = f"https://t.me/{chat.username}"
+            elif chat.invite_link:
+                invite_link = chat.invite_link
+        except Exception as e:
+            logger.warning(f"Failed to get_chat for {clean_target}: {e}")
+            await message.answer(
+                f"⚠️ <i>Не удалось получить информацию о канале от Telegram API.\nКанал добавлен с введённым значением: {clean_target}</i>",
+                parse_mode="HTML",
+            )
+
+    if not invite_link:
+        if clean_target.startswith("@"):
+            invite_link = f"https://t.me/{clean_target.lstrip('@')}"
+        else:
+            invite_link = raw if raw.startswith("http") else f"https://t.me/{clean_target}"
+
+    await mgr.add_required_channel(channel_id=str(clean_target), title=title, invite_link=invite_link)
+    await message.answer(f"✅ Канал «{title}» успешно добавлен в обязательную подписку!", parse_mode="HTML")
+    await manager.switch_to(Admin.sub_filter_menu)
+
+
+async def on_delete_sub_filter_channel(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+    session_factory = manager.middleware_data.get("session_factory")
+    redis_client = manager.middleware_data.get("redis_client")
+    mgr = SubscriptionFilterManager(session_factory, redis_client)
+
+    await mgr.remove_required_channel(item_id)
+    await callback.answer("🗑 Канал удалён из списка обязательных", show_alert=False)
+
 
 async def get_categories_list(dialog_manager: DialogManager, **kwargs):
     session_factory = dialog_manager.middleware_data.get("session_factory")
@@ -1754,6 +1871,9 @@ admin_dialog = Dialog(
             SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
             SwitchTo(Const("💾 Бэкапы"), id="section_backups", state=Admin.backup_menu),
         ),
+        Row(
+            SwitchTo(Const("📢 Обязательная подписка"), id="section_sub_filter", state=Admin.sub_filter_menu),
+        ),
         state=Admin.menu,
     ),
     # Раздел: Рассылки
@@ -2158,4 +2278,52 @@ admin_dialog = Dialog(
         getter=get_create_preview,
         parse_mode="HTML",
     ),
+    # Меню обязательной подписки на каналы
+    Window(
+        Format(
+            "<b>📢 Фильтр обязательной подписки на каналы</b>\n\n"
+            "Статус: {status_text}\n\n"
+            "📋 <b>Обязательные каналы ({channels_count}):</b>\n"
+            "{channels_text}\n\n"
+            "<i>Для удаления канала нажмите на кнопку с его названием ниже:</i>"
+        ),
+        Button(
+            Format("{toggle_btn_text}"),
+            id="toggle_sub_filter_btn",
+            on_click=on_toggle_sub_filter,
+        ),
+        SwitchTo(
+            Const("➕ Добавить канал"),
+            id="go_add_channel",
+            state=Admin.sub_filter_add_channel,
+        ),
+        Column(
+            Select(
+                Format("❌ {item[title]}"),
+                id="del_sub_channel",
+                item_id_getter=lambda x: str(x["channel_id"]),
+                items="channels",
+                on_click=on_delete_sub_filter_channel,
+            ),
+        ),
+        SwitchTo(Const("◀️ В админ-панель"), id="back_from_sub_filter", state=Admin.menu),
+        state=Admin.sub_filter_menu,
+        getter=get_sub_filter_data,
+        parse_mode="HTML",
+    ),
+    # Добавление обязательного канала
+    Window(
+        Const(
+            "<b>➕ Добавление обязательного канала</b>\n\n"
+            "Введите ссылку на канал (например, <code>@my_channel</code> или <code>https://t.me/my_channel</code>) "
+            "или числовой ID канала (например, <code>-1001234567890</code>):\n\n"
+            "⚠️ <i>Убедитесь, что бот предварительно добавлен в администраторы канала!</i>\n\n"
+            "Отправьте /cancel для отмены."
+        ),
+        TextInput(id="add_sub_channel_input", on_success=on_add_channel_input),
+        SwitchTo(Const("◀️ Назад"), id="back_add_sub_channel", state=Admin.sub_filter_menu),
+        state=Admin.sub_filter_add_channel,
+        parse_mode="HTML",
+    ),
 )
+

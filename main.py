@@ -48,6 +48,7 @@ from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.i18n_middleware import I18nMiddleware
+from bot.middlewares.subscription_filter_middleware import SubscriptionFilterMiddleware
 
 # from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
 from bot.scheduler import setup_scheduler
@@ -310,6 +311,12 @@ async def main():
         lambda handler, event, data: handler(
             event,
             {**data, "bot": bot, "scheduler": scheduler, "redis_client": redis_client},
+        )
+    )
+    dp.update.middleware(
+        SubscriptionFilterMiddleware(
+            session_factory=user_data_manager.async_session_maker,
+            redis_client=redis_client,
         )
     )
     dp.errors.register(error_handler)
