@@ -381,6 +381,8 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
 # --- Резервные копии расписания ---
 BACKUP_PREFIX = "timetable:backup:"
+BACKUP_RETENTION_DAYS = 30  # Срок хранения резервных копий (1 месяц)
+BACKUP_TTL_SECONDS = BACKUP_RETENTION_DAYS * 86400
 
 
 async def backup_current_schedule(redis_client: Redis):
@@ -392,8 +394,8 @@ async def backup_current_schedule(redis_client: Redis):
         cached_json = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
         if cached_json:
             ts = _dt.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")
-            await redis_client.set(f"{BACKUP_PREFIX}{ts}", cached_json)
-            logger.info("Создана резервная копия расписания: %s", ts)
+            await redis_client.set(f"{BACKUP_PREFIX}{ts}", cached_json, ex=BACKUP_TTL_SECONDS)
+            logger.info("Создана резервная копия расписания в Redis: %s (срок хранения: %s дн.)", ts, BACKUP_RETENTION_DAYS)
     except Exception as e:
         logger.error("Ошибка при создании резервной копии расписания: %s", e)
 
@@ -421,13 +423,12 @@ async def cleanup_image_cache(redis_client: Redis):
 
 async def auto_backup(redis_client: Redis):
     try:
+        backup_dir = Path("/app/data/backups") if Path("/app/data").exists() else Path("data/backups")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
         try:
-            backup_path = await create_db_backup(output_dir=Path("/app/data"))
-            logger.info("Database backup created: %s", backup_path)
-            # Clean up tmp file after verifying creation
-            if backup_path.exists():
-                backup_path.unlink()
-                logger.info("Temporary database backup file deleted: %s", backup_path)
+            backup_path = await create_db_backup(output_dir=backup_dir)
+            logger.info("Database backup created: %s (сохраняется на %s дней)", backup_path, BACKUP_RETENTION_DAYS)
         except Exception as exc:
             logger.error("Exception during database backup: %s", exc)
             ERRORS_TOTAL.labels(source="db_backup").inc()
@@ -459,21 +460,33 @@ async def auto_backup(redis_client: Redis):
                         schedule_data = json.loads(schedules.decode("utf-8", errors="replace"))
                         logger.warning("Successfully parsed schedule data with error replacement")
 
-                # Write the decompressed data as readable JSON
-                backup_file = f"schedules_backup_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.json"
+                # Write the decompressed data as readable JSON in backup_dir
+                ts = _dt.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")
+                backup_file = backup_dir / f"schedules_backup_{ts}.json"
                 with open(backup_file, "w", encoding="utf-8") as f:
                     json.dump(schedule_data, f, ensure_ascii=False, indent=2)
                 logger.info(f"Schedule backup created: {backup_file}")
 
             except Exception as e:
                 logger.error(f"Failed to process schedule data for backup: {e}")
-                # Fallback: save raw data as binary
-                backup_file = f"schedules_backup_raw_{datetime.now(MOSCOW_TZ).strftime('%Y%m%d_%H%M%S')}.bin"
+                # Fallback: save raw data as binary in backup_dir
+                ts = _dt.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")
+                backup_file = backup_dir / f"schedules_backup_raw_{ts}.bin"
                 with open(backup_file, "wb") as f:
                     f.write(schedules)
                 logger.info(f"Raw schedule backup created: {backup_file}")
         else:
             logger.info("No schedule data found in Redis cache")
+
+        # Очистка файлов резервных копий старше 30 дней (1 месяц)
+        cutoff_ts = _dt.now(MOSCOW_TZ).timestamp() - (BACKUP_RETENTION_DAYS * 86400)
+        for old_file in backup_dir.iterdir():
+            if old_file.is_file() and old_file.stat().st_mtime < cutoff_ts:
+                try:
+                    old_file.unlink()
+                    logger.info("Удален устаревший файл бэкапа (> 30 дней): %s", old_file)
+                except Exception as cleanup_err:
+                    logger.warning("Не удалось удалить устаревший бэкап %s: %s", old_file, cleanup_err)
 
         logger.info("Auto-backup completed successfully")
 

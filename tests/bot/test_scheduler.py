@@ -418,8 +418,8 @@ async def test_backup_current_schedule_success(mock_redis, monkeypatch):
 
     await backup_current_schedule(mock_redis)
 
-    # Проверяем, что резервная копия создана
-    mock_redis.set.assert_called_with("timetable:backup:20250101_120000", mock_redis.get.return_value)
+    # Проверяем, что резервная копия создана с TTL 30 дней (2592000 сек)
+    mock_redis.set.assert_called_with("timetable:backup:20250101_120000", mock_redis.get.return_value, ex=2592000)
 
 
 @pytest.mark.asyncio

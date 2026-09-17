@@ -1702,9 +1702,10 @@ async def on_force_update_schedule(callback: CallbackQuery, button: Button, mana
             )
             # Сбрасываем хеш в Redis, чтобы бот "увидел" изменения
             await redis_client.delete(REDIS_SCHEDULE_HASH_KEY)
-            # Сбрасываем заголовки ETag/Last-Modified, чтобы сервер не вернул 304
+            # Сбрасываем заголовки ETag/Last-Modified и кэш voenmeh.su, чтобы сервер не вернул 304
             parser._LAST_ETAG = None
             parser._LAST_MODIFIED = None
+            parser._LAST_VOENMEH_SU_UPDATED_AT = None
 
             await bot.send_message(
                 admin_id, "2. Запрашиваю и обрабатываю новое расписание (это может занять время)..."

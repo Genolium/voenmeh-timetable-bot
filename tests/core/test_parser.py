@@ -20,7 +20,7 @@ def sample_xml_bytes():
     """
     xml_string = """<?xml version="1.0" encoding="utf-16"?>
 <Timetable>
-    <Period StartYear="2023" StartMonth="9" StartDay="1" />
+    <Period StartYear="2026" StartMonth="9" StartDay="1" />
     <Group Number="О735Б">
         <Days>
             <Day Title="Понедельник">
@@ -78,7 +78,7 @@ async def test_parser_success_builds_indexes(monkeypatch):
     xml = (
         '<?xml version="1.0" encoding="UTF-16"?>\n'
         "<Root>"
-        '  <Period StartYear="2024" StartMonth="9" StartDay="1" />'
+        '  <Period StartYear="2026" StartMonth="9" StartDay="1" />'
         '  <Weeks FirstWeek="odd" />'
         '  <Group Number="G1">'
         "    <Days>"
