@@ -17,7 +17,6 @@ htmlcov/
 
 # Large media & runtime data (handled via volumes)
 generated_images/
-bot/screenshots/
 bot/media/work.gif
 data/
 

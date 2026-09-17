@@ -195,57 +195,43 @@ async def generate_schedule_image(
             _template_mtime = current_mtime
 
         week_slug = "odd" if "Неч" in week_type else "even"
-        if not _bg_images_cache:
+
+        def _get_bg_image_data(theme: Optional[str], slug: str) -> str:
+            from core.themes import get_theme_meta
             from base64 import b64encode
 
-            # Стандартные фоны для нечётной/чётной недели
-            try:
-                orange_path = project_root / "assets" / "orange_background.png"
-                _bg_images_cache["orange"] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["orange"] = ""
-            try:
-                purple_path = project_root / "assets" / "purple_background.png"
-                _bg_images_cache["purple"] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["purple"] = ""
-            # Дополнительные фоны для пользовательских тем
-            try:
-                light_path = project_root / "assets" / "light_background.png"
-                _bg_images_cache["light"] = f"data:image/png;base64,{b64encode(light_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["light"] = ""
-            try:
-                dark_path = project_root / "assets" / "dark_background.png"
-                _bg_images_cache["dark"] = f"data:image/png;base64,{b64encode(dark_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["dark"] = ""
-            try:
-                coffee_path = project_root / "assets" / "coffee_background.png"
-                _bg_images_cache["coffee"] = f"data:image/png;base64,{b64encode(coffee_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["coffee"] = ""
-            try:
-                official_path = project_root / "assets" / "official_background.png"
-                # Используем как фон для темы 'classic' (официальные цвета Военмеха)
-                _bg_images_cache["official"] = f"data:image/png;base64,{b64encode(official_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache["official"] = ""
-
-        # Выбираем фон по теме пользователя
-        def _resolve_bg_key(theme: Optional[str], slug: str) -> str:
-            from core.themes import get_theme_meta
-
             meta = get_theme_meta(theme)
-            if meta.is_procedural:
-                return ""
-            if meta.bg_image_key:
-                return meta.bg_image_key
-            # 'standard' или fallback — разные растровые фоны для нечётной/чётной
-            return "orange" if slug == "odd" else "purple"
+            base_key = meta.bg_image_key or meta.id
+            if base_key == "standard":
+                target_key = "orange" if slug == "odd" else "purple"
+            else:
+                week_key = f"{base_key}_{slug}"
+                if (project_root / "assets" / f"{week_key}_background.png").exists():
+                    target_key = week_key
+                else:
+                    target_key = base_key
 
-        bg_key = _resolve_bg_key(user_theme, week_slug)
-        bg_image_data = _bg_images_cache.get(bg_key, "")
+            if target_key in _bg_images_cache:
+                return _bg_images_cache[target_key]
+
+            # Ищем файл в папке assets
+            candidates = [
+                project_root / "assets" / f"{target_key}_background.png",
+                project_root / "assets" / f"{target_key}.png",
+            ]
+            for p in candidates:
+                if p.exists():
+                    try:
+                        encoded = f"data:image/png;base64,{b64encode(p.read_bytes()).decode()}"
+                        _bg_images_cache[target_key] = encoded
+                        return encoded
+                    except Exception:
+                        break
+
+            _bg_images_cache[target_key] = ""
+            return ""
+
+        bg_image_data = _get_bg_image_data(user_theme, week_slug)
 
         # Prepare I18n strings
         # Use provided lang or default to 'ru'
