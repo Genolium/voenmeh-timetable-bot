@@ -10,6 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Константы приложения ---
 API_URL = "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml"
+FALLBACK_API_URL = "https://voenmeh.su"
 MAP_URL = "https://voenmeh.ru/openmap/"
 CACHE_LIFETIME = timedelta(hours=12)  # Время жизни кэша в Redis
 USER_AGENT = (

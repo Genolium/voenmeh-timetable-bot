@@ -586,3 +586,157 @@ def test_load_fallback_schedule_loads_existing_file(tmp_path):
 
             # create_initial_fallback_schedule не должен вызываться
             mock_create.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_from_voenmeh_su_success():
+    """Тест успешного парсинга с API voenmeh.su."""
+    from core.parser import fetch_and_parse_from_voenmeh_su
+
+    meta_payload = {
+        "has_data": True,
+        "period": "ОСЕННИЙ СЕМЕСТР 2026/2027 уч. г.",
+        "groups": ["О735Б"],
+        "updated_at": "2026-09-10T09:16:14Z",
+    }
+    lessons_payload = {
+        "owner_kind": "group",
+        "name": "О735Б",
+        "lessons": [
+            {
+                "id": 37691,
+                "day": 1,
+                "time": "14:55",
+                "week": "odd",
+                "kind": "пр",
+                "subject": "НИР",
+                "teachers": ["Снижко Е.А."],
+                "rooms": ["258*"],
+            },
+            {
+                "id": 37692,
+                "day": 2,
+                "time": "12:40",
+                "week": "even",
+                "kind": "пр",
+                "subject": "МЕТ.И СР.ЗАЩ.ИНФ",
+                "teachers": ["Верхолат А.М."],
+                "rooms": ["216*"],
+            },
+        ],
+    }
+
+    class MockResponse:
+        def __init__(self, data, status=200):
+            self._data = data
+            self.status = status
+
+        async def json(self):
+            return self._data
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class MockSession:
+        def get(self, url, **kwargs):
+            if "meta" in str(url):
+                return MockResponse(meta_payload)
+            elif "lessons" in str(url):
+                return MockResponse(lessons_payload)
+            return MockResponse({}, status=404)
+
+        async def close(self):
+            pass
+
+    result = await fetch_and_parse_from_voenmeh_su(session=MockSession())
+
+    assert result is not None
+    assert "О735Б" in result
+    assert "__teachers_index__" in result
+    assert "__classrooms_index__" in result
+    assert "__current_xml_hash__" in result
+
+    o735b = result["О735Б"]
+    assert "Понедельник" in o735b["odd"]
+    mon_lesson = o735b["odd"]["Понедельник"][0]
+    assert mon_lesson["subject"] == "НИР"
+    assert mon_lesson["type"] == "пр"
+    assert mon_lesson["time"] == "14:55-16:25"
+    assert mon_lesson["teachers"] == "Снижко Е.А."
+    assert mon_lesson["room"] == "258*"
+
+    assert "Вторник" in o735b["even"]
+    tue_lesson = o735b["even"]["Вторник"][0]
+    assert tue_lesson["subject"] == "МЕТ.И СР.ЗАЩ.ИНФ"
+    assert tue_lesson["time"] == "12:40-14:10"
+    assert "Снижко Е.А." in result["__teachers_index__"]
+    assert "258*" in result["__classrooms_index__"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_from_voenmeh_su_meta_error():
+    """Тест обработки ошибки meta с voenmeh.su."""
+    from core.parser import fetch_and_parse_from_voenmeh_su
+
+    class MockErrorResponse:
+        status = 500
+
+        async def json(self):
+            return {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class MockErrorSession:
+        def get(self, *args, **kwargs):
+            return MockErrorResponse()
+
+        async def close(self):
+            pass
+
+    result = await fetch_and_parse_from_voenmeh_su(session=MockErrorSession())
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_parse_all_schedules_uses_voenmeh_su_fallback(monkeypatch):
+    """Тест: при сбое основного сервера XML используется резервный API voenmeh.su."""
+    # Основной сервер возвращает ошибку
+    class FailingSession:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            class FailingResp:
+                status = 500
+
+                async def read(self):
+                    raise Exception("Voenmeh.ru down")
+
+                def raise_for_status(self):
+                    raise Exception("Voenmeh.ru down")
+
+            return FailingResp()
+
+        async def __aexit__(self, *args):
+            return False
+
+    monkeypatch.setattr("aiohttp.ClientSession", lambda *args, **kwargs: FailingSession())
+
+    mock_voenmeh_su_data = {
+        "__metadata__": {"period": {"Title": "ОСЕННИЙ СЕМЕСТР"}},
+        "__current_xml_hash__": "voenmeh_su_hash",
+        "О735Б": {"odd": {}, "even": {}},
+    }
+
+    with patch("core.parser.fetch_and_parse_from_voenmeh_su", AsyncMock(return_value=mock_voenmeh_su_data)):
+        with patch("core.parser.save_fallback_schedule") as mock_save:
+            result = await fetch_and_parse_all_schedules()
+            assert result == mock_voenmeh_su_data
+            mock_save.assert_called_once_with(mock_voenmeh_su_data)
