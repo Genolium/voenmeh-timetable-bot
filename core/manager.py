@@ -338,7 +338,7 @@ class TimetableManager:
             "week_name": week_name,
             "lessons": sorted(
                 lessons,
-                key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
+                key=lambda x: x.get("start_time_raw", ""),
             ),
         }
 
@@ -449,7 +449,7 @@ class TimetableManager:
             "week_name": week_name,
             "lessons": sorted(
                 lessons_for_day,
-                key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
+                key=lambda x: x.get("start_time_raw", ""),
             ),
         }
 
@@ -503,7 +503,7 @@ class TimetableManager:
             "week_name": week_name,
             "lessons": sorted(
                 lessons_for_day,
-                key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
+                key=lambda x: x.get("start_time_raw", ""),
             ),
         }
 

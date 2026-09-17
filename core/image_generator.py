@@ -447,8 +447,8 @@ async def generate_schedule_image(
 
                         print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
 
-                        await page.set_content(html, timeout=60000)
-                        await page.wait_for_load_state("networkidle", timeout=60000)
+                        await page.set_content(html, timeout=30000)
+                        await page.wait_for_load_state("domcontentloaded", timeout=15000)
 
                         # --- ИЗМЕРЯЕМ РЕАЛЬНУЮ ВЫСОТУ КОНТЕНТА ---
                         content_height = await page.evaluate(
@@ -479,7 +479,11 @@ async def generate_schedule_image(
 
                         final_height = int(content_height + 100)
                         await page.set_viewport_size({"width": initial_width, "height": final_height})
-                        await asyncio.sleep(1.0)
+                        try:
+                            await page.wait_for_selector(".content-wrapper", state="attached", timeout=3000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.05)
 
                         # Небольшая проверка загрузки элементов
                         elements_loaded = await page.evaluate(

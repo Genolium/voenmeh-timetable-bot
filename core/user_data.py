@@ -73,12 +73,21 @@ class UserDataManager:
     def __init__(self, db_url: str, redis_url: Optional[str] = None) -> None:
         tz_name: str = str(MOSCOW_TZ)
 
-        # Настраиваем часовой пояс на уровне соединения с PostgreSQL
+        # Настраиваем пул соединений и часовой пояс на уровне соединения с PostgreSQL
         engine_kwargs = {}
         try:
-            if db_url.startswith("postgresql") and "+asyncpg" in db_url:
-                # Для asyncpg используем server_settings
-                engine_kwargs["connect_args"] = {"server_settings": {"TimeZone": tz_name}}
+            if db_url.startswith("postgresql"):
+                engine_kwargs.update(
+                    {
+                        "pool_size": 20,
+                        "max_overflow": 15,
+                        "pool_recycle": 1800,
+                        "pool_pre_ping": True,
+                    }
+                )
+                if "+asyncpg" in db_url:
+                    # Для asyncpg используем server_settings
+                    engine_kwargs["connect_args"] = {"server_settings": {"TimeZone": tz_name}}
         except Exception:
             # На всякий случай не блокируем инициализацию
             engine_kwargs = {}

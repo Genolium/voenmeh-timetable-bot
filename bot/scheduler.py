@@ -220,67 +220,76 @@ async def minutely_reminders_checker(
         if not users:
             return
 
+        # Группируем пользователей по группе, чтобы рассчитывать расписание 1 раз на группу, а не для каждого юзера
+        groups_users: dict[str, list[tuple[int, int, str]]] = {}
         for user_id, group_name, reminder_time, lang in users:
+            if group_name:
+                groups_users.setdefault(group_name, []).append((user_id, reminder_time, lang))
+
+        for group_name, group_user_list in groups_users.items():
             try:
                 schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
                 if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
                     continue
 
-                try:
-                    lessons = sorted(
-                        schedule_info["lessons"],
-                        key=lambda x: datetime.strptime(x["start_time_raw"], "%H:%M").time(),
-                    )
-                except (ValueError, KeyError):
-                    continue
-
+                lessons = schedule_info["lessons"]
                 if not lessons:
                     continue
 
-                # 1. Проверяем напоминание перед началом первой пары
-                try:
-                    start_time_obj = datetime.strptime(lessons[0]["start_time_raw"], "%H:%M").time()
-                    start_dt = MOSCOW_TZ.localize(datetime.combine(today, start_time_obj))
-                    reminder_dt = start_dt - timedelta(minutes=reminder_time)
-                    
-                    # Если наступила ровно та самая минута (проверяем часы и минуты)
-                    if reminder_dt.hour == now.hour and reminder_dt.minute == now.minute:
-                        await asyncio.to_thread(
-                            send_lesson_reminder_task.send,
-                            user_id, lessons[0], "first", None, reminder_time, lang
-                        )
-                        logger.info(f"Отправлено напоминание о первой паре для {user_id}")
-                except (ValueError, KeyError):
-                    pass
+                # Сортируем уроки по времени начала (HH:MM сортируется лексикографически)
+                sorted_lessons = sorted(lessons, key=lambda x: x.get("start_time_raw", ""))
+                first_lesson = sorted_lessons[0]
 
-                # 2. Проверяем напоминания об окончании пар и перерывах
-                for i, lesson in enumerate(lessons):
+                # Время начала первой пары
+                first_start_raw = first_lesson.get("start_time_raw", "")
+                if not first_start_raw or first_start_raw == "N/A":
+                    continue
+                first_start_time = datetime.strptime(first_start_raw, "%H:%M").time()
+                first_start_dt = MOSCOW_TZ.localize(datetime.combine(today, first_start_time))
+
+                # Вычисляем события окончания пар для текущей минуты
+                end_events = []
+                for i, lesson in enumerate(sorted_lessons):
+                    end_raw = lesson.get("end_time_raw", "")
+                    if not end_raw or end_raw == "N/A":
+                        continue
                     try:
-                        end_time_obj = datetime.strptime(lesson["end_time_raw"], "%H:%M").time()
-                        end_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time_obj))
-                        
-                        # Если наступило время конца пары
+                        end_time = datetime.strptime(end_raw, "%H:%M").time()
+                        end_dt = MOSCOW_TZ.localize(datetime.combine(today, end_time))
                         if end_dt.hour == now.hour and end_dt.minute == now.minute:
-                            is_last = i == len(lessons) - 1
-                            next_lesson = lessons[i + 1] if not is_last else None
-                            break_duration = None
-                            
+                            is_last = i == len(sorted_lessons) - 1
+                            next_lesson = sorted_lessons[i + 1] if not is_last else None
+                            break_dur = None
                             if next_lesson:
-                                next_start_time_obj = datetime.strptime(next_lesson["start_time_raw"], "%H:%M").time()
-                                break_duration = int(
-                                    (datetime.combine(today, next_start_time_obj) - datetime.combine(today, end_time_obj)).total_seconds() / 60
-                                )
-                            
-                            await asyncio.to_thread(
-                                send_lesson_reminder_task.send,
-                                user_id, next_lesson, "final" if is_last else "break", break_duration, None, lang
-                            )
-                            logger.info(f"Отправлено напоминание об окончании пары для {user_id}")
+                                n_start_raw = next_lesson.get("start_time_raw", "")
+                                if n_start_raw and n_start_raw != "N/A":
+                                    n_start = datetime.strptime(n_start_raw, "%H:%M").time()
+                                    break_dur = int(
+                                        (datetime.combine(today, n_start) - datetime.combine(today, end_time)).total_seconds() / 60
+                                    )
+                            end_events.append((next_lesson, "final" if is_last else "break", break_dur))
                     except (ValueError, KeyError):
                         pass
-                        
-            except Exception as e:
-                logger.error(f"Ошибка проверки напоминаний для {user_id}: {e}")
+
+                # Отправляем напоминания пользователям группы
+                for user_id, reminder_time, lang in group_user_list:
+                    # 1. Напоминание перед началом первой пары
+                    reminder_dt = first_start_dt - timedelta(minutes=reminder_time)
+                    if reminder_dt.hour == now.hour and reminder_dt.minute == now.minute:
+                        send_lesson_reminder_task.send(
+                            user_id, first_lesson, "first", None, reminder_time, lang
+                        )
+                        logger.info(f"Отправлено напоминание о первой паре для {user_id}")
+
+                    # 2. Напоминания об окончании пар и перерывах
+                    for next_lesson, rem_type, break_dur in end_events:
+                        send_lesson_reminder_task.send(
+                            user_id, next_lesson, rem_type, break_dur, None, lang
+                        )
+                        logger.info(f"Отправлено напоминание об окончании пары для {user_id}")
+
+            except Exception as grp_err:
+                logger.error(f"Ошибка проверки напоминаний для группы {group_name}: {grp_err}")
                 
     except Exception as e:
         logger.error(f"Ошибка в minutely_reminders_checker: {e}")
