@@ -2,6 +2,7 @@ x-base-app-build: &base-app-build
   build:
     context: .
     dockerfile: Dockerfile
+  image: voenmeh-timetable-bot-app:latest
 
 x-base-app-service: &base-app-service
   <<: *base-app-build
