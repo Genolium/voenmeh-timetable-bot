@@ -4,6 +4,7 @@ from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.text import Const, Format
 
+from bot.text_formatters import esc
 from core.config import FEEDBACK_CHAT_ID
 from core.feedback_manager import FeedbackManager
 from core.i18n import i18n
@@ -95,13 +96,16 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     )
 
     # Дополнительно отправляем информацию о пользователе
+    context = (getattr(manager, "start_data", None) or {}).get("feedback_context", "")
     user_info = (
         f"📝 <b>Новый фидбэк!</b>\n"
-        f"От: {message.from_user.full_name}\n"
-        f"Ник: @{message.from_user.username}\n"
+        f"От: {esc(message.from_user.full_name)}\n"
+        f"Ник: @{esc(message.from_user.username)}\n"
         f"ID: <code>{message.from_user.id}</code>\n"
         f"Тип: {message_type}"
     )
+    if context:
+        user_info += f"\nКонтекст: {esc(context)}"
     await bot.send_message(FEEDBACK_CHAT_ID, user_info)
 
     await message.answer(_("feedback_sent"))

@@ -24,6 +24,7 @@ MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 # Имена ключей в Redis
 REDIS_SCHEDULE_CACHE_KEY = "timetable:schedule_cache"
 REDIS_SCHEDULE_HASH_KEY = "timetable:schedule_hash"
+REDIS_LAST_UPDATE_KEY = "timetable:last_successful_update"
 
 
 # --- Пути к медиа- и скриншот-файлам ---

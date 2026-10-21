@@ -18,6 +18,10 @@ class ManagerMiddleware(BaseMiddleware):
     ) -> Any:
         import bot.scheduler as scheduler_mod
 
-        active_mgr = getattr(scheduler_mod, "global_timetable_manager_instance", None) or self.manager
+        ref = getattr(scheduler_mod, "manager_ref", None)
+        if ref is not None:
+            active_mgr = ref.get()
+        else:
+            active_mgr = getattr(scheduler_mod, "global_timetable_manager_instance", None) or self.manager
         data["manager"] = active_mgr
         return await handler(event, data)

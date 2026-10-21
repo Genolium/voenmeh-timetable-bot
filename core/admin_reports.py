@@ -281,11 +281,15 @@ class AdminReportsGenerator:
             group_dist_text = "  • Нет данных"
 
         # Формирование блока динамики
-        dyn = dynamics if isinstance(dynamics, dict) else {
-            "delta_users_str": f"+{new_users_day}",
-            "delta_dau_pct_str": "+0%",
-            "delta_subs_str": "+0",
-        }
+        dyn = (
+            dynamics
+            if isinstance(dynamics, dict)
+            else {
+                "delta_users_str": f"+{new_users_day}",
+                "delta_dau_pct_str": "+0%",
+                "delta_subs_str": "+0",
+            }
+        )
 
         # Расчет чистого прироста (Net Growth)
         safe_new = int(new_users_day) if isinstance(new_users_day, (int, float)) else 0

@@ -1,5 +1,9 @@
+import time
+
 import psutil
 from prometheus_client import Counter, Gauge, Histogram, Summary
+
+_START_TIME = time.time()
 
 # Счетчик обработанных событий (сообщений, колбэков и т.д.)
 # 'event_type' - это метка (label), по которой можно будет фильтровать (например, 'Message', 'CallbackQuery')
@@ -276,12 +280,17 @@ DATABASE_QUERY_TIME = Histogram(
 # Размер БД
 DATABASE_SIZE = Gauge("bot_database_size_bytes", "Database size in bytes", ["table_name"])
 
+# Загрузка CPU процесса
+CPU_USAGE = Gauge("bot_cpu_usage_percent", "CPU usage")
+
 
 def collect_system_metrics():
     MEMORY_USAGE.labels("rss").set(psutil.Process().memory_info().rss)
-    # Add CPU
-    CPU_USAGE = Gauge("bot_cpu_usage_percent", "CPU usage")
     CPU_USAGE.set(psutil.cpu_percent())
+    try:
+        UPTIME_SECONDS.set(time.time() - _START_TIME)
+    except Exception:
+        pass
 
 
 # Call in scheduler or middleware

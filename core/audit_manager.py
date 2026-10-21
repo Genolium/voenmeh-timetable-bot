@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.db.models import ScheduleChangeLog
 from core.schedule_diff import LessonChange
+from core.time_utils import now_msk_naive
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class AuditManager:
     ) -> int:
         """
         Сохраняет обнаруженные изменения в расписании в базу данных.
-        
+
         Returns:
             int: Количество сохраненных записей
         """
@@ -64,7 +65,7 @@ class AuditManager:
         days: int = 7,
     ) -> Sequence[ScheduleChangeLog]:
         """Получает последние изменения расписания."""
-        since_date = (datetime.now() - timedelta(days=days)).date()
+        since_date = (now_msk_naive() - timedelta(days=days)).date()
         async with self.session_factory() as session:
             stmt = select(ScheduleChangeLog).where(ScheduleChangeLog.schedule_date >= since_date)
             if target_name:
@@ -75,7 +76,7 @@ class AuditManager:
 
     async def get_frequently_changing_targets(self, days: int = 30, limit: int = 10) -> list[tuple[str, int]]:
         """Возвращает группы или преподавателей с наибольшим количеством изменений расписания."""
-        since_date = datetime.now() - timedelta(days=days)
+        since_date = now_msk_naive() - timedelta(days=days)
         async with self.session_factory() as session:
             stmt = (
                 select(ScheduleChangeLog.target_name, func.count(ScheduleChangeLog.id).label("change_count"))

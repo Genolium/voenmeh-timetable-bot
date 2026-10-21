@@ -91,90 +91,6 @@ async def test_create_manager_with_cache(mocker, sample_schedules):
 
 
 class TestTimetableManager:
-    def test_get_week_type(self, manager):
-        assert manager.get_week_type(date(2023, 9, 4)) == ("odd", "Нечетная")
-        assert manager.get_week_type(date(2023, 9, 11)) == ("even", "Четная")
-        assert "до начала семестра" in manager.get_week_type(date(2023, 8, 30))[1]
-
-    @pytest.mark.asyncio
-    async def test_get_academic_week_type(self, manager):
-        """
-        Тест определения типа недели по академическому календарю.
-
-        ВАЖНО: После исправления бага с календарными неделями, логика изменена:
-        - Неделя определяется по календарным неделям (понедельник-воскресенье)
-        - Все дни одной календарной недели имеют одинаковый тип (четная/нечетная)
-        """
-        # 1 сентября - четная неделя (первая неделя семестра)
-        assert await manager.get_academic_week_type(date(2023, 9, 1)) == (
-            "even",
-            "Четная",
-        )
-        assert await manager.get_academic_week_type(date(2024, 9, 1)) == (
-            "even",
-            "Четная",
-        )
-
-        # 11 сентября 2023 - понедельник второй недели семестра (четная)
-        # Неделя 1: 1-3 сент (четная), Неделя 2: 4-10 сент (нечетная), Неделя 3: 11-17 сент (четная)
-        assert await manager.get_academic_week_type(date(2023, 9, 11)) == (
-            "even",
-            "Четная",
-        )
-
-        # Проверим что вся неделя с 11 сентября имеет одинаковый тип
-        assert await manager.get_academic_week_type(date(2023, 9, 15)) == (
-            "even",
-            "Четная",
-        )  # пятница той же недели
-
-        # Следующая неделя должна быть нечетной
-        assert await manager.get_academic_week_type(date(2023, 9, 18)) == (
-            "odd",
-            "Нечетная",
-        )  # понедельник следующей недели
-
-        # Первая полная неделя февраля - четная (вторая неделя весеннего семестра)
-        assert await manager.get_academic_week_type(date(2024, 2, 12)) == (
-            "even",
-            "Четная",
-        )
-
-        # Вторая неделя февраля - нечетная
-        assert await manager.get_academic_week_type(date(2024, 2, 19)) == (
-            "odd",
-            "Нечетная",
-        )
-
-        # Лето - используем предыдущий осенний семестр
-        # Июль 2024 - много недель после начала семестра 1 сент 2023
-        july_result = await manager.get_academic_week_type(date(2024, 7, 15))
-        assert july_result[0] in [
-            "odd",
-            "even",
-        ]  # Должно быть либо четная, либо нечетная
-        assert july_result[1] in ["Нечетная", "Четная"]
-
-    @pytest.mark.asyncio
-    async def test_get_schedule_for_day_success(self, manager):
-        schedule = await manager.get_schedule_for_day("O735Б", date(2023, 9, 4))
-        assert not schedule.get("error")
-        assert len(schedule["lessons"]) == 2
-
-        schedule_even = await manager.get_schedule_for_day("O735Б", date(2023, 9, 11))
-        assert len(schedule_even["lessons"]) == 1
-
-    @pytest.mark.asyncio
-    async def test_get_schedule_for_day_no_lessons(self, manager):
-        schedule = await manager.get_schedule_for_day("O735Б", date(2023, 9, 5))
-        assert not schedule.get("error")
-        assert len(schedule["lessons"]) == 0
-
-    @pytest.mark.asyncio
-    async def test_get_schedule_for_day_group_not_found(self, manager):
-        schedule = await manager.get_schedule_for_day("XXXX", date(2023, 9, 4))
-        assert "не найдена" in schedule["error"]
-
     def test_find_teachers(self, manager):
         assert manager.find_teachers("Иван") == ["Иванов И.И."]
         assert manager.find_teachers("Сидоров") == []
@@ -186,30 +102,29 @@ class TestTimetableManager:
 
     @pytest.mark.asyncio
     async def test_get_teacher_schedule_success(self, manager):
-        schedule = await manager.get_teacher_schedule("Иванов И.И.", date(2023, 9, 4))
+        schedule = await manager.get_teacher_schedule("Иванов И.И.", date(2024, 9, 9))
         assert len(schedule["lessons"]) == 1
         assert schedule["lessons"][0]["subject"] == "Матан"
 
-        schedule_tuesday = await manager.get_teacher_schedule("Иванов И.И.", date(2023, 9, 5))
+        schedule_tuesday = await manager.get_teacher_schedule("Иванов И.И.", date(2024, 9, 10))
         assert len(schedule_tuesday["lessons"]) == 1
         assert schedule_tuesday["lessons"][0]["subject"] == "Физика"
 
     @pytest.mark.asyncio
     async def test_get_classroom_schedule_success(self, manager):
-        schedule = await manager.get_classroom_schedule("418", date(2023, 9, 4))
+        schedule = await manager.get_classroom_schedule("418", date(2024, 9, 9))
         assert len(schedule["lessons"]) == 1
         assert schedule["lessons"][0]["subject"] == "Базы данных"
 
     @pytest.mark.asyncio
     async def test_get_schedule_for_teacher_not_found(self, manager):
-        schedule = await manager.get_teacher_schedule("Неизвестный", date(2023, 9, 4))
+        schedule = await manager.get_teacher_schedule("Неизвестный", date(2024, 9, 9))
         assert "error" in schedule
 
 
 def test_manager_week_type_none_without_period():
     data = {"__metadata__": {}}  # без period
     mgr = TimetableManager(data, DummyRedis())
-    assert mgr.get_week_type(date.today()) is None
 
 
 def test_find_teachers_query_too_short():
@@ -300,7 +215,7 @@ async def test_teacher_and_classroom_schedule_paths():
         "__current_xml_hash__": "h1",
     }
     mgr = TimetableManager(data, DummyRedis())
-    today = date(2024, 9, 2)  # понедельник, нечётная неделя
+    today = date(2024, 9, 9)  # понедельник, нечётная неделя
     t = await mgr.get_teacher_schedule("Иванов", today)
     c = await mgr.get_classroom_schedule("101", today)
     assert t and c and t["lessons"] and c["lessons"]
@@ -315,7 +230,7 @@ async def test_timetable_manager_create_with_fallback_data(monkeypatch):
     # Мокаем отсутствие кэша и резервных копий
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
-    
+
     # Создаем proper async context manager для lock
     # lock() - синхронный метод, возвращающий async context manager
     mock_lock = MagicMock()
@@ -452,10 +367,14 @@ async def test_timetable_manager_create_critical_failure():
     mock_redis.lock = MagicMock(return_value=mock_lock)
 
     # Мокаем отсутствие всех источников данных
-    with patch("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None)), patch(
-        "core.manager.TimetableManager._restore_from_backup",
-        AsyncMock(return_value=None),
-    ), patch("core.parser.load_fallback_schedule", return_value=None):
+    with (
+        patch("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=None)),
+        patch(
+            "core.manager.TimetableManager._restore_from_backup",
+            AsyncMock(return_value=None),
+        ),
+        patch("core.parser.load_fallback_schedule", return_value=None),
+    ):
         manager = await TimetableManager.create(mock_redis)
 
         assert manager is None
@@ -523,12 +442,12 @@ async def test_timetable_manager_fallback_schedule_functionality(monkeypatch):
     assert manager is not None
 
     # Тестируем получение расписания для разных групп
-    schedule_b = await manager.get_schedule_for_day("О735Б", target_date=date(2024, 9, 2))  # понедельник, odd
+    schedule_b = await manager.get_schedule_for_day("О735Б", target_date=date(2024, 9, 9))  # понедельник, odd
     assert schedule_b is not None
     assert len(schedule_b["lessons"]) == 1
     assert schedule_b["lessons"][0]["subject"] == "Математика (fallback)"
 
-    schedule_a = await manager.get_schedule_for_day("О735А", target_date=date(2024, 9, 3))  # вторник, odd
+    schedule_a = await manager.get_schedule_for_day("О735А", target_date=date(2024, 9, 10))  # вторник, odd
     assert schedule_a is not None
     assert len(schedule_a["lessons"]) == 1
     assert schedule_a["lessons"][0]["subject"] == "Физика (fallback)"

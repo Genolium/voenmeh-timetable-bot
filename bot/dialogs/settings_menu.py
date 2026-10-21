@@ -1,19 +1,17 @@
 import logging
 from typing import Any
 
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
-from core.user_data import UserDataManager
 from core.i18n import i18n
-from core.themes import THEMES, get_theme_meta, DEFAULT_THEME
+from core.themes import DEFAULT_THEME, THEMES, get_theme_meta
+from core.user_data import UserDataManager
 
 from .constants import WidgetIds
 from .states import SettingsMenu
-
-# theme_dialog импортируется в main.py
 
 
 def get_status_text(status: bool, lang: str = "ru") -> str:
@@ -37,26 +35,22 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
     reminders_status = settings.get(WidgetIds.LESSON_REMINDERS.value, False)
-    reminder_time = settings.get("reminder_time_minutes", 60)
+    reminder_time = settings.get("reminder_time_minutes", 20)
     # Normalize theme ID
     current_theme = str(settings.get("theme", DEFAULT_THEME)).lower()
     current_meta = get_theme_meta(current_theme)
     current_theme_name = _(current_meta.name_key)
-    
-    language_map = {
-        "ru": _("lang_ru"),
-        "en": _("lang_en"),
-        "zh": _("lang_zh")
-    }
+
+    language_map = {"ru": _("lang_ru"), "en": _("lang_en"), "zh": _("lang_zh")}
     lang_name = language_map.get(user_lang, user_lang)
 
     # Localized labels for status lines
-    settings_evening_label = _("settings_evening_label")
-    settings_morning_label = _("settings_morning_label")
+    settings_evening_label = _("settings_evening_label", time=settings.get("evening_time", "20:00"))
+    settings_morning_label = _("settings_morning_label", time=settings.get("morning_time", "08:00"))
     settings_reminders_label = _("settings_reminders_label")
 
     settings_minutes_short = _("settings_minutes_short")
-    
+
     # Morning times: 6:00 to 12:00
     morning_times = [f"{h:02d}:00" for h in range(6, 13)]
     # Evening times: 16:00 to 23:00
@@ -67,11 +61,9 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "btn_settings": _("btn_settings"),
         "btn_change_lang": _("btn_change_lang"),
         "lang_select_title": _("lang_select_title"),
-        
         "settings_evening_label": settings_evening_label,
         "settings_morning_label": settings_morning_label,
         "settings_reminders_label": settings_reminders_label,
-        
         "evening_status_text": get_status_text(settings.get(WidgetIds.EVENING_NOTIFY.value, False), user_lang),
         "morning_status_text": get_status_text(settings.get(WidgetIds.MORNING_SUMMARY.value, False), user_lang),
         "reminders_status_text": get_status_text(reminders_status, user_lang),
@@ -82,22 +74,20 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "reminders_button_text": get_button_text(reminders_status, "reminders", user_lang),
         "current_theme_name": current_theme_name,
         "current_theme": current_theme,
-        "reminder_times": [30, 60, 90, 120],
+        "reminder_times": [10, 15, 20, 30, 45, 60, 90, 120],
         "current_reminder_time": reminder_time,
         "settings_minutes_short": settings_minutes_short,
-
         "morning_times": morning_times,
         "evening_times": evening_times,
         "current_morning_time": settings.get("morning_time", "08:00"),
         "current_evening_time": settings.get("evening_time", "20:00"),
-        "btn_time": _("btn_time"), # For reminders
+        "btn_time": _("btn_time"),  # For reminders
         "btn_morning_time": settings.get("morning_time", "08:00"),
         "btn_evening_time": settings.get("evening_time", "20:00"),
         "is_morning_enabled": settings.get(WidgetIds.MORNING_SUMMARY.value, False),
         "is_evening_enabled": settings.get(WidgetIds.EVENING_NOTIFY.value, False),
         "settings_morning_time_title": _("settings_morning_time_title"),
         "settings_evening_time_title": _("settings_evening_time_title"),
-        
         "lang_ru": _("lang_ru"),
         "lang_en": _("lang_en"),
         "lang_zh": _("lang_zh"),
@@ -110,7 +100,6 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
         "en_checked": "✅" if user_lang == "en" else "",
         "zh_checked": "✅" if user_lang == "zh" else "",
         "languages": [("ru", _("lang_ru")), ("en", _("lang_en")), ("zh", _("lang_zh"))],
-        
         # Theme dialog keys
         "theme_gate_title": _("theme_gate_title"),
         "theme_btn_check": _("theme_btn_check"),
@@ -144,7 +133,7 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
 async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
-    
+
     await user_data_manager.set_reminder_time(user_id, int(item_id))
     await callback.answer(f"Время напоминаний: {item_id} минут")
     await manager.switch_to(SettingsMenu.main)
@@ -153,7 +142,7 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
 async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
-    
+
     await user_data_manager.set_morning_time(user_id, item_id)
     await callback.answer(f"Время утренней рассылки: {item_id}")
     await manager.switch_to(SettingsMenu.main)
@@ -162,7 +151,7 @@ async def on_morning_time_selected(callback: CallbackQuery, widget: Select, mana
 async def on_evening_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
-    
+
     await user_data_manager.set_evening_time(user_id, item_id)
     await callback.answer(f"Время вечерней рассылки: {item_id}")
     await manager.switch_to(SettingsMenu.main)
@@ -175,58 +164,81 @@ async def on_back_click(callback: CallbackQuery, button: Button, manager: Dialog
 async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.set_user_language(callback.from_user.id, item_id)
-    
+
     # Reload middleware I18n context manually or just reply
     _ = lambda k: i18n.get(k, lang=item_id)
-    
+
     await callback.answer(_("lang_changed"), show_alert=True)
     await manager.switch_to(SettingsMenu.main)
 
 
+async def _is_theme_subscribed(user_id: int, manager: DialogManager) -> bool:
+    """Проверяет подписку через единый механизм БД/legacy-канала."""
+    from core.config import SUBSCRIPTION_CHANNEL
+    from core.subscription_filter import is_user_subscribed
+
+    bot = manager.middleware_data.get("bot")
+    if not bot:
+        return not SUBSCRIPTION_CHANNEL and not manager.middleware_data.get("session_factory")
+    return await is_user_subscribed(
+        user_id=user_id,
+        bot=bot,
+        session_factory=manager.middleware_data.get("session_factory"),
+        redis_client=manager.middleware_data.get("redis_client"),
+        fallback_channel=SUBSCRIPTION_CHANNEL,
+    )
+
+
+def _build_channel_link(channel: str) -> str:
+    if channel.startswith("@"):
+        return f"https://t.me/{channel[1:]}"
+    if channel.startswith("-"):
+        return f"tg://resolve?domain={channel}"
+    if not channel.startswith("http"):
+        return f"https://t.me/{channel}"
+    return channel
+
+
 async def on_theme_button_click(callback: CallbackQuery, button: Button, manager: DialogManager):
-    """Обработчик кнопки выбора темы с проверкой подписки."""
+    """Обработчик кнопки выбора темы с проверкой подписки (fail-closed)."""
     user_id = callback.from_user.id
+    from core.config import SUBSCRIPTION_CHANNEL
 
-    # Проверяем подписку перед переходом к диалогу тем (как в оригинале в расписании)
-    try:
-        from aiogram import Bot
+    if SUBSCRIPTION_CHANNEL and not await _is_theme_subscribed(user_id, manager):
+        await manager.switch_to(SettingsMenu.theme_subscription_gate)
+        try:
+            kb = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=_build_channel_link(SUBSCRIPTION_CHANNEL))]]
+            )
+            await callback.message.answer(
+                "Доступ к персональным темам доступен по подписке на канал.",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+        try:
+            await callback.answer()
+        except Exception:
+            pass
+        return
 
-        from core.config import SUBSCRIPTION_CHANNEL
+    await manager.switch_to(SettingsMenu.choose_theme)
 
-        if SUBSCRIPTION_CHANNEL:
-            bot: Bot = manager.middleware_data.get("bot")
-            if bot:
-                member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, user_id)
-                status = getattr(member, "status", None)
-                is_subscribed = status in ("member", "administrator", "creator")
 
-                if not is_subscribed:
-                    # Переводим в окно-гейт и отправляем ссылку
-                    await manager.switch_to(SettingsMenu.theme_subscription_gate)
-                    channel_link = SUBSCRIPTION_CHANNEL
-                    if channel_link.startswith("@"):
-                        channel_link = f"https://t.me/{channel_link[1:]}"
-                    elif channel_link.startswith("-"):
-                        channel_link = f"tg://resolve?domain={channel_link}"
-                    elif not channel_link.startswith("http"):
-                        channel_link = f"https://t.me/{channel_link}"
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]])
-                    try:
-                        await callback.message.answer(
-                            "Доступ к персональным темам доступен по подписке на канал.",
-                            reply_markup=kb,
-                        )
-                        await callback.answer()
-                    except Exception:
-                        pass
-                    return
-
-        # Подписка подтверждена или не требуется — переходим к выбору тем
+async def on_check_theme_subscription(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Кнопка «Проверить подписку» в окне гейта."""
+    user_id = callback.from_user.id
+    if await _is_theme_subscribed(user_id, manager):
         await manager.switch_to(SettingsMenu.choose_theme)
-
-    except Exception:
-        # При ошибках продолжаем, не блокируем пользователя
-        await manager.switch_to(SettingsMenu.choose_theme)
+        try:
+            await callback.answer("✅ Подписка подтверждена!")
+        except Exception:
+            pass
+    else:
+        try:
+            await callback.answer("❌ Подписка не найдена. Подпишитесь и попробуйте снова.", show_alert=True)
+        except Exception:
+            pass
 
 
 async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
@@ -234,6 +246,9 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
     try:
         user_id = callback.from_user.id
         user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        if not await _is_theme_subscribed(user_id, manager):
+            await callback.answer("❌ Требуется подписка на канал", show_alert=True)
+            return
         if user_data_manager:
             # Гарантируем наличие пользователя в БД
             try:
@@ -256,11 +271,11 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     """Возвращает текущую тему и список тем с пометкой текущей."""
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
-    
+
     # CRITICAL: Fetch user_lang and define _ FIRST before any usage
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
-    
+
     current_theme = DEFAULT_THEME
     try:
         if user_data_manager:
@@ -392,9 +407,7 @@ settings_dialog = Dialog(
         Format("{settings_morning_time_title}"),
         Row(
             Select(
-                Jinja(
-                    "{% if item == current_morning_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"
-                ),
+                Jinja("{% if item == current_morning_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"),
                 id="select_morning_time",
                 item_id_getter=lambda item: str(item),
                 items="morning_times",
@@ -409,9 +422,7 @@ settings_dialog = Dialog(
         Format("{settings_evening_time_title}"),
         Row(
             Select(
-                Jinja(
-                    "{% if item == current_evening_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"
-                ),
+                Jinja("{% if item == current_evening_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"),
                 id="select_evening_time",
                 item_id_getter=lambda item: str(item),
                 items="evening_times",
@@ -425,34 +436,33 @@ settings_dialog = Dialog(
     Window(
         Format("{lang_select_title}"),
         Column(
-             Button(
-                 Format("🇷🇺 Русский {ru_checked}"),
-                 id="lang_ru",
-                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "ru"),
-             ),
-             Button(
-                 Format("🇬🇧 English {en_checked}"),
-                 id="lang_en",
-                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "en"),
-             ),
-             Button(
-                 Format("🇨🇳 中文 {zh_checked}"),
-                 id="lang_zh",
-                 on_click=lambda c, b, m: on_lang_selected(c, b, m, "zh"),
-             ),
+            Button(
+                Format("🇷🇺 Русский {ru_checked}"),
+                id="lang_ru",
+                on_click=lambda c, b, m: on_lang_selected(c, b, m, "ru"),
+            ),
+            Button(
+                Format("🇬🇧 English {en_checked}"),
+                id="lang_en",
+                on_click=lambda c, b, m: on_lang_selected(c, b, m, "en"),
+            ),
+            Button(
+                Format("🇨🇳 中文 {zh_checked}"),
+                id="lang_zh",
+                on_click=lambda c, b, m: on_lang_selected(c, b, m, "zh"),
+            ),
         ),
         SwitchTo(Format("{btn_back}"), id="back_from_lang", state=SettingsMenu.main),
         state=SettingsMenu.select_lang,
         getter=get_settings_data,
         parse_mode="HTML",
     ),
-    # Добавляем окна из theme_dialog
     Window(
         Format("{theme_gate_title}"),
         Button(
             Format("{theme_btn_check}"),
             id="check_subscription",
-            on_click=lambda c, b, m: m.switch_to(SettingsMenu.choose_theme),
+            on_click=on_check_theme_subscription,
         ),
         Button(
             Format("{btn_back}"),

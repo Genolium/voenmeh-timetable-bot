@@ -32,12 +32,12 @@ async def manager_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     manager = UserDataManager("sqlite+aiosqlite:///:memory:", redis_url=None)
-    
+
     # Mock Redis to prevent real connection and shared state
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None  # Cache miss by default
     manager._redis_client = mock_redis
-    
+
     manager.engine = engine
     manager.async_session_maker.configure(bind=engine)
     try:
@@ -84,7 +84,7 @@ async def test_get_user_settings_for_unknown_user_returns_defaults(
         "evening_notify": False,
         "morning_summary": False,
         "lesson_reminders": False,
-        "reminder_time_minutes": 60,
+        "reminder_time_minutes": 20,
         "theme": "standard",
         "morning_time": "08:00",
         "evening_time": "20:00",
@@ -182,7 +182,7 @@ class TestUserDataManagerWithSQLAlchemy:
             "evening_notify": True,
             "morning_summary": True,
             "lesson_reminders": True,
-            "reminder_time_minutes": 60,
+            "reminder_time_minutes": 20,
             "theme": "standard",
             "morning_time": "08:00",
             "evening_time": "20:00",
@@ -352,8 +352,9 @@ class TestUserDataManagerCaching:
 
         # Мокаем get_redis_client как async функцию
         from unittest.mock import patch
+
         mock_redis = AsyncMock()
-        with patch("core.config.get_redis_client", AsyncMock(return_value=mock_redis)) as mock_get_redis:
+        with patch("core.config.get_redis_client", MagicMock(return_value=mock_redis)) as mock_get_redis:
             result = await manager_with_db._get_redis_client()
 
             assert result == mock_redis

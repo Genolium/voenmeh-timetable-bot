@@ -182,6 +182,25 @@ class TestScheduleViewHandlers:
         assert result["has_lessons"] is True
 
     @pytest.mark.asyncio
+    async def test_get_schedule_data_freshness_error_is_swallowed(self, mock_manager):
+        ctx = mock_manager.current_context()
+        ctx.dialog_data = {
+            DialogDataKeys.GROUP: "TEST_GROUP",
+            DialogDataKeys.CURRENT_DATE_ISO: "2024-01-15",
+        }
+        manager_obj = mock_manager.middleware_data["manager"]
+        manager_obj.get_schedule_for_day.return_value = {
+            "lessons": [],
+            "date": date(2024, 1, 15),
+        }
+        manager_obj.redis = AsyncMock()
+        manager_obj.redis.get.side_effect = RuntimeError("redis down")
+
+        result = await get_schedule_data(mock_manager)
+
+        assert result["schedule_freshness"] == ""
+
+    @pytest.mark.asyncio
     async def test_on_full_week_image_click(self, mock_callback, mock_manager):
         """Тест клика по изображению недели."""
         button = MagicMock()

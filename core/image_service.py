@@ -83,7 +83,9 @@ class ImageService:
                 await self.cache_manager.invalidate_cache(cache_key)
             else:
                 if user_id:
-                    send_success = await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption, lang=lang)
+                    send_success = await self._send_image_to_user(
+                        file_path, user_id, placeholder_msg_id, final_caption, lang=lang
+                    )
                     if not send_success:
                         logger.warning(f"⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
@@ -101,6 +103,7 @@ class ImageService:
             week_schedule,
             week_name,
             group,
+            week_key=week_key,
             user_theme=user_theme,
             lang=lang,
             exec_locally=exec_locally,
@@ -129,6 +132,7 @@ class ImageService:
         user_id: Optional[int] = None,
         placeholder_msg_id: Optional[int] = None,
         final_caption: Optional[str] = None,
+        week_key: Optional[str] = None,
     ) -> Tuple[bool, Optional[str]]:
         """
         Генерирует изображение и сохраняет в кэш.
@@ -175,22 +179,26 @@ class ImageService:
                     from bot.tasks import generate_week_image_task
 
                     logger.info(f"🚀 Offloading generation for {cache_key} to worker")
-                    
+
                     # Отправляем задачу в очередь
                     generate_week_image_task.send(
                         cache_key=cache_key,
                         week_schedule=schedule_data,
                         week_name=week_type,
                         group=group,
-                        week_key=week_type if generated_by == "mass" else cache_key.split("_")[1] if "_" in cache_key else week_type,
+                        week_key=week_key
+                        or (
+                            week_type if generated_by == "mass" else cache_key.split("_")[1] if "_" in cache_key else week_type
+                        ),
                         user_id=user_id,
                         placeholder_msg_id=placeholder_msg_id,
                         final_caption=final_caption,
-                        lang=lang
+                        lang=lang,
                     )
-                    
+
                     # Метрика отправки в очередь
                     from core.metrics import IMAGE_CACHE_MISSES
+
                     IMAGE_CACHE_MISSES.labels(cache_type="generation_queued").inc()
 
                     return False, None
@@ -198,7 +206,7 @@ class ImageService:
                 except Exception as e:
                     logger.error(f"❌ Error queuing generation for {cache_key}: {e}")
                     return False, None
-            
+
             # Local execution logic
             try:
                 # Измеряем время генерации для метрик
@@ -219,6 +227,7 @@ class ImageService:
                         viewport_size=highres_vp,
                         user_theme=user_theme,
                         lang=lang,
+                        week_key=week_key,
                     )
 
                 if not success or not file_path.exists():
@@ -228,8 +237,9 @@ class ImageService:
                         logger.error(f"   File exists but size is {file_size} bytes")
                     else:
                         logger.error(f"   File does not exist: {file_path}")
-                    
+
                     from core.metrics import IMAGE_CACHE_MISSES
+
                     IMAGE_CACHE_MISSES.labels(cache_type="generation_failed").inc()
                     return False, None
 
@@ -252,6 +262,7 @@ class ImageService:
                     )
 
                     from core.metrics import IMAGE_CACHE_OPERATIONS
+
                     IMAGE_CACHE_OPERATIONS.labels(operation="store").inc()
 
                     logger.info(f"💾 Successfully cached {cache_key} ({len(image_bytes)} bytes)")
@@ -260,7 +271,6 @@ class ImageService:
                     logger.warning(f"⚠️ Failed to cache {cache_key}: {e}")
 
                 generation_time = (datetime.now(MOSCOW_TZ) - start_time).total_seconds()
-                SCHEDULE_GENERATION_TIME.labels(schedule_type="week").observe(generation_time)
 
                 logger.info(f"✅ Successfully generated {cache_key} in {generation_time:.2f}s")
                 return True, str(file_path)

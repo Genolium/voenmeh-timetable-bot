@@ -28,10 +28,12 @@ class SettingsMenu(StatesGroup):
 
 class FindMenu(StatesGroup):
     choice = State()
+    enter_group = State()
     enter_teacher = State()
     enter_classroom = State()
     select_item = State()
     view_result = State()
+    history = State()
 
 
 class About(StatesGroup):
@@ -64,30 +66,6 @@ class Admin(StatesGroup):
     semester_settings = State()
     edit_fall_semester = State()
     edit_spring_semester = State()
-    # New: categories and events management
-    categories_menu = State()
-    category_create = State()
-    category_edit = State()
-    events_menu = State()
-    event_create = State()
-    event_create_title = State()
-    event_create_datetime = State()
-    event_create_time = State()
-    event_create_location = State()
-    event_create_description = State()
-    event_create_link = State()
-    event_create_confirm = State()
-    event_edit_menu = State()
-    event_edit_title = State()
-    event_edit_datetime = State()
-    event_edit_time = State()
-    event_edit_location = State()
-    event_edit_description = State()
-    event_edit_link = State()
-    event_details = State()
-    event_delete_confirm = State()
-    event_edit_image = State()
-
     # New: send message to user
     send_message_text = State()
     backup_menu = State()
@@ -98,8 +76,3 @@ class Admin(StatesGroup):
     # Фильтр обязательной подписки на каналы
     sub_filter_menu = State()
     sub_filter_add_channel = State()
-
-
-class Events(StatesGroup):
-    list = State()
-    details = State()

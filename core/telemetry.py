@@ -162,4 +162,3 @@ def shutdown_telemetry(handles: Optional[TelemetryHandles]) -> None:
     root_logger = logging.getLogger()
     if handles.log_handler and handles.log_handler in root_logger.handlers:
         root_logger.removeHandler(handles.log_handler)
-

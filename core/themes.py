@@ -2,6 +2,7 @@
 Централизованный реестр тем расписания (Single Source of Truth).
 Все доступные темы, их локализационные ключи и свойства определяются здесь.
 """
+
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 

@@ -4,6 +4,7 @@ Rate Limiting Middleware для защиты от спама.
 Улучшенная версия с раздельными лимитами по типам запросов
 и метриками для мониторинга.
 """
+
 import logging
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -20,19 +21,19 @@ logger = logging.getLogger(__name__)
 class RateLimitMiddleware(BaseMiddleware):
     """
     Middleware для ограничения частоты запросов.
-    
+
     Использует Redis для хранения истории запросов.
     Поддерживает разные лимиты для разных типов событий.
     """
-    
+
     # Лимиты по умолчанию (запросов в секунду)
     DEFAULT_LIMITS: Dict[str, float] = {
-        "message": 1.0,         # 1 сообщение в секунду
+        "message": 1.0,  # 1 сообщение в секунду
         "callback_query": 3.0,  # 3 callback в секунду
-        "inline_query": 0.5,    # 1 inline за 2 секунды
-        "default": 2.0,         # Для прочих типов
+        "inline_query": 0.5,  # 1 inline за 2 секунды
+        "default": 2.0,  # Для прочих типов
     }
-    
+
     def __init__(
         self,
         redis_client: Redis,
@@ -48,7 +49,7 @@ class RateLimitMiddleware(BaseMiddleware):
         self.redis = redis_client
         self.limits = {**self.DEFAULT_LIMITS, **(limits or {})}
         self.window = window_seconds
-        
+
     def _get_event_type(self, update: Update) -> str:
         """Определяет тип события."""
         if update.message:
@@ -59,7 +60,7 @@ class RateLimitMiddleware(BaseMiddleware):
             return "inline_query"
         else:
             return "default"
-    
+
     def _get_user_id(self, update: Update) -> Optional[int]:
         """Извлекает user_id из события."""
         if update.message and update.message.from_user:
@@ -69,16 +70,16 @@ class RateLimitMiddleware(BaseMiddleware):
         elif update.inline_query and update.inline_query.from_user:
             return update.inline_query.from_user.id
         return None
-    
+
     async def _is_rate_limited(self, key: str, limit: float) -> bool:
         """Проверяет, превышен ли лимит."""
         now = time.time()
         window_start = now - self.window
-        
+
         try:
             # Получаем историю запросов
             history = await self.redis.lrange(key, 0, -1)
-            
+
             # Фильтруем запросы в текущем окне
             valid_timestamps = []
             for ts in history:
@@ -88,35 +89,35 @@ class RateLimitMiddleware(BaseMiddleware):
                         valid_timestamps.append(ts_float)
                 except (ValueError, AttributeError):
                     continue
-            
+
             # Проверяем лимит
             if len(valid_timestamps) >= limit:
                 return True
-            
+
             # Добавляем текущий запрос
             await self.redis.rpush(key, str(now))
             await self.redis.expire(key, int(self.window) + 1)
-            
+
             # Очищаем старые записи
             if len(history) > 100:
                 await self.redis.ltrim(key, -50, -1)
-            
+
             return False
-            
+
         except Exception as e:
             logger.warning(f"Rate limit check failed: {e}")
             return False  # При ошибках пропускаем
-    
+
     async def _notify_user(self, update: Update, data: Dict[str, Any]) -> None:
         """Уведомляет пользователя о превышении лимита."""
         try:
             i18n = data.get("i18n")
             lang = data.get("lang", "ru")
-            
+
             message_text = "⚠️ Слишком много запросов. Подождите немного."
             if i18n:
                 message_text = i18n.get("rate_limit_error", lang=lang)
-            
+
             if update.callback_query:
                 await update.callback_query.answer(
                     message_text,
@@ -128,7 +129,7 @@ class RateLimitMiddleware(BaseMiddleware):
                 )
         except Exception:
             pass
-    
+
     async def __call__(
         self,
         handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
@@ -139,20 +140,20 @@ class RateLimitMiddleware(BaseMiddleware):
         user_id = self._get_user_id(event)
         if not user_id:
             return await handler(event, data)
-        
+
         event_type = self._get_event_type(event)
         limit = self.limits.get(event_type, self.limits["default"])
         key = f"rate:{user_id}:{event_type}"
-        
+
         if await self._is_rate_limited(key, limit):
             # Записываем метрику
             try:
                 RATE_LIMIT_HITS.labels(event_type=event_type).inc()
             except Exception:
                 pass
-            
+
             logger.debug(f"Rate limited user {user_id} for {event_type}")
             await self._notify_user(event, data)
             return None
-        
+
         return await handler(event, data)

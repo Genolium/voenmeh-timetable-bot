@@ -20,6 +20,38 @@ KEY_USER_PREFIX = "timetable:sub_filter:user"
 USER_CACHE_TTL = 600  # 10 минут кэширования статуса подписки пользователя
 
 
+async def is_user_subscribed(
+    user_id: int,
+    bot: Bot,
+    session_factory: Optional[async_sessionmaker] = None,
+    redis_client: Optional[Redis] = None,
+    fallback_channel: Optional[str] = None,
+) -> bool:
+    """Единая проверка подписки для gatekeeper, тем и «полного качества».
+
+    Приоритет: включённый фильтр из БД -> legacy-канал из env -> доступ разрешён.
+    Ошибки Telegram при наличии обязательного канала трактуются как «не подписан».
+    """
+    if session_factory is not None:
+        try:
+            manager = SubscriptionFilterManager(session_factory, redis_client)
+            if await manager.is_filter_enabled():
+                channels = await manager.get_required_channels()
+                if channels:
+                    subscribed, _missing = await manager.check_user_subscription(bot, user_id, channels)
+                    return subscribed
+        except Exception as e:
+            logger.warning(f"DB subscription check failed: {e}")
+
+    if fallback_channel:
+        try:
+            member = await bot.get_chat_member(fallback_channel, user_id)
+            return getattr(member, "status", None) in ("member", "administrator", "creator")
+        except Exception:
+            return False
+    return True
+
+
 class SubscriptionFilterManager:
     """
     Менеджер для управления обязательной подпиской на каналы.
@@ -121,9 +153,7 @@ class SubscriptionFilterManager:
         """Добавляет канал в список обязательных или обновляет существующий."""
         clean_channel_id = str(channel_id).strip()
         async with self.session_factory() as session:
-            result = await session.execute(
-                select(RequiredChannel).where(RequiredChannel.channel_id == clean_channel_id)
-            )
+            result = await session.execute(select(RequiredChannel).where(RequiredChannel.channel_id == clean_channel_id))
             existing = result.scalar_one_or_none()
             if existing:
                 existing.title = title
@@ -163,14 +193,11 @@ class SubscriptionFilterManager:
                 # Пробуем удалить как PK, иначе как channel_id
                 res = await session.execute(
                     delete(RequiredChannel).where(
-                        (RequiredChannel.id == int(clean_channel_id))
-                        | (RequiredChannel.channel_id == clean_channel_id)
+                        (RequiredChannel.id == int(clean_channel_id)) | (RequiredChannel.channel_id == clean_channel_id)
                     )
                 )
             else:
-                res = await session.execute(
-                    delete(RequiredChannel).where(RequiredChannel.channel_id == clean_channel_id)
-                )
+                res = await session.execute(delete(RequiredChannel).where(RequiredChannel.channel_id == clean_channel_id))
             await session.commit()
             removed = res.rowcount > 0
 

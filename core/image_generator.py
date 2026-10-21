@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
 from core.i18n import i18n
 from core.transliteration import transliterate
 
@@ -79,6 +80,17 @@ _MAX_CONCURRENT_PAGES = int(os.getenv("IMAGE_BROWSER_CONCURRENT_PAGES", "4"))
 _init_thread_lock = threading.Lock()
 
 
+def resolve_week_slug(week_type: str | None, week_key: str | None = None) -> str:
+    """Return "odd" or "even" for image rendering.
+
+    Explicit ``week_key`` wins; otherwise fall back to the historical Russian
+    text heuristic for backward compatibility.
+    """
+    if week_key in {"odd", "even"}:
+        return week_key
+    return "odd" if "Неч" in (week_type or "") else "even"
+
+
 def _time_to_minutes(t: str) -> int:
     """Конвертирует время в минуты для сортировки."""
     try:
@@ -91,7 +103,7 @@ def _time_to_minutes(t: str) -> int:
 def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
     # Ключи в schedule_data приходят на русском от парсера
     order_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-    
+
     # Маппинг для получения локализованного названия
     day_key_map = {
         "Понедельник": "day_0",
@@ -100,19 +112,19 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
         "Четверг": "day_3",
         "Пятница": "day_4",
         "Суббота": "day_5",
-        "Воскресенье": "day_6"
+        "Воскресенье": "day_6",
     }
 
     upper = {k.upper(): v for k, v in schedule_data.items()}
     prepared: List[dict] = []
-    
+
     for ru_name in order_ru:
         lessons = upper.get(ru_name.upper())
         if lessons is None and ru_name == "Воскресенье":
-            continue # Обычно воскресенье не показываем, если нет пар
-            
+            continue  # Обычно воскресенье не показываем, если нет пар
+
         localized_name = i18n.get(day_key_map[ru_name], lang)
-        
+
         # Определяем первую пару по минимальному времени (в минутах)
         first = ""
         if lessons:
@@ -120,16 +132,18 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
                 first = sorted(
                     lessons,
                     key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
-                )[0].get("start_time_raw", "")
+                )[
+                    0
+                ].get("start_time_raw", "")
             except Exception:
                 first = ""
         else:
-            lessons = [] # Гарантируем список
+            lessons = []  # Гарантируем список
 
         items = []
         for l in lessons:
-            subject = l.get('subject', '')
-            lesson_type = l.get('type', '')
+            subject = l.get("subject", "")
+            lesson_type = l.get("type", "")
             # Build title with optional type
             if lesson_type:
                 title_raw = f"{subject} ({lesson_type})"
@@ -137,7 +151,7 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
                 title_raw = subject
             # Transliterate title for non-Russian languages
             title = transliterate(title_raw, lang)
-            
+
             room_raw = (l.get("room", "") or "").strip("; ")
             room_lower = room_raw.lower()
             if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
@@ -145,7 +159,9 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
                 room_fmt = ""
             else:
                 room_fmt = transliterate(room_raw, lang)
-            items.append({"title": title, "room": room_fmt, "time": l.get("time", "")})
+            teacher_raw = (l.get("teachers", "") or "").strip()
+            teacher_fmt = transliterate(teacher_raw, lang) if teacher_raw else ""
+            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": l.get("time", "")})
 
         prepared.append({"name": localized_name, "title": localized_name, "firstStart": first, "lessons": items})
     return prepared
@@ -159,6 +175,7 @@ async def generate_schedule_image(
     viewport_size: Optional[Dict[str, int]] = None,
     user_theme: Optional[str] = None,
     lang: str = "ru",
+    week_key: Optional[str] = None,
 ) -> bool:
     """
     Создает широкоформатное изображение расписания, рендеря HTML в headless-браузере.
@@ -194,11 +211,12 @@ async def generate_schedule_image(
             _template_cache = env.get_template("schedule_template.html")
             _template_mtime = current_mtime
 
-        week_slug = "odd" if "Неч" in week_type else "even"
+        week_slug = resolve_week_slug(week_type, week_key)
 
         def _get_bg_image_data(theme: Optional[str], slug: str) -> str:
-            from core.themes import get_theme_meta
             from base64 import b64encode
+
+            from core.themes import get_theme_meta
 
             meta = get_theme_meta(theme)
             base_key = meta.bg_image_key or meta.id
@@ -236,7 +254,7 @@ async def generate_schedule_image(
         # Prepare I18n strings
         # Use provided lang or default to 'ru'
         current_lang = lang if lang else "ru"
-        
+
         i18n_week_type = i18n.get("week_odd" if week_slug == "odd" else "week_even", current_lang)
         i18n_schedule_title = i18n.get("image_schedule_header", current_lang)
         i18n_credits = i18n.get("image_credits", current_lang)
@@ -305,9 +323,9 @@ async def generate_schedule_image(
                     if init_lock is None:
                         init_lock = asyncio.Lock()
                         setattr(loop, "__img_init_async_lock__", init_lock)
-            
+
             state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
-            
+
             # 1. Инициализация если пусто (под спец. локом текущего лупа)
             if state is None:
                 async with init_lock:
@@ -332,7 +350,7 @@ async def generate_schedule_image(
 
             # Если проверка была недавно, скипаем и отдаем браузер как есть
             now = time.time()
-            if now - state.last_check_at < 30: # Проверяем здоровье раз в 30 секунд
+            if now - state.last_check_at < 30:  # Проверяем здоровье раз в 30 секунд
                 return state
 
             # Используем лок для обслуживания
@@ -340,7 +358,7 @@ async def generate_schedule_image(
                 # Еще раз проверяем тайминг под локом (double check)
                 if now - state.last_check_at < 30:
                     return state
-                
+
                 state.last_check_at = now
 
                 # 1. Health-check: браузер жив? (с малым таймаутом)
@@ -355,9 +373,7 @@ async def generate_schedule_image(
 
                 # 2. Ротация по возрасту/количеству страниц или если битый
                 needs_restart = (
-                    not is_healthy or 
-                    (now - state.created_at) > _POOL_MAX_AGE_SEC or 
-                    state.pages_made >= _POOL_MAX_PAGES
+                    not is_healthy or (now - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES
                 )
 
                 if needs_restart:
@@ -372,7 +388,9 @@ async def generate_schedule_image(
                         # Пересоздаем
                         new_ctx = await async_playwright().start()
                         try:
-                            new_browser = await asyncio.wait_for(new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
+                            new_browser = await asyncio.wait_for(
+                                new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0
+                            )
                             state.ctx = new_ctx
                             state.browser = new_browser
                             state.created_at = time.time()
@@ -521,10 +539,10 @@ async def generate_schedule_image(
                                 except Exception:
                                     pass
                             finally:
-                                 state = await _ensure_browser()
-                                 page = await state.browser.new_page()
-                                 page.set_default_timeout(60000)
-                                 page.set_default_navigation_timeout(60000)
+                                state = await _ensure_browser()
+                                page = await state.browser.new_page()
+                                page.set_default_timeout(60000)
+                                page.set_default_navigation_timeout(60000)
 
                 if last_error is not None:
                     logging.error(f"Генерация для {group} не удалась: {last_error}")

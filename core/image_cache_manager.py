@@ -48,6 +48,7 @@ class ImageCacheManager:
         """
         Проверяет, есть ли изображение в кэше.
         Сначала проверяет файловую систему (быстро), затем Redis (если файл отсутствует).
+        Файл считается устаревшим, если его mtime старше cache_ttl_hours.
 
         Args:
             cache_key: Ключ кэша (например, "GROUP_even")
@@ -60,8 +61,15 @@ class ImageCacheManager:
             file_path = self.cache_dir / f"{cache_key}.png"
             if file_path.exists():
                 try:
-                    file_size = file_path.stat().st_size
-                    if file_size > 0:
+                    stat = file_path.stat()
+                    age_seconds = datetime.now(MOSCOW_TZ).timestamp() - stat.st_mtime
+                    if self.cache_ttl_hours and age_seconds > self.cache_ttl_hours * 3600:
+                        logger.info(f"Cache file expired for {cache_key}, treating as miss")
+                        try:
+                            file_path.unlink()
+                        except Exception:
+                            pass
+                    elif stat.st_size > 0:
                         IMAGE_CACHE_HITS.labels(cache_type="unified").inc()
                         logger.debug(f"Cache HIT (file) for {cache_key}")
                         return True
@@ -172,13 +180,15 @@ class ImageCacheManager:
             except Exception as e:
                 logger.warning(f"Failed to save {cache_key} to file: {e}")
 
-            # Обновляем счетчик и метрики, применяем лимиты
+            # Счётчик и тяжёлые файловые проверки — не на каждой записи.
+            # Полный janitor запускается периодически/по расписанию.
             try:
-                await self._increment_counter()
+                counter = await self._increment_counter()
             except Exception:
-                pass
-            await self._update_cache_size_metrics()
-            await self._enforce_limits()
+                counter = 0
+            if counter == 0 or counter % 25 == 0:
+                await self._update_cache_size_metrics()
+                await self._enforce_limits()
 
             return success_count > 0
 
@@ -297,14 +307,14 @@ class ImageCacheManager:
             # Перебираем все файлы в папке кэша
             for file_path in self.cache_dir.glob("*.png"):
                 try:
-                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
+                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=MOSCOW_TZ)
                     if file_mtime < cutoff_time:
                         cache_key = file_path.stem
-                        
+
                         # Удаляем файл
                         file_path.unlink()
                         removed_count += 1
-                        
+
                         # Удаляем метаданные и данные из Redis
                         try:
                             redis_key = f"{self.cache_data_prefix}{cache_key}"
@@ -313,7 +323,7 @@ class ImageCacheManager:
                             await self._decrement_counter()
                         except Exception as re:
                             logger.warning(f"Failed to cleanup Redis for {cache_key}: {re}")
-                            
+
                         logger.info(f"Removed expired cache: {file_path.name}")
                 except Exception as e:
                     logger.warning(f"Failed to remove expired file {file_path}: {e}")
@@ -403,11 +413,11 @@ class ImageCacheManager:
         except Exception as e:
             logger.warning(f"Error enforcing cache size limits: {e}")
 
-    async def _increment_counter(self):
+    async def _increment_counter(self) -> int:
         try:
-            await self.redis.incr(self.redis_counter_key)
+            return int(await self.redis.incr(self.redis_counter_key))
         except Exception:
-            pass
+            return 0
 
     async def _decrement_counter(self):
         try:
@@ -495,3 +505,34 @@ class ImageCacheManager:
         except Exception as e:
             logger.error(f"Error diagnosing cache for {cache_key}: {e}")
             return {"cache_key": cache_key, "error": str(e), "overall_status": "error"}
+
+
+async def invalidate_all_generated_images(redis_client: Redis | None = None) -> int:
+    """Удаляет все сгенерированные изображения и связанные ключи Redis.
+
+    Используется при обновлении расписания, чтобы пользователи не получали
+    устаревшие картинки из кэша.
+    """
+    removed = 0
+    cache_dir = MEDIA_PATH / "generated"
+    if cache_dir.exists():
+        for pattern in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+            for file_path in cache_dir.glob(pattern):
+                try:
+                    file_path.unlink()
+                    removed += 1
+                except Exception as e:
+                    logger.warning(f"Failed to remove generated image {file_path}: {e}")
+
+    if redis_client is not None:
+        try:
+            async for key in redis_client.scan_iter("image_cache:*"):
+                try:
+                    await redis_client.delete(key)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"Failed to clear image cache keys in Redis: {e}")
+
+    logger.info(f"Invalidated generated image cache: {removed} files removed")
+    return removed

@@ -801,6 +801,12 @@
     }
 
     /* Номер аудитории */
+    .lesson-teacher {
+      font-size: 10px;
+      opacity: 0.72;
+      line-height: 1.2;
+    }
+
     .lesson-room {
       grid-column: 9 / 10;
       font-weight: 400;
@@ -932,7 +938,13 @@
       }
 
       /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
-      .lesson-room {
+      .lesson-teacher {
+      font-size: 10px;
+      opacity: 0.72;
+      line-height: 1.2;
+    }
+
+    .lesson-room {
         display: none;
       }
 
@@ -982,6 +994,7 @@
             {% for l in day.lessons %}
             <div class="lesson-row">
               <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
+              {% if l.teacher %}<div class="lesson-teacher">{{ l.teacher }}</div>{% endif %}
               <div class="lesson-room">{{ l.room }}</div>
               <div class="lesson-time">{{ l.time }}</div>
             </div>

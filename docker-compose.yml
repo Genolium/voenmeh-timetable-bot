@@ -9,7 +9,16 @@ x-base-app-service: &base-app-service
   working_dir: /app
   env_file:
     - .env
+  environment:
+    TZ: ${TZ:-Europe/Moscow}
   restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
   volumes:
     - ./data:/app/data
   deploy:
@@ -20,53 +29,48 @@ x-base-app-service: &base-app-service
         memory: 512M
 
 services:
+  migrate:
+    <<: *base-app-build
+    container_name: voenmeh_migrate
+    working_dir: /app
+    env_file:
+      - .env
+    command: ["python", "-m", "core.db.migrate"]
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
   bot:
     <<: *base-app-service
     container_name: voenmeh_bot
     shm_size: 1gb
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
+      migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      otel-collector:
-        condition: service_started
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
       PYTHONPATH: /app
 
   worker:
     <<: *base-app-service
     container_name: voenmeh_worker
     shm_size: 1gb
+    healthcheck:
+      disable: true
     depends_on:
+      migrate: { condition: service_completed_successfully }
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-      otel-collector:
-        condition: service_started
     command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-2} --threads ${DRAMATIQ_THREADS:-50} bot.tasks -Q high_priority medium_priority low_priority default
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
-      PYTHONPATH: /app
-
-  rabbitmq_monitor:
-    <<: *base-app-service
-    container_name: voenmeh_rabbitmq_monitor
-    command: python scripts/rabbitmq_monitor.py
-    depends_on:
-      rabbitmq: { condition: service_healthy }
-      redis: { condition: service_healthy }
-      otel-collector:
-        condition: service_started
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    environment:
-      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
-      OTEL_ENABLED: ${OTEL_ENABLED:-true}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
       PYTHONPATH: /app
 
   db:
@@ -104,8 +108,8 @@ services:
     container_name: voenmeh_rabbitmq
     hostname: rabbitmq
     ports:
-      - "5672:5672"
-      - "15672:15672"
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
       - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
@@ -126,13 +130,14 @@ services:
       start_period: 120s
 
   prometheus:
+    profiles: ["monitoring"]
     image: prom/prometheus:v2.53.0
     container_name: voenmeh_prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./prometheus/alerting_rules.yml:/etc/prometheus/alerting_rules.yml:ro
       - prometheus_data:/prometheus
-    ports: [ "9090:9090" ]
+    ports: [ "127.0.0.1:9090:9090" ]
     command: [ '--config.file=/etc/prometheus/prometheus.yml' ]
     restart: unless-stopped
     healthcheck:
@@ -142,12 +147,14 @@ services:
       retries: 3
 
   grafana:
+    profiles: ["monitoring"]
     image: grafana/grafana:11.1.0
     container_name: voenmeh_grafana
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
-    ports: [ "3000:3000" ]
+    ports: [ "127.0.0.1:3000:3000" ]
     env_file: [ .env ]
     environment:
       - GF_ALERTING_ENABLED=true
@@ -159,26 +166,39 @@ services:
       retries: 3
 
   alertmanager:
+    profiles: ["monitoring"]
     image: prom/alertmanager:v0.26.0
     container_name: voenmeh_alertmanager
-    ports: [ "9093:9093" ]
+    ports: [ "127.0.0.1:9093:9093" ]
     volumes:
       - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     command: [ '--config.file=/etc/alertmanager/alertmanager.yml' ]
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9093/-/healthy" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   loki:
+    profiles: ["monitoring"]
     image: grafana/loki:2.9.0
     container_name: voenmeh_loki
     command: [ "-config.file=/etc/loki/local-config.yaml", "-config.expand-env=true" ]
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
     restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:3100/ready" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   promtail:
+    profiles: ["monitoring"]
     image: grafana/promtail:2.9.0
     container_name: voenmeh_promtail
     command: [ "-config.file=/etc/promtail/config.yml", "-config.expand-env=true" ]
@@ -191,6 +211,7 @@ services:
     restart: unless-stopped
 
   otel-collector:
+    profiles: ["monitoring"]
     image: otel/opentelemetry-collector-contrib:0.104.0
     container_name: voenmeh_otel_collector
     command: [ "--config=/etc/otel-collector-config.yaml" ]
@@ -199,19 +220,25 @@ services:
     depends_on:
       - loki
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     restart: unless-stopped
 
   node-exporter:
+    profiles: ["monitoring"]
     image: prom/node-exporter:v1.6.1
     container_name: voenmeh_node_exporter
     ports:
-      - "9100:9100"
+      - "127.0.0.1:9100:9100"
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/rootfs:ro
+    healthcheck:
+      test: [ "CMD", "wget", "-q", "--tries=1", "--spider", "http://localhost:9100/metrics" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     command:
       - '--path.procfs=/host/proc'
       - '--path.rootfs=/rootfs'
@@ -220,6 +247,7 @@ services:
     restart: unless-stopped
 
   pgadmin:
+    profiles: ["tools"]
     image: dpage/pgadmin4:9.6
     container_name: voenmeh_pgadmin
     env_file: [ .env ]
@@ -230,7 +258,7 @@ services:
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
       PGADMIN_SERVER_JSON_FILE: '/var/lib/pgadmin/servers.json'
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
       - ./pgadmin/servers.json.template:/pgadmin4/servers.json.template:ro

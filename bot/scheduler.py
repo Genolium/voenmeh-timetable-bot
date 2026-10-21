@@ -2,10 +2,10 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
 from datetime import datetime
 from datetime import datetime as _dt
 from datetime import time, timedelta
+from pathlib import Path
 
 from aiogram import Bot
 from aiogram.types import CallbackQuery
@@ -20,7 +20,6 @@ from bot.text_formatters import (
     generate_morning_intro,
     get_footer_with_promo,
 )
-from core.i18n import i18n
 from core.admin_reports import send_daily_reports, send_monthly_reports, send_weekly_reports
 from core.config import (
     CHECK_INTERVAL_MINUTES,
@@ -28,14 +27,23 @@ from core.config import (
     OPENWEATHERMAP_API_KEY,
     OPENWEATHERMAP_CITY_ID,
     OPENWEATHERMAP_UNITS,
+    REDIS_LAST_UPDATE_KEY,
     REDIS_SCHEDULE_CACHE_KEY,
     REDIS_SCHEDULE_HASH_KEY,
 )
 from core.db.backups import create_db_backup
+from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
-from core.metrics import ERRORS_TOTAL, LAST_SCHEDULE_UPDATE_TS, SUBSCRIBED_USERS, TASKS_SENT_TO_QUEUE, USERS_TOTAL
+from core.metrics import (
+    ERRORS_TOTAL,
+    LAST_SCHEDULE_UPDATE_TS,
+    SUBSCRIBED_USERS,
+    TASKS_SENT_TO_QUEUE,
+    USERS_TOTAL,
+    collect_system_metrics,
+)
 from core.parser import fetch_and_parse_all_schedules
 from core.schedule_diff import ScheduleDiffDetector, ScheduleDiffFormatter
 from core.semester_settings import SemesterSettingsManager
@@ -43,6 +51,39 @@ from core.user_data import UserDataManager
 from core.weather_api import WeatherAPI
 
 logger = logging.getLogger(__name__)
+
+GRADUATED_MISS_PREFIX = "graduated_miss:"
+GRADUATED_MISS_THRESHOLD = 2
+GRADUATED_MISS_TTL_SECONDS = 7 * 86400
+
+
+class TimetableManagerRef:
+    """Mutable reference to the active TimetableManager.
+
+    Scheduler jobs receive this reference instead of a concrete manager instance
+    so that schedule updates are visible to notifications without mutating the
+    previous manager object.
+    """
+
+    def __init__(self, manager: TimetableManager):
+        self._manager = manager
+
+    def get(self) -> TimetableManager:
+        return self._manager
+
+    def set(self, manager: TimetableManager) -> None:
+        self._manager = manager
+
+
+def _resolve_manager(manager_or_ref) -> TimetableManager:
+    """Accept either a TimetableManager or a TimetableManagerRef."""
+    if isinstance(manager_or_ref, TimetableManagerRef):
+        return manager_or_ref.get()
+    return manager_or_ref
+
+
+manager_ref: TimetableManagerRef | None = None
+global_timetable_manager_instance: TimetableManager | None = None
 
 
 def print_progress_bar(
@@ -71,18 +112,23 @@ def print_progress_bar(
 
 
 async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
+    timetable_manager = _resolve_manager(timetable_manager)
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
     logger.info(f"Начинаю постановку задач на вечернюю рассылку для даты {tomorrow.date().isoformat()}")
 
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
-    weather_forecast = await weather_api.get_forecast_for_time(tomorrow_9am)
 
     current_hour = datetime.now(MOSCOW_TZ).hour
     users_to_notify = await user_data_manager.get_users_for_evening_notify(target_hour=current_hour)
     if not users_to_notify:
         logger.info(f"Вечерняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
         return
+
+    forecasts: dict[str, dict | None] = {}
+    for lang in {row[2] or "ru" for row in users_to_notify}:
+        forecasts[lang] = await weather_api.get_forecast_for_time(tomorrow_9am, lang=lang)
+    weather_forecast = forecasts.get("ru")
 
     logger.info(f"Вечерняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
@@ -93,7 +139,8 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
             user_type = "student"
 
         # Генерируем intro с учетом типа пользователя и языка
-        intro_text = generate_evening_intro(weather_forecast, target_date=tomorrow, user_type=user_type, lang=lang)
+        user_forecast = forecasts.get(lang or "ru", weather_forecast)
+        intro_text = generate_evening_intro(user_forecast, target_date=tomorrow, user_type=user_type, lang=lang)
 
         # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
@@ -107,21 +154,21 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         if has_lessons:
             if user_type == "teacher":
                 schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
-                text_body = f"<b>{i18n.get('schedule_teacher_label', lang)}</b>\n\n{schedule_text}" # TODO: Verify label usage or simply header
+                text_body = f"<b>{i18n.get('schedule_teacher_label', lang)}</b>\n\n{schedule_text}"  # TODO: Verify label usage or simply header
                 # Wait, "Ваше расписание на завтра:" is hardcoded above.
                 # I should replace "Ваше расписание на завтра:" with a localized string or just rely on the schedule header.
                 # Actually, looking at original code: text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
                 # I don't have a key for "Your schedule for tomorrow".
                 # I will use "day_context" or just a generic header if I have one.
-                # Let's add simple header or assume formatters handle it. 
+                # Let's add simple header or assume formatters handle it.
                 # Formatters return "Teacher Name\nDate..."
                 # The text_body wrapper: "Ваше расписание на завтра:" is extra.
                 # I will use a simple localized string or just remove it if redundant.
                 # Let's check existing locales. I don't have a specific key for this phrase.
-                # I'll use a hardcoded dict for now or add to i18n? 
+                # I'll use a hardcoded dict for now or add to i18n?
                 # Better to reuse existing mechanisms.
                 # I'll just use the schedule text directly or add a new key quickly?
-                # No, I should stick to what I have. 
+                # No, I should stick to what I have.
                 # I'll just remove the wrapper "Ваше расписание на завтра:" because `generate_evening_intro` + `schedule_text` (which has headers) is enough.
                 # Or I can use a generic "Here is schedule".
                 # Let's look at `evening_greetings_teacher`. It says "Informing about tomorrow schedule". So intro covers it.
@@ -131,9 +178,9 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
                 text_body = schedule_text
         else:
             if user_type == "teacher":
-                text_body = i18n.get("fmt_no_lessons", lang) # Using generic no lessons
+                text_body = i18n.get("fmt_no_lessons", lang)  # Using generic no lessons
             else:
-                text_body = i18n.get("header_today_no_lessons", lang) # Actually for tomorrow...
+                text_body = i18n.get("header_today_no_lessons", lang)  # Actually for tomorrow...
                 # "header_today_no_lessons" is "No lessons today".
                 # I need "No lessons tomorrow". I'll use "fmt_no_lessons" which is "No lessons!".
                 text_body = i18n.get("fmt_no_lessons", lang)
@@ -153,18 +200,22 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
 
 
 async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
+    timetable_manager = _resolve_manager(timetable_manager)
     today = datetime.now(MOSCOW_TZ)
     logger.info(f"Начинаю постановку задач на утреннюю рассылку для даты {today.date().isoformat()}")
 
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
-    weather_forecast = await weather_api.get_forecast_for_time(today_9am)
 
     current_hour = datetime.now(MOSCOW_TZ).hour
     users_to_notify = await user_data_manager.get_users_for_morning_summary(target_hour=current_hour)
     if not users_to_notify:
         logger.info(f"Утренняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
         return
+
+    forecasts: dict[str, dict | None] = {}
+    for lang in {row[2] or "ru" for row in users_to_notify}:
+        forecasts[lang] = await weather_api.get_forecast_for_time(today_9am, lang=lang)
 
     logger.info(f"Утренняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
@@ -175,7 +226,7 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
             user_type = "student"
 
         # Генерируем intro с учетом типа пользователя и языка
-        intro_text = generate_morning_intro(weather_forecast, user_type=user_type, lang=lang)
+        intro_text = generate_morning_intro(forecasts.get(lang or "ru"), user_type=user_type, lang=lang)
 
         # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
@@ -183,18 +234,21 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
         else:
             schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
 
-        if schedule_info and not schedule_info.get("error") and schedule_info.get("lessons"):
-            # Форматируем расписание в зависимости от типа пользователя
+        if schedule_info and not schedule_info.get("error"):
+            # Форматируем расписание в зависимости от типа пользователя.
+            # Форматтеры сами показывают «занятий нет», поэтому пустой день
+            # тоже отправляется — как в вечерней сводке.
             if user_type == "teacher":
                 schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
             else:
                 schedule_text = format_schedule_text(schedule_info, lang=lang)
+        else:
+            schedule_text = i18n.get("fmt_no_lessons", lang)
 
-            # "Ваше расписание на сегодня" -> removed or handled by header/intro
-            text = f"{intro_text}\n{schedule_text}{get_footer_with_promo(lang)}"
-            await asyncio.to_thread(send_message_task.send, user_id, text)
-            TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
-            processed_count += 1
+        text = f"{intro_text}\n{schedule_text}{get_footer_with_promo(lang)}"
+        await asyncio.to_thread(send_message_task.send, user_id, text)
+        TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
+        processed_count += 1
 
         # Периодически освобождаем event loop для обработки других событий
         if processed_count % 50 == 0:
@@ -212,23 +266,38 @@ async def minutely_reminders_checker(
     Проверяет каждую минуту, кому из пользователей нужно отправить напоминание.
     Вместо создания тысяч DateTrigger'ов, просто проверяем каждую минуту актуальное состояние.
     """
+    timetable_manager = _resolve_manager(timetable_manager)
     now = datetime.now(MOSCOW_TZ)
     today = now.date()
-    
+
     try:
-        users = await user_data_manager.get_users_for_lesson_reminders()
+        getter = getattr(user_data_manager, "get_users_for_lesson_reminders_with_type", None)
+        try:
+            users = await getter() if getter else []
+            if not isinstance(users, (list, tuple)):
+                raise TypeError("typed reminder getter returned a non-sequence")
+            users = list(users)
+        except (AttributeError, TypeError):
+            # Старые/мок-реализации могут не поддерживать расширенный метод.
+            users = await user_data_manager.get_users_for_lesson_reminders()
         if not users:
             return
 
-        # Группируем пользователей по группе, чтобы рассчитывать расписание 1 раз на группу, а не для каждого юзера
-        groups_users: dict[str, list[tuple[int, int, str]]] = {}
-        for user_id, group_name, reminder_time, lang in users:
+        # Группируем по (цель, тип), чтобы преподаватель и группа с одинаковым
+        # именем не смешивались, а расписание считалось один раз на цель.
+        groups_users: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
+        for row in users:
+            user_id, group_name, reminder_time, lang, *rest = row
+            user_type = rest[0] if rest else "student"
             if group_name:
-                groups_users.setdefault(group_name, []).append((user_id, reminder_time, lang))
+                groups_users.setdefault((group_name, user_type), []).append((user_id, reminder_time, lang))
 
-        for group_name, group_user_list in groups_users.items():
+        for (group_name, user_type), group_user_list in groups_users.items():
             try:
-                schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
+                if user_type == "teacher":
+                    schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=today)
+                else:
+                    schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today)
                 if not (schedule_info and not schedule_info.get("error") and schedule_info.get("lessons")):
                     continue
 
@@ -265,7 +334,8 @@ async def minutely_reminders_checker(
                                 if n_start_raw and n_start_raw != "N/A":
                                     n_start = datetime.strptime(n_start_raw, "%H:%M").time()
                                     break_dur = int(
-                                        (datetime.combine(today, n_start) - datetime.combine(today, end_time)).total_seconds() / 60
+                                        (datetime.combine(today, n_start) - datetime.combine(today, end_time)).total_seconds()
+                                        / 60
                                     )
                             end_events.append((next_lesson, "final" if is_last else "break", break_dur))
                     except (ValueError, KeyError):
@@ -276,23 +346,20 @@ async def minutely_reminders_checker(
                     # 1. Напоминание перед началом первой пары
                     reminder_dt = first_start_dt - timedelta(minutes=reminder_time)
                     if reminder_dt.hour == now.hour and reminder_dt.minute == now.minute:
-                        send_lesson_reminder_task.send(
-                            user_id, first_lesson, "first", None, reminder_time, lang
-                        )
+                        send_lesson_reminder_task.send(user_id, first_lesson, "first", None, reminder_time, lang)
                         logger.info(f"Отправлено напоминание о первой паре для {user_id}")
 
                     # 2. Напоминания об окончании пар и перерывах
                     for next_lesson, rem_type, break_dur in end_events:
-                        send_lesson_reminder_task.send(
-                            user_id, next_lesson, rem_type, break_dur, None, lang
-                        )
+                        send_lesson_reminder_task.send(user_id, next_lesson, rem_type, break_dur, None, lang)
                         logger.info(f"Отправлено напоминание об окончании пары для {user_id}")
 
             except Exception as grp_err:
                 logger.error(f"Ошибка проверки напоминаний для группы {group_name}: {grp_err}")
-                
+
     except Exception as e:
         logger.error(f"Ошибка в minutely_reminders_checker: {e}")
+
 
 async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot):
     logger.info("Проверка изменений в расписании...")
@@ -319,10 +386,10 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
                 return
 
     # For race condition: Use Redis lock
-    async with redis_client.lock("timetable_manager_update_lock"):
+    async with redis_client.lock("timetable_manager_update_lock", timeout=300, blocking_timeout=120):
         if new_schedule_data is None:
             logger.info("Данные расписания не изменились или недоступны (условный запрос).")
-            LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
+            # Freshness обновляется только после успешного получения данных.
             return
 
         if not new_schedule_data:
@@ -339,33 +406,44 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             logger.warning(f"ОБНАРУЖЕНЫ ИЗМЕНЕНИЯ В РАСПИСАНИИ! Старый хеш: {old_hash}, Новый: {new_hash}")
             await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
 
+            old_manager = global_timetable_manager_instance
             # Создаем новый менеджер с обновленными данными
             new_manager = TimetableManager(new_schedule_data, redis_client)
             new_manager.set_semester_settings_manager(SemesterSettingsManager(user_data_manager.async_session_maker))
             await new_manager.save_to_cache()
 
-            # Обновляем данные в существующем глобальном менеджере, чтобы все Middleware и диалоги сразу видели новое расписание
-            if global_timetable_manager_instance is not None:
-                global_timetable_manager_instance._schedules = new_manager._schedules
-                global_timetable_manager_instance._teachers_index = new_manager._teachers_index
-                global_timetable_manager_instance._classrooms_index = new_manager._classrooms_index
-                global_timetable_manager_instance._current_xml_hash = new_manager._current_xml_hash
-                global_timetable_manager_instance.metadata = new_manager.metadata
-                global_timetable_manager_instance.semester_start_date = new_manager.semester_start_date
-                global_timetable_manager_instance._semester_settings_manager = new_manager._semester_settings_manager
-
-            # Переприсваиваем глобальный экземпляр
+            # Атомарно переключаем активный менеджер: диалоги, планировщик и middleware
+            # читают его через TimetableManagerRef/глобальную ссылку.
             global_timetable_manager_instance = new_manager
+            if manager_ref is not None:
+                manager_ref.set(new_manager)
+            if old_manager is not None and old_manager is not new_manager:
+                try:
+                    await send_schedule_diff_notifications(user_data_manager, old_manager, new_manager)
+                except Exception as e:
+                    logger.warning(f"Не удалось отправить diff-уведомления: {e}")
+            try:
+                from core.metrics import LAST_DATA_UPDATE
 
-            # Уведомляем администраторов о автоматической генерации
+                LAST_DATA_UPDATE.labels(data_type="schedule").set(datetime.now(MOSCOW_TZ).timestamp())
+            except Exception:
+                pass
+
+            # Инвалидируем кэш изображений: он не должен отдавать старое расписание
+            try:
+                from core.image_cache_manager import invalidate_all_generated_images
+
+                await invalidate_all_generated_images(redis_client)
+            except Exception as e:
+                logger.warning(f"Не удалось очистить кэш изображений: {e}")
+
+            # Уведомляем администраторов о обновлении
             try:
                 admin_users = await user_data_manager.get_admin_users()
                 admin_message = (
-                    "🔄 <b>Автоматическая генерация изображений</b>\n\n"
-                    "Обнаружены изменения в расписании!\n"
-                    "✅ Запущена автоматическая генерация изображений для всех групп\n"
-                    "📊 Задачи отправлены в очередь Dramatiq\n"
-                    "⏱️ Обработка займет несколько минут"
+                    "🔄 <b>Расписание обновлено</b>\n\n"
+                    "Обнаружены изменения в расписании.\n"
+                    "Кэш изображений сброшен, новые картинки будут сгенерированы по запросу."
                 )
                 for admin_id in admin_users:
                     await asyncio.to_thread(send_message_task.send, admin_id, admin_message)
@@ -375,8 +453,13 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
         else:
             logger.info("Изменений в расписании не обнаружено.")
 
-    # Обновляем метку времени при КАЖДОЙ успешной проверке
-    LAST_SCHEDULE_UPDATE_TS.set(_dt.now(MOSCOW_TZ).timestamp())
+        # Успешный парсинг (с изменениями или без) — только теперь freshness честный.
+        updated_at = _dt.now(MOSCOW_TZ).timestamp()
+        LAST_SCHEDULE_UPDATE_TS.set(updated_at)
+        try:
+            await redis_client.set(REDIS_LAST_UPDATE_KEY, str(int(updated_at)))
+        except Exception:
+            pass
 
 
 # --- Резервные копии расписания ---
@@ -446,10 +529,14 @@ async def auto_backup(redis_client: Redis):
                 import pickle
 
                 try:
-                    # First try to decompress as gzip + pickle (the format used by TimetableManager)
                     decompressed = gzip.decompress(schedules)
-                    schedule_data = pickle.loads(decompressed)
-                    logger.info("Successfully decompressed schedule data using gzip+pickle")
+                    try:
+                        schedule_data = json.loads(decompressed.decode("utf-8"))
+                        logger.info("Successfully decompressed schedule data using gzip+json")
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        # Legacy cache written by older versions.
+                        schedule_data = pickle.loads(decompressed)
+                        logger.info("Successfully decompressed legacy gzip+pickle schedule data")
                 except (gzip.BadGzipFile, pickle.UnpicklingError):
                     try:
                         # Fallback: try as plain JSON
@@ -506,33 +593,40 @@ async def send_schedule_diff_notifications(
     Отправляет пользователям уведомления только о реальных изменениях в расписании.
     """
     try:
-        # Получаем всех пользователей с их группами
-        users_with_groups = await user_data_manager.get_all_users_with_groups()
+        # Только студенты: у преподавателей в group лежит ФИО, а не группа.
+        getter = getattr(user_data_manager, "get_students_with_groups_and_language", None)
+        try:
+            users_with_groups = list(await getter()) if getter else []
+        except TypeError:
+            users_with_groups = []
+        if not users_with_groups:
+            users_with_groups = await user_data_manager.get_all_users_with_groups()
         if not users_with_groups:
             logger.info("Нет пользователей для отправки дифф-уведомлений")
             return
 
-        # Группируем пользователей по группам для оптимизации
+        # Группируем по (группа, язык), чтобы отправить локализованный текст.
         groups_to_users = {}
-        for user_id, group_name in users_with_groups:
+        for row in users_with_groups:
+            user_id, group_name, *rest = row
+            lang = rest[0] if rest else "ru"
             if group_name:
-                if group_name not in groups_to_users:
-                    groups_to_users[group_name] = []
-                groups_to_users[group_name].append(user_id)
+                groups_to_users.setdefault((group_name, lang), []).append(user_id)
 
         # Проверяем изменения для каждой группы на следующие несколько дней
         from datetime import date, timedelta
+
         from core.audit_manager import AuditManager
 
-        audit_manager = AuditManager(user_data_manager.session_factory)
-        today = date.today()
+        audit_manager = AuditManager(user_data_manager.async_session_maker)
+        today = datetime.now(MOSCOW_TZ).date()
         dates_to_check = [today + timedelta(days=i) for i in range(7)]  # Проверяем неделю вперед
 
         total_notifications_sent = 0
         groups_with_changes = set()  # Отслеживаем группы с изменениями
         processed_groups_count = 0
 
-        for group_name, user_ids in groups_to_users.items():
+        for (group_name, lang), user_ids in groups_to_users.items():
             processed_groups_count += 1
             group_has_changes = False
 
@@ -554,7 +648,7 @@ async def send_schedule_diff_notifications(
                     if diff.has_changes():
                         group_has_changes = True
                         groups_with_changes.add(group_name)  # Добавляем группу в список с изменениями
-                        
+
                         # Сохраняем аудит-лог изменений в базе данных
                         await audit_manager.record_changes(
                             target_name=group_name,
@@ -563,7 +657,7 @@ async def send_schedule_diff_notifications(
                             target_type="group",
                         )
 
-                        message = ScheduleDiffFormatter.format_group_diff(diff)
+                        message = ScheduleDiffFormatter.format_group_diff(diff, lang=lang)
 
                         if message:
                             # Отправляем уведомление всем пользователям группы
@@ -623,13 +717,15 @@ async def handle_graduated_groups(
     Обрабатывает ситуации, когда группы выпустились и больше не существуют в расписании.
     Уведомляет пользователей и предлагает выбрать новую группу.
     """
+    timetable_manager = _resolve_manager(timetable_manager)
     try:
         logger.info("🔍 Проверяю наличие выпустившихся групп...")
 
-        # Получаем всех пользователей с их группами
-        users_with_groups = await user_data_manager.get_all_users_with_groups()
+        # Получаем только студентов: ФИО преподавателей хранится в том же поле,
+        # поэтому использовать get_all_users_with_groups здесь нельзя.
+        users_with_groups = await user_data_manager.get_students_with_groups()
         if not users_with_groups:
-            logger.info("Нет пользователей для проверки")
+            logger.info("Нет студентов для проверки")
             return
 
         # Получаем актуальные группы из расписания
@@ -640,11 +736,36 @@ async def handle_graduated_groups(
         graduated_groups = set()
         affected_users = []
 
-        # Проверяем каждую группу пользователей
+        # Проверяем каждую группу студентов. Одного пропуска недостаточно:
+        # источник может вернуть частичный снапшот, поэтому группа считается
+        # выпустившейся только после нескольких подтверждённых пропусков.
         for user_id, group_name in users_with_groups:
+            miss_key = f"{GRADUATED_MISS_PREFIX}{user_id}:{(group_name or '').upper()}"
             if group_name and group_name.upper() not in current_groups:
+                try:
+                    raw_misses = await redis_client.incr(miss_key)
+                    misses = int(raw_misses)
+                    if misses == 1:
+                        await redis_client.expire(miss_key, GRADUATED_MISS_TTL_SECONDS)
+                except Exception as e:
+                    # При сбое Redis безопаснее не трогать профиль пользователя.
+                    logger.warning(f"Не удалось проверить пропуск группы для {user_id}: {e}")
+                    continue
+
+                if misses < GRADUATED_MISS_THRESHOLD:
+                    logger.warning(
+                        f"Группа {group_name} отсутствует в расписании (пропуск {misses}/{GRADUATED_MISS_THRESHOLD}); "
+                        f"профиль пользователя {user_id} сохранён"
+                    )
+                    continue
+
                 graduated_groups.add(group_name.upper())
                 affected_users.append((user_id, group_name))
+            else:
+                try:
+                    await redis_client.delete(miss_key)
+                except Exception:
+                    pass
 
         if not affected_users:
             logger.info("✅ Все группы пользователей актуальны")
@@ -655,20 +776,6 @@ async def handle_graduated_groups(
 
         # Получаем список доступных групп для предложения
         available_groups = sorted(list(current_groups))
-
-        # Уведомляем пользователей
-        bot = None
-        try:
-            from main import bot_instance
-
-            bot = bot_instance
-        except:
-            logger.warning("Не удалось получить экземпляр бота для уведомлений")
-            return
-
-        if not bot:
-            logger.warning("Бот недоступен для отправки уведомлений")
-            return
 
         notified_count = 0
         for user_id, old_group in affected_users:
@@ -688,8 +795,12 @@ async def handle_graduated_groups(
                 await asyncio.to_thread(send_message_task.send, user_id, message_text)
                 TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
 
-                # Очищаем группу пользователя
+                # Очищаем группу пользователя и счётчик подтверждённых пропусков
                 await user_data_manager.set_user_group(user_id, None)
+                try:
+                    await redis_client.delete(f"{GRADUATED_MISS_PREFIX}{user_id}:{old_group.upper()}")
+                except Exception:
+                    pass
 
                 notified_count += 1
                 logger.info(f"✅ Запланировано уведомление пользователя {user_id} о выпуске группы {old_group}")
@@ -730,24 +841,27 @@ def setup_scheduler(
     user_data_manager: UserDataManager,
     redis_client: Redis,
 ) -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone=str(MOSCOW_TZ))
+    scheduler = AsyncIOScheduler(
+        timezone=str(MOSCOW_TZ), job_defaults={"coalesce": True, "misfire_grace_time": 60, "max_instances": 1}
+    )
 
-    global global_timetable_manager_instance
+    global global_timetable_manager_instance, manager_ref
     global_timetable_manager_instance = manager
+    manager_ref = TimetableManagerRef(manager)
 
-    scheduler.add_job(evening_broadcast, "cron", hour="16-23", minute=0, args=[user_data_manager, manager])
+    scheduler.add_job(evening_broadcast, "cron", hour="16-23", minute=0, args=[user_data_manager, manager_ref])
     scheduler.add_job(
         morning_summary_broadcast,
         "cron",
         hour="6-12",
         minute=0,
-        args=[user_data_manager, manager],
+        args=[user_data_manager, manager_ref],
     )
     scheduler.add_job(
         minutely_reminders_checker,
         "cron",
         minute="*",  # Запускать каждую минуту
-        args=[user_data_manager, manager],
+        args=[user_data_manager, manager_ref],
     )
     scheduler.add_job(
         monitor_schedule_changes,
@@ -756,13 +870,14 @@ def setup_scheduler(
         args=[user_data_manager, redis_client, bot],
     )
     scheduler.add_job(collect_db_metrics, "interval", minutes=5, args=[user_data_manager])
+    scheduler.add_job(collect_system_metrics, "interval", minutes=1)
     scheduler.add_job(backup_current_schedule, "cron", hour="*/6", args=[redis_client])
     scheduler.add_job(auto_backup, "cron", hour=2, args=[redis_client])
     scheduler.add_job(
         handle_graduated_groups,
         "cron",
         hour=3,
-        args=[user_data_manager, manager, redis_client],
+        args=[user_data_manager, manager_ref, redis_client],
     )
 
     # Задачи для отправки отчётов администраторам
@@ -784,9 +899,7 @@ def setup_scheduler(
         args=[bot, user_data_manager],
     )  # Ежемесячно 1-го числа в 9:00
 
-    # Дополнительные задания можно включать через флаг окружения (по умолчанию выключены для облегчения нагрузки и совместимости с тестами)
-    if os.getenv("ENABLE_IMAGE_CACHE_JOBS", "0") in ("1", "true", "True"):
-        # Ежечасная очистка устаревших изображений из кэша
-        scheduler.add_job(cleanup_image_cache, "cron", minute=5, args=[redis_client])
+    # Фоновый janitor кэша изображений: не блокирует горячую запись.
+    scheduler.add_job(cleanup_image_cache, "cron", hour="*/6", minute=5, args=[redis_client])
 
     return scheduler

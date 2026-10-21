@@ -33,9 +33,7 @@ class TestAdminSubFilter:
             inst = MockMgr.return_value
             inst.is_filter_enabled = AsyncMock(return_value=True)
             inst.get_required_channels = AsyncMock(
-                return_value=[
-                    {"id": 1, "channel_id": "@chan1", "title": "Канал 1", "invite_link": "https://t.me/chan1"}
-                ]
+                return_value=[{"id": 1, "channel_id": "@chan1", "title": "Канал 1", "invite_link": "https://t.me/chan1"}]
             )
 
             data = await get_sub_filter_data(mock_manager)

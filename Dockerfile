@@ -1,11 +1,15 @@
 FROM python:3.13-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
 WORKDIR /app
 
-# Сначала копируем только requirements.txt, чтобы кэшировать установку зависимостей
 COPY requirements.txt .
 
-# Устанавливаем системные зависимости для Pillow/Playwright (chromium) и PostgreSQL
+# Runtime libraries for Pillow/Playwright/Chromium and PostgreSQL client tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libglib2.0-0 \
@@ -33,30 +37,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     fonts-liberation \
     fonts-noto-cjk \
-    # PostgreSQL development пакеты для psycopg2
-    libpq-dev \
     postgresql-client \
-    gcc \
-    g++ \
-    python3-dev \
-    # Дополнительные пакеты для сборки Python модулей
-    libffi-dev \
-    libssl-dev \
-    make \
-    file \
-    cmake \
-    build-essential \
   && rm -rf /var/lib/apt/lists/*
 
-# Устанавливаем зависимости Python
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
-    # Playwright 1.18 CLI: install-deps; newer: --with-deps. Пытаемся оба способа
-    (python -m playwright install-deps chromium || true) && \
-    (python -m playwright install --with-deps chromium || python -m playwright install chromium)
+RUN pip install --upgrade pip && pip install -r requirements.txt \
+    && python -m playwright install --with-deps chromium
 
-# Теперь копируем ВСЕ остальные файлы проекта
 COPY . .
 
-# Команда для запуска приложения
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app /ms-playwright
+
+USER appuser
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8010/health', timeout=3).status==200 else 1)"
+
 CMD ["python", "main.py"]

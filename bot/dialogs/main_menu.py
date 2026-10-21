@@ -9,11 +9,12 @@ from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 from thefuzz import process
 
+from bot.text_formatters import esc
 from core.config import WELCOME_IMAGE_PATH
+from core.i18n import I18n, i18n
 from core.manager import TimetableManager
-from core.user_data import UserDataManager
 from core.text_utils import normalize_group_name
-from core.i18n import i18n, I18n
+from core.user_data import UserDataManager
 
 from .constants import DialogDataKeys, WidgetIds
 from .states import About, MainMenu, Schedule
@@ -56,13 +57,12 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-
 async def on_lang_selected(callback: CallbackQuery, button: Button, manager: DialogManager):
     """Обрабатывает выбор языка при первом запуске."""
     lang_code = button.widget_id.replace("lang_", "")
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.set_user_language(callback.from_user.id, lang_code)
-    
+
     # После выбора языка переходим к выбору роли
     await manager.switch_to(MainMenu.choose_user_type)
 
@@ -82,10 +82,10 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
     # Нормализуем ввод с помощью text_utils
     raw = message.text or ""
     group_name = normalize_group_name(raw)
-    
+
     # Получаем локализацию
     _ = manager.middleware_data.get("_")
-    
+
     if not group_name:
         await message.answer(_("incorrect_group"))
         return
@@ -100,7 +100,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
 
         if good_suggestions:
             # Форматируем каждый предложенный вариант
-            formatted_suggestions = [f"<code>{s}</code>" for s in good_suggestions]
+            formatted_suggestions = [f"<code>{esc(s)}</code>" for s in good_suggestions]
             # Соединяем варианты
             suggestion_text = ", ".join(formatted_suggestions)
             await message.answer(_("group_suggestion", group=group_name, suggestions=suggestion_text))
@@ -122,18 +122,12 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
 async def on_teacher_entered(message: Message, message_input: MessageInput, manager: DialogManager):
     """Обрабатывает ввод ФИО преподавателя."""
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
-    
+
     teacher_name = (message.text or "").strip()
     # TODO: Add teacher name normalization if needed
-    
+
     if not teacher_name or len(teacher_name) < 3:
-        # TODO: Move string to locales with key "incorrect_teacher"
-        # For now reusing generic or keeping hardcoded until locale update
-        await message.answer(
-             "❌ <b>Некорректный ввод!</b>\n\n"
-             "📝 Введите <b>полное ФИО преподавателя</b> (минимум 3 символа)\n"
-             "💡 <i>Например: Иванов Иван Иванович или Петров И.И.</i>"
-        )
+        await message.answer(_("incorrect_teacher"))
         return
 
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
@@ -144,14 +138,14 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
         # Предложим несколько ближайших вариантов
         suggestions = timetable_manager.find_teachers_fuzzy(teacher_name, limit=5, score_cutoff=55)
         if suggestions:
-            formatted_suggestions = [f"<code>{s}</code>" for s in suggestions[:3]]
+            formatted_suggestions = [f"<code>{esc(s)}</code>" for s in suggestions[:3]]
             suggestion_text = "\n".join(formatted_suggestions)
             await message.answer(_("teacher_suggestion", suggestions=suggestion_text))
             return
         else:
             await message.answer(_("teacher_not_found", name=teacher_name))
             return
-            
+
     teacher_name = canonical
 
     # Регистрируем преподавателя

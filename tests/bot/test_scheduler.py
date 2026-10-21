@@ -17,8 +17,8 @@ from bot.scheduler import (
     print_progress_bar,
     send_daily_reports,
     send_monthly_reports,
-    send_weekly_reports,
     send_schedule_diff_notifications,
+    send_weekly_reports,
     setup_scheduler,
 )
 from core.config import MOSCOW_TZ
@@ -33,7 +33,13 @@ def mock_user_data_manager():
         (1, "О735Б", 20, "ru"),
         (2, "О735А", 15, "ru"),
     ]
-    manager.get_full_user_info.return_value = MagicMock(group="О735Б", lesson_reminders=True, reminder_time_minutes=60, language="ru")
+    manager.get_users_for_lesson_reminders_with_type.return_value = [
+        (1, "О735Б", 20, "ru", "student"),
+        (2, "О735А", 15, "ru", "student"),
+    ]
+    manager.get_full_user_info.return_value = MagicMock(
+        group="О735Б", lesson_reminders=True, reminder_time_minutes=60, language="ru"
+    )
     manager.get_top_groups.return_value = [("О735Б", 5), ("О735А", 3)]
     manager.get_all_user_ids.return_value = [1, 2, 3]
     manager.get_total_users_count.return_value = 100
@@ -68,7 +74,6 @@ def mock_timetable_manager():
     }
     manager.get_schedule_for_day = AsyncMock(return_value=schedule_info)
     manager._schedules = {"О735Б": {"odd": {"Понедельник": schedule_info["lessons"]}}}
-    manager.get_week_type = MagicMock(return_value=("odd", "Нечетная неделя"))
     manager.get_academic_week_type = AsyncMock(return_value=("odd", "Нечетная неделя"))
     return manager
 
@@ -226,22 +231,27 @@ async def test_morning_summary_broadcast_no_lessons(mock_user_data_manager, mock
 
     # Мокаем расписание без уроков
     mock_timetable_manager.get_schedule_for_day = AsyncMock(return_value={"error": "Нет данных"})
+    send = MagicMock()
+    monkeypatch.setattr("bot.scheduler.send_message_task", send)
 
     await morning_summary_broadcast(mock_user_data_manager, mock_timetable_manager)
 
-    # Не должно отправлять сообщения, если нет уроков
-    assert True
+    # Пустой день тоже отправляется — как в вечерней сводке.
+    send.send.assert_called()
 
 
 @pytest.mark.asyncio
 async def test_minutely_reminders_checker_first_lesson(mock_user_data_manager, mock_timetable_manager, monkeypatch):
     # Урок в 09:00, reminder_time = 20 мин -> напоминание в 08:40
     mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
-        now=lambda tz: mock_now,
-        strptime=datetime.strptime,
-        combine=datetime.combine,
-    ))
+    monkeypatch.setattr(
+        "bot.scheduler.datetime",
+        MagicMock(
+            now=lambda tz: mock_now,
+            strptime=datetime.strptime,
+            combine=datetime.combine,
+        ),
+    )
 
     with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
         await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
@@ -253,11 +263,14 @@ async def test_minutely_reminders_checker_first_lesson(mock_user_data_manager, m
 async def test_minutely_reminders_checker_break_and_final(mock_user_data_manager, mock_timetable_manager, monkeypatch):
     # Конец первого урока в 10:30
     mock_now = datetime.now(MOSCOW_TZ).replace(hour=10, minute=30, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
-        now=lambda tz: mock_now,
-        strptime=datetime.strptime,
-        combine=datetime.combine,
-    ))
+    monkeypatch.setattr(
+        "bot.scheduler.datetime",
+        MagicMock(
+            now=lambda tz: mock_now,
+            strptime=datetime.strptime,
+            combine=datetime.combine,
+        ),
+    )
 
     with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
         await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
@@ -265,14 +278,17 @@ async def test_minutely_reminders_checker_break_and_final(mock_user_data_manager
 
 
 @pytest.mark.asyncio
-async def test_minutely_reminders_checker_skip_teacher(mock_user_data_manager, mock_timetable_manager, monkeypatch):
+async def test_minutely_reminders_checker_empty_typed_users(mock_user_data_manager, mock_timetable_manager, monkeypatch):
     mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
-        now=lambda tz: mock_now,
-        strptime=datetime.strptime,
-        combine=datetime.combine,
-    ))
-    mock_user_data_manager.get_users_for_lesson_reminders.return_value = []
+    monkeypatch.setattr(
+        "bot.scheduler.datetime",
+        MagicMock(
+            now=lambda tz: mock_now,
+            strptime=datetime.strptime,
+            combine=datetime.combine,
+        ),
+    )
+    mock_user_data_manager.get_users_for_lesson_reminders_with_type.return_value = []
 
     with patch("bot.scheduler.send_lesson_reminder_task") as mock_task:
         await minutely_reminders_checker(mock_user_data_manager, mock_timetable_manager)
@@ -292,11 +308,14 @@ async def test_minutely_reminders_checker_no_users(mock_timetable_manager):
 @pytest.mark.asyncio
 async def test_minutely_reminders_checker_invalid_time_format(mock_user_data_manager, mock_timetable_manager, monkeypatch):
     mock_now = datetime.now(MOSCOW_TZ).replace(hour=8, minute=40, second=0, microsecond=0)
-    monkeypatch.setattr("bot.scheduler.datetime", MagicMock(
-        now=lambda tz: mock_now,
-        strptime=datetime.strptime,
-        combine=datetime.combine,
-    ))
+    monkeypatch.setattr(
+        "bot.scheduler.datetime",
+        MagicMock(
+            now=lambda tz: mock_now,
+            strptime=datetime.strptime,
+            combine=datetime.combine,
+        ),
+    )
     invalid_schedule = {
         "date": mock_now.date(),
         "lessons": [{"time": "09:00-10:30", "start_time_raw": "invalid", "end_time_raw": "10:30"}],
@@ -346,8 +365,8 @@ async def test_monitor_schedule_changes_no_changes(mock_user_data_manager, mock_
 
     await monitor_schedule_changes(mock_user_data_manager, mock_redis, mock_bot)
 
-    # Должно обновить метрику времени
-    mock_metrics.set.assert_called()
+    # None означает 304/недоступность: freshness не должен лгать.
+    mock_metrics.set.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -387,10 +406,10 @@ async def test_monitor_schedule_changes_with_changes(mock_user_data_manager, moc
     await monitor_schedule_changes(mock_user_data_manager, mock_redis, mock_bot)
 
     # Проверяем, что хеш обновлен (используем правильный ключ)
-    mock_redis.set.assert_called_with("timetable:schedule_hash", "new_hash_value")
+    mock_redis.set.assert_any_call("timetable:schedule_hash", "new_hash_value")
 
-    # Проверяем, что функция дифф-уведомлений НЕ была вызвана (отключена)
-    mock_diff_notifications.assert_not_called()
+    # Дифф-уведомления подключены к успешному обновлению.
+    mock_diff_notifications.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -612,9 +631,6 @@ async def test_morning_summary_broadcast_weather_api_error(mock_user_data_manage
 
 
 @pytest.mark.asyncio
-
-
-
 @pytest.mark.asyncio
 async def test_mass_generation_disabled_marker_5():
     assert True
@@ -652,7 +668,7 @@ async def test_monitor_schedule_changes_with_warm_top_groups_error(mock_user_dat
     await monitor_schedule_changes(mock_user_data_manager, mock_redis, mock_bot)
 
     # Проверяем, что основные операции выполнены
-    mock_redis.set.assert_called_with("timetable:schedule_hash", "new_hash_value")
+    mock_redis.set.assert_any_call("timetable:schedule_hash", "new_hash_value")
 
 
 # --- Новые тесты для функций с низким покрытием ---
@@ -757,12 +773,15 @@ def test_print_progress_bar():
 
 
 @pytest.mark.asyncio
-async def test_handle_graduated_groups_success(mock_user_data_manager, mock_timetable_manager):
+async def test_handle_graduated_groups_success(mock_user_data_manager, mock_timetable_manager, monkeypatch):
     """Тест успешной обработки выпустившихся групп."""
     mock_redis = AsyncMock()
+    mock_redis.incr.return_value = 2
+    mock_send = MagicMock()
+    monkeypatch.setattr("bot.scheduler.send_message_task", mock_send)
 
-    # Настраиваем моки
-    mock_user_data_manager.get_all_users_with_groups.return_value = [
+    # Настраиваем моки: только студенты, пропуск подтверждён дважды
+    mock_user_data_manager.get_students_with_groups.return_value = [
         (1, "OLD_GROUP_1"),
         (2, "OLD_GROUP_2"),
     ]
@@ -771,7 +790,9 @@ async def test_handle_graduated_groups_success(mock_user_data_manager, mock_time
     await handle_graduated_groups(mock_user_data_manager, mock_timetable_manager, mock_redis)
 
     # Проверяем что функции были вызваны
-    mock_user_data_manager.get_all_users_with_groups.assert_called_once()
+    mock_user_data_manager.get_students_with_groups.assert_called_once()
+    mock_user_data_manager.get_all_users_with_groups.assert_not_called()
+    assert mock_send.send.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -780,13 +801,14 @@ async def test_handle_graduated_groups_no_graduated_groups(mock_user_data_manage
     mock_redis = AsyncMock()
 
     # Настраиваем моки - все группы актуальны
-    mock_user_data_manager.get_all_users_with_groups.return_value = [(1, "CURRENT_GROUP")]
+    mock_user_data_manager.get_students_with_groups.return_value = [(1, "CURRENT_GROUP")]
     mock_timetable_manager._schedules = {"CURRENT_GROUP": {"odd": {"lessons": []}}}
 
     await handle_graduated_groups(mock_user_data_manager, mock_timetable_manager, mock_redis)
 
     # Проверяем что функция завершилась без ошибок
-    mock_user_data_manager.get_all_users_with_groups.assert_called_once()
+    mock_user_data_manager.get_students_with_groups.assert_called_once()
+    mock_user_data_manager.get_all_users_with_groups.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -795,7 +817,7 @@ async def test_handle_graduated_groups_exception_handling(mock_user_data_manager
     mock_redis = AsyncMock()
 
     # Настраиваем мок, который вызывает исключение
-    mock_user_data_manager.get_all_users_with_groups.side_effect = Exception("Test error")
+    mock_user_data_manager.get_students_with_groups.side_effect = Exception("Test error")
 
     # Функция должна обработать исключение без падения
     try:

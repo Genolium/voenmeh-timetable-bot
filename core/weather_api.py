@@ -14,25 +14,26 @@ class WeatherAPI:
     CACHE_DURATION_HOURS = 1  # Кэш погоды будет храниться 1 час
     _cache: Dict[str, Dict[str, Any]] = {}  # Словарь для хранения кэша: {'дата_час_прогноза': {'timestamp': ..., 'data': ...}}
 
-    def __init__(self, api_key: str, city_id: str, units: str = "metric"):
-        if not api_key:
-            logging.error("OpenWeatherMap API key is not provided!")
-            raise ValueError("API key cannot be empty.")
-        self.api_key = api_key
+    def __init__(self, api_key: str | None, city_id: str, units: str = "metric"):
+        self.api_key = api_key or ""
         self.city_id = city_id
         self.units = units
 
-    async def get_forecast_for_time(self, target_datetime: datetime) -> Optional[Dict[str, Any]]:
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+    async def get_forecast_for_time(self, target_datetime: datetime, lang: str = "ru") -> Optional[Dict[str, Any]]:
         """
         Получает прогноз погоды для ближайшего доступного временного интервала
         к target_datetime. Использует кэш.
         """
-        # Формируем ключ кэша на основе даты и часа, для которого нужен прогноз
-        # Округляем до ближайшего 3-часового интервала, т.к. OWM дает каждые 3 часа
-        # Чтобы избежать проблем с часовыми поясами, работаем с UTC для ключа кэша
+        if not self.api_key:
+            return None
+        # Формируем ключ кэша на основе даты, часа и языка прогноза
         target_utc_dt = target_datetime.astimezone(timezone.utc)
         target_hour_rounded = (target_utc_dt.hour // 3) * 3
-        cache_key = f"{target_utc_dt.date().isoformat()}_{target_hour_rounded:02d}h"
+        cache_key = f"{target_utc_dt.date().isoformat()}_{target_hour_rounded:02d}h_{lang}"
 
         cached_entry = self._cache.get(cache_key)
         if cached_entry:
@@ -46,7 +47,7 @@ class WeatherAPI:
             "id": self.city_id,
             "appid": self.api_key,
             "units": self.units,
-            "lang": "ru",  # Русский язык
+            "lang": lang,  # Язык описания погоды
         }
 
         try:
@@ -123,19 +124,19 @@ class WeatherAPI:
 
         if closest_forecast_item:
             weather_description = closest_forecast_item.get("weather", [{}])[0].get("description", "неизвестно")
-            temp = closest_forecast_item.get("main", {}).get("temp", "N/A")
-            humidity = closest_forecast_item.get("main", {}).get("humidity", "N/A")
-            wind_speed = closest_forecast_item.get("wind", {}).get("speed", "N/A")
+            temp = self._safe_number(closest_forecast_item.get("main", {}).get("temp"))
+            humidity = self._safe_number(closest_forecast_item.get("main", {}).get("humidity"))
+            wind_speed = self._safe_number(closest_forecast_item.get("wind", {}).get("speed"))
 
             icon_code = closest_forecast_item.get("weather", [{}])[0].get("icon")
             emoji = self._get_weather_emoji(icon_code)
 
             result_data = {
-                "temperature": round(temp),
+                "temperature": temp,
                 "description": weather_description,
                 "emoji": emoji,
-                "humidity": round(humidity),
-                "wind_speed": round(wind_speed),
+                "humidity": humidity,
+                "wind_speed": wind_speed,
                 "forecast_time": datetime.fromtimestamp(closest_forecast_item["dt"], tz=MOSCOW_TZ).strftime("%H:%M"),
             }
             self._cache[cache_key] = {
@@ -145,8 +146,17 @@ class WeatherAPI:
             return result_data
         return None
 
+    @staticmethod
+    def _safe_number(value):
+        try:
+            return round(float(value))
+        except (TypeError, ValueError):
+            return "N/A"
+
     def _get_weather_emoji(self, icon_code: str) -> str:
         """Преобразует код иконки OpenWeatherMap в эмодзи."""
+        if not icon_code:
+            return "❓"
         if icon_code.startswith("01"):
             return "☀️"  # Clear sky
         if icon_code.startswith("02"):

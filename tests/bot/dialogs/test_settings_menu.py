@@ -134,58 +134,32 @@ class TestSettingsDialog:
         mock_manager.done.assert_called_once()
 
     async def test_on_theme_button_click_subscribed(self, mock_manager):
-        """
-        Тест нажатия на кнопку темы подписанным пользователем.
-        """
-        # Мокаем проверку подписки (подписан)
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = "1"  # Подписан
+        """Подписанный пользователь переходит к выбору темы."""
+        from unittest.mock import patch
 
-        # Мокаем get_redis_client
-        import bot.dialogs.settings_menu as settings_module
-
-        settings_module.get_redis_client = AsyncMock(return_value=mock_redis)
-
-        # Мокаем SUBSCRIPTION_CHANNEL
-        from core.config import SUBSCRIPTION_CHANNEL
-
-        original_channel = SUBSCRIPTION_CHANNEL
-        settings_module.SUBSCRIPTION_CHANNEL = "@test_channel"
-
-        try:
-            mock_callback = AsyncMock()
-            mock_callback.from_user.id = 123
-
-            await on_theme_button_click(mock_callback, MagicMock(), mock_manager)
-
-            # Проверяем, что пользователь перешел к выбору темы
-            mock_manager.switch_to.assert_called_with(SettingsMenu.choose_theme)
-
-        finally:
-            # Восстанавливаем оригинальные функции
-            from core.config import SUBSCRIPTION_CHANNEL, get_redis_client
-
-            settings_module.get_redis_client = get_redis_client
-            settings_module.SUBSCRIPTION_CHANNEL = original_channel
-
-    async def test_on_theme_button_click_not_subscribed(self, mock_manager):
-        """
-        Тест нажатия на кнопку темы неподписанным пользователем.
-        Проверяет, что при ошибке проверки подписки пользователь всё равно переходит к выбору темы
-        (по текущей логике - при ошибках не блокируем пользователя).
-        """
-        from unittest.mock import patch, MagicMock
-        
-        # Мокаем bot для API проверки - вызываем исключение
         mock_bot = AsyncMock()
-        mock_bot.get_chat_member.side_effect = Exception("Subscription check failed")
+        member = MagicMock(status="member")
+        mock_bot.get_chat_member = AsyncMock(return_value=member)
         mock_manager.middleware_data["bot"] = mock_bot
-
         mock_callback = AsyncMock()
         mock_callback.from_user.id = 123
 
-        await on_theme_button_click(mock_callback, MagicMock(), mock_manager)
+        with patch("core.config.SUBSCRIPTION_CHANNEL", "@test_channel"):
+            await on_theme_button_click(mock_callback, MagicMock(), mock_manager)
 
-        # При ошибках пользователь переходит к выбору темы (по текущей логике)
         mock_manager.switch_to.assert_called_with(SettingsMenu.choose_theme)
 
+    async def test_on_theme_button_click_not_subscribed(self, mock_manager):
+        """Не подписанный / ошибка проверки — fail-closed, показываем гейт."""
+        from unittest.mock import patch
+
+        mock_bot = AsyncMock()
+        mock_bot.get_chat_member = AsyncMock(side_effect=Exception("Subscription check failed"))
+        mock_manager.middleware_data["bot"] = mock_bot
+        mock_callback = AsyncMock()
+        mock_callback.from_user.id = 123
+
+        with patch("core.config.SUBSCRIPTION_CHANNEL", "@test_channel"):
+            await on_theme_button_click(mock_callback, MagicMock(), mock_manager)
+
+        mock_manager.switch_to.assert_called_with(SettingsMenu.theme_subscription_gate)

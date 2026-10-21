@@ -1,5 +1,4 @@
 import asyncio
-import asyncio
 import logging
 import os
 import sys
@@ -8,7 +7,7 @@ import time
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, Message
@@ -23,7 +22,6 @@ from redis.asyncio.client import Redis
 # --- Импорты диалогов ---
 from bot.dialogs.about_menu import about_dialog
 from bot.dialogs.admin_menu import admin_dialog, on_cancel_generation
-from bot.dialogs.events_menu import events_dialog
 from bot.dialogs.feedback_menu import feedback_dialog
 from bot.dialogs.find_menu import find_dialog
 from bot.dialogs.main_menu import dialog as main_menu_dialog
@@ -36,21 +34,18 @@ from bot.dialogs.schedule_view import (
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Events, Feedback, MainMenu, Schedule, SettingsMenu
-from bot.dialogs.theme_dialog import theme_dialog
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu
 from bot.handlers.feedback_reply_handler import feedback_reply_router
 
 # --- Импорты бота ---
 from bot.handlers.inline_handlers import inline_query_handler
+from bot.middlewares.i18n_middleware import I18nMiddleware
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
-from bot.middlewares.session_middleware import SessionMiddleware
-from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
-from bot.middlewares.i18n_middleware import I18nMiddleware
+from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.subscription_filter_middleware import SubscriptionFilterMiddleware
-
-# from bot.middlewares.chat_cleanup_middleware import ChatCleanupMiddleware  # Автоочистка отключена
+from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.scheduler import setup_scheduler
 from core.alert_webhook import run_alert_webhook_server
 from core.business_alerts import start_business_monitoring
@@ -59,11 +54,9 @@ from core.business_alerts import start_business_monitoring
 from core.config import ADMIN_IDS, settings
 from core.image_generator import shutdown_image_generator
 from core.manager import TimetableManager
-from core.user_data import UserDataManager
-
 from core.telemetry import TelemetryHandles, setup_telemetry, shutdown_telemetry
-
-# from bot.utils.cleanup_bot import CleanupBot  # Автоочистка чатов отключена
+from core.text_utils import normalize_group_name
+from core.user_data import UserDataManager
 
 
 # --- НАСТРОЙКА ЛОГИРОВАНИЯ ---
@@ -79,9 +72,7 @@ def setup_logging() -> TelemetryHandles | None:
         )
 
     stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(
-        JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str)
-    )
+    stream_handler.setFormatter(JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str))
 
     handlers = [stream_handler]
     if telemetry_handles and telemetry_handles.log_handler:
@@ -95,7 +86,7 @@ def setup_logging() -> TelemetryHandles | None:
 async def set_bot_commands(bot: Bot):
     """Устанавливает меню команд для пользователей и администраторов на разных языках."""
     from core.i18n import i18n
-    
+
     # Supported languages
     languages = ["ru", "en", "zh"]
     default_lang = "ru"
@@ -105,13 +96,12 @@ async def set_bot_commands(bot: Bot):
             BotCommand(command="start", description=i18n.get("cmd_start_desc", lang=lang)),
             BotCommand(command="about", description=i18n.get("cmd_about_desc", lang=lang)),
             BotCommand(command="feedback", description=i18n.get("cmd_feedback_desc", lang=lang)),
-            BotCommand(command="events", description=i18n.get("cmd_events_desc", lang=lang)),
         ]
-        
+
         try:
             # Установка команд для конкретного языка
             await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault(), language_code=lang)
-            
+
             # Если это дефолтный язык, устанавливаем его как fallback (без language_code)
             if lang == default_lang:
                 await bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
@@ -126,7 +116,6 @@ async def set_bot_commands(bot: Bot):
             BotCommand(command="start", description=i18n.get("cmd_start_desc", lang=lang)),
             BotCommand(command="about", description=i18n.get("cmd_about_desc", lang=lang)),
             BotCommand(command="feedback", description=i18n.get("cmd_feedback_desc", lang=lang)),
-            BotCommand(command="events", description=i18n.get("cmd_events_desc", lang=lang)),
             BotCommand(command="admin", description=i18n.get("cmd_admin_desc", lang=lang)),
         ]
         for admin_id in ADMIN_IDS:
@@ -138,7 +127,7 @@ async def set_bot_commands(bot: Bot):
 
 
 # --- Обработчики команд ---
-async def start_command_handler(message: Message, dialog_manager: DialogManager):
+async def start_command_handler(message: Message, dialog_manager: DialogManager, command: CommandObject | None = None):
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     if not isinstance(user_data_manager, UserDataManager):
         logging.error("UserDataManager is not available or has an invalid type in middleware data.")
@@ -149,6 +138,18 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager)
         return
 
     try:
+        # Deep link: t.me/bot?start=group_О735Б — предпросмотр без смены сохранённой группы.
+        if command and command.args and command.args.startswith("group_"):
+            deep_group = normalize_group_name(command.args[len("group_") :])
+            timetable_manager = dialog_manager.middleware_data.get("manager")
+            if deep_group and timetable_manager and deep_group in timetable_manager._schedules:
+                await dialog_manager.start(
+                    Schedule.view,
+                    data={"group": deep_group},
+                    mode=StartMode.RESET_STACK,
+                )
+                return
+
         saved_group = await user_data_manager.get_user_group(message.from_user.id)
         if saved_group:
             await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
@@ -184,12 +185,51 @@ async def feedback_command_handler(message: Message, dialog_manager: DialogManag
     await dialog_manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
 
 
+async def override_command_handler(message: Message, command: CommandObject, dialog_manager: DialogManager):
+    """Admin-only correction: /override group|YYYY-MM-DD|HH:MM-HH:MM|subject|room|type."""
+    if not message.from_user or message.from_user.id not in ADMIN_IDS:
+        return
+    raw = (command.args or "").strip()
+    parts = [part.strip() for part in raw.split("|")]
+    if len(parts) != 6:
+        await message.answer(
+            "Формат: <code>/override группа|YYYY-MM-DD|HH:MM-HH:MM|предмет|аудитория|тип</code>",
+            parse_mode="HTML",
+        )
+        return
+    group, date_str, time_str, subject, room, lesson_type = parts
+    try:
+        from datetime import datetime as _datetime
+
+        target_date = _datetime.strptime(date_str, "%Y-%m-%d").date()
+        start_raw, end_raw = [part.strip() for part in time_str.replace("–", "-").split("-", 1)]
+        _datetime.strptime(start_raw, "%H:%M")
+        _datetime.strptime(end_raw, "%H:%M")
+    except ValueError:
+        await message.answer("❌ Неверная дата или время. Нужно YYYY-MM-DD и HH:MM-HH:MM.")
+        return
+    lesson = {
+        "time": f"{start_raw}-{end_raw}",
+        "start_time_raw": start_raw,
+        "end_time_raw": end_raw,
+        "subject": subject,
+        "type": lesson_type,
+        "room": room,
+        "teachers": "",
+        "groups": [group.upper()],
+    }
+    redis_client = dialog_manager.middleware_data.get("redis_client")
+    if not redis_client:
+        await message.answer("❌ Redis недоступен.")
+        return
+    from core.schedule_overrides import set_group_override
+
+    await set_group_override(redis_client, group, target_date, [lesson])
+    await message.answer(f"✅ Коррекция сохранена для <b>{group.upper()}</b> на {date_str}.", parse_mode="HTML")
+
+
 async def admin_command_handler(message: Message, dialog_manager: DialogManager):
     await dialog_manager.start(Admin.menu, mode=StartMode.RESET_STACK)
-
-
-async def events_command_handler(message: Message, dialog_manager: DialogManager):
-    await dialog_manager.start(Events.list, mode=StartMode.RESET_STACK)
 
 
 # --- Функции для запуска сервисов ---
@@ -237,6 +277,12 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
 
         # Остальные ошибки — логируем в JSON
         logging.error("Ошибка aiogram: %s", exc, exc_info=True)
+        try:
+            from core.metrics import ERRORS_TOTAL
+
+            ERRORS_TOTAL.labels(source="handler").inc()
+        except Exception:
+            pass
     except Exception:
         # Никогда не падаем из обработчика ошибок
         pass
@@ -245,6 +291,12 @@ async def error_handler(event=None, exception: Exception | None = None, *args, *
 
 async def main():
     print("🚀 Starting bot...")
+    try:
+        from core.metrics import RESTART_COUNT
+
+        RESTART_COUNT.inc()
+    except Exception:
+        pass
     telemetry_handles = setup_logging()  # Вызываем настройку логирования
     print("📝 Logging configured")
     load_dotenv()
@@ -272,6 +324,7 @@ async def main():
     await user_data_manager.init_db()
 
     from core.semester_settings import SemesterSettingsManager
+
     semester_settings_manager = SemesterSettingsManager(user_data_manager.async_session_maker)
     timetable_manager.set_semester_settings_manager(semester_settings_manager)
 
@@ -333,7 +386,6 @@ async def main():
         about_dialog,
         feedback_dialog,
         admin_dialog,
-        events_dialog,
     ]
     for dialog in all_dialogs:
         dp.include_router(dialog)
@@ -367,9 +419,9 @@ async def main():
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))
     dp.message.register(feedback_command_handler, Command("feedback"))
-    dp.message.register(events_command_handler, Command("events"))
     if ADMIN_IDS:
         dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
+        dp.message.register(override_command_handler, Command("override"), F.from_user.id.in_(ADMIN_IDS))
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
@@ -403,11 +455,14 @@ async def main():
         # Сначала запускаем фоновые сервисы, затем начинаем polling
         logging.info("Starting background services...")
         asyncio.create_task(run_metrics_server())
-        asyncio.create_task(run_alert_webhook_server(
-            bot, ADMIN_IDS,
-            redis_client=redis_client,
-            db_session_maker=user_data_manager.async_session_maker,
-        ))
+        asyncio.create_task(
+            run_alert_webhook_server(
+                bot,
+                ADMIN_IDS,
+                redis_client=redis_client,
+                db_session_maker=user_data_manager.async_session_maker,
+            )
+        )
         asyncio.create_task(start_business_monitoring())
         asyncio.create_task(_notify_admins_start())
 

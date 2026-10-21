@@ -1,5 +1,5 @@
-import atexit
 import asyncio
+import atexit
 import logging
 import os
 import threading
@@ -10,8 +10,8 @@ import aiohttp
 import dramatiq
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
-from dramatiq.errors import RateLimitExceeded
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from dramatiq.errors import RateLimitExceeded
 
 # Compatibility layer for RetryAfter across aiogram versions
 try:
@@ -32,20 +32,21 @@ from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarku
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
-from dramatiq.errors import RateLimitExceeded
 from dramatiq.encoder import JSONEncoder
+from dramatiq.errors import RateLimitExceeded
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
 from bot.text_formatters import generate_reminder_text
 from bot.utils.image_compression import get_telegram_safe_image_path
+from bot.utils.worker_loop import run_async
 from core.config import MEDIA_PATH, SUBSCRIPTION_CHANNEL, settings
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.image_service import ImageService
+from core.metrics import NOTIFICATION_DELIVERY
 from core.telemetry import setup_telemetry, shutdown_telemetry
 from core.user_data import UserDataManager
-from bot.utils.worker_loop import run_async
 
 load_dotenv()
 
@@ -68,9 +69,7 @@ if settings.OTEL_ENABLED:
 root_logger = logging.getLogger()
 if not root_logger.handlers:
     stream_handler = logging.StreamHandler()
-    stream_handler.setFormatter(
-        JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str)
-    )
+    stream_handler.setFormatter(JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str))
     root_logger.addHandler(stream_handler)
 
 if TELEMETRY_HANDLES and TELEMETRY_HANDLES.log_handler:
@@ -249,6 +248,7 @@ rate_limiter = AsyncLimiter(25, 1)
 
 _worker_bot = None
 
+
 async def get_worker_bot() -> Bot:
     """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
     global _worker_bot
@@ -256,18 +256,25 @@ async def get_worker_bot() -> Bot:
         # limit=15 ограничивает количество одновременных TCP-соединений
         session = AiohttpSession(timeout=45.0, limit=15)
         _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
-        
+
     return _worker_bot
 
 
 async def _mark_user_as_blocked(user_id: int) -> None:
     """Помечает пользователя как заблокировавшего бота (is_blocked = True)."""
+    udm = None
     try:
         udm = UserDataManager(db_url=settings.DATABASE_URL, redis_url=settings.REDIS_URL)
         await udm.set_user_blocked(user_id, True)
         log.info(f"User {user_id} marked as is_blocked=True in database.")
     except Exception as e:
         log.warning(f"Failed to mark user {user_id} as blocked in DB: {e}")
+    finally:
+        if udm is not None:
+            try:
+                await udm.engine.dispose()
+            except Exception:
+                pass
 
 
 async def _send_message(user_id: int, text: str):
@@ -276,12 +283,20 @@ async def _send_message(user_id: int, text: str):
         bot = await get_worker_bot()
         async with rate_limiter:
             await bot.send_message(user_id, text, disable_web_page_preview=True)
-            
+
         log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
+        try:
+            NOTIFICATION_DELIVERY.labels(delivery_status="success", notification_type="text").inc()
+        except Exception:
+            pass
         return
 
     except TelegramForbiddenError:
         log.info(f"[SEND_BLOCKED] User {user_id} blocked the bot. Marking as blocked.")
+        try:
+            NOTIFICATION_DELIVERY.labels(delivery_status="failed", notification_type="text").inc()
+        except Exception:
+            pass
         await _mark_user_as_blocked(user_id)
         return
     except TelegramBadRequest as e:
@@ -290,24 +305,24 @@ async def _send_message(user_id: int, text: str):
             await _mark_user_as_blocked(user_id)
             return
         log.error(f"BadRequest sending to {user_id}: {e}")
-        raise # Неизвестная ошибка API, отправляем на ретрай для разбора
+        raise  # Неизвестная ошибка API, отправляем на ретрай для разбора
     except RetryAfter as e:
         log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
-        raise RateLimitExceeded() 
+        raise RateLimitExceeded("telegram retry after")
     except Exception as e:
         error_msg = str(e).lower()
-        
+
         # Если ошибка соединения (мы даже не достучались до серверов Telegram) - ретраим
         if "connect call failed" in error_msg or "cannot connect" in error_msg:
             log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
-            raise 
-            
+            raise
+
         # Если это Read Timeout (мы отправили данные, но ответ завис) - НЕ РЕТРАИМ!
         # Telegram с вероятностью 99% уже доставил сообщение. Ретрай вызовет дубликат.
         if "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
-            return 
-            
+            return
+
         log.error(f"[SEND_FAIL] Unknown error sending to {user_id}: {e}")
         raise
 
@@ -334,25 +349,27 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
         raise
     except RetryAfter as e:
         log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
-        raise RateLimitExceeded()
+        raise RateLimitExceeded("telegram retry after")
     except Exception as e:
         error_msg = str(e).lower()
-        
+
         # Если ошибка соединения - ретраим
         if "connect call failed" in error_msg or "cannot connect" in error_msg:
             log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
-            raise 
-            
+            raise
+
         # Если это Read Timeout - НЕ РЕТРАИМ!
         if "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
-            return 
-            
+            return
+
         log.error(f"[COPY_FAIL] Unknown error copying message to {user_id}: {e}")
         raise
 
 
-@dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000)  # 15 мин (достаточно для сетевых задержек)
+@dramatiq.actor(
+    queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
+)  # 15 мин (достаточно для сетевых задержек)
 def send_message_task(user_id: int, text: str):
     run_async(_send_message(user_id, text))
 
@@ -362,7 +379,9 @@ def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
     run_async(_copy_message(user_id, from_chat_id, message_id))
 
 
-@dramatiq.actor(queue_name="medium_priority", max_retries=5, min_backoff=1000, time_limit=600000)  # 10 мин (больше на случай задержек сети)
+@dramatiq.actor(
+    queue_name="medium_priority", max_retries=5, min_backoff=1000, time_limit=600000
+)  # 10 мин (больше на случай задержек сети)
 def send_lesson_reminder_task(
     user_id: int,
     lesson: Dict[str, Any] | None,
@@ -387,7 +406,9 @@ def send_lesson_reminder_task(
 _generation_semaphore = threading.Semaphore(int(os.getenv("IMAGE_GENERATION_SEMAPHORE", "4")))  # Оптимизировано для 4 ядер
 
 
-@dramatiq.actor(queue_name="high_priority", max_retries=3, min_backoff=2000, time_limit=1200000)  # 20 мин (для генерации изображений, особенно при нагрузке)
+@dramatiq.actor(
+    queue_name="high_priority", max_retries=3, min_backoff=2000, time_limit=1200000
+)  # 20 мин (для генерации изображений, особенно при нагрузке)
 def generate_week_image_task(
     cache_key: str,
     week_schedule: Dict[str, Any],
@@ -401,9 +422,12 @@ def generate_week_image_task(
 ):
     # CRITICAL: Acquire semaphore in the Dramatiq thread to avoid blocking the background loop
     with _generation_semaphore:
+
         async def _inner():
             is_auto_generation = user_id is None
-            log.info(f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key} (семафор получен)")
+            log.info(
+                f"🎨 [{'АВТО' if is_auto_generation else 'USER'}] Генерация изображения для {cache_key} (семафор получен)"
+            )
 
             try:
                 redis_client = get_redis_client(decode_responses=False)
@@ -484,7 +508,9 @@ async def _send_error_message(user_id: int, error_text: str):
         log.error(f"❌ Не удалось отправить сообщение об ошибке пользователю {user_id}: {e}")
 
 
-@dramatiq.actor(queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=300000)  # 5 мин (для проверки подписки и отправки сообщений)
+@dramatiq.actor(
+    queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=300000
+)  # 5 мин (для проверки подписки и отправки сообщений)
 def check_theme_subscription_task(user_id: int, callback_data: str = None):
     """
     Проверяет подписку пользователя на канал для доступа к темам.
@@ -492,6 +518,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
     """
 
     async def _inner():
+        r = None
         try:
             r = get_redis_client(decode_responses=True)
             bot = _create_bot_with_timeout()
@@ -534,7 +561,9 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
                         # Для обыных имен каналов
                         channel_link = f"https://t.me/{channel_link}"
 
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]])
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]]
+                    )
 
                     message_text = (
                         "🎨 <b>Доступ к персональным темам</b>\n\n"
@@ -568,19 +597,28 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
 
         except Exception as e:
             log.error(f"❌ check_theme_subscription_task failed: {e}")
+        finally:
+            if r is not None:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
 
     run_async(_inner())
 
 
-@dramatiq.actor(queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=600000)  # 10 мин (для отправки изображения + проверка)
+@dramatiq.actor(
+    queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=600000
+)  # 10 мин (для отправки изображения + проверка)
 def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
     async def _inner():
+        r = None
         try:
             r = get_redis_client(decode_responses=True)
             bot = _create_bot_with_timeout()
             async with bot:
                 # ... (subscription check logic remains the same) ...
-                
+
                 # Check subscription status
                 is_subscribed = False
                 status_cache_key = f"sub_status:{user_id}"
@@ -603,10 +641,15 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
                 if not is_subscribed and SUBSCRIPTION_CHANNEL:
                     # (skip channel link generation for brevity in thought, but keep it in implementation)
                     channel_link = SUBSCRIPTION_CHANNEL
-                    if channel_link.startswith("@"): channel_link = f"https://t.me/{channel_link[1:]}"
-                    elif channel_link.startswith("-"): channel_link = f"tg://resolve?domain={channel_link}"
-                    elif not channel_link.startswith("http"): channel_link = f"https://t.me/{channel_link}"
-                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]])
+                    if channel_link.startswith("@"):
+                        channel_link = f"https://t.me/{channel_link[1:]}"
+                    elif channel_link.startswith("-"):
+                        channel_link = f"tg://resolve?domain={channel_link}"
+                    elif not channel_link.startswith("http"):
+                        channel_link = f"https://t.me/{channel_link}"
+                    kb = InlineKeyboardMarkup(
+                        inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)]]
+                    )
                     await bot.send_message(user_id, "Доступ к полному качеству по подписке на канал.", reply_markup=kb)
                     return
 
@@ -619,5 +662,11 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
                 await bot.send_document(user_id, document=doc_file, caption="📄 Оригинал расписания (полное качество)")
         except Exception as e:
             log.error(f"send_week_original_if_subscribed_task failed: {e}")
+        finally:
+            if r is not None:
+                try:
+                    await r.aclose()
+                except Exception:
+                    pass
 
     run_async(_inner())
