@@ -1,23 +1,31 @@
+import os
 from datetime import timedelta
-import pytz, os
 from pathlib import Path
+
+import pytz
 from pydantic_settings import BaseSettings
 
 # Определяем базовую директорию проекта
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Константы приложения ---
-API_URL = 'https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml'
+API_URL = "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml"
+VOENMEH_SU_API_URL = "https://voenmeh.su"
+FALLBACK_API_URL = VOENMEH_SU_API_URL
 MAP_URL = "https://voenmeh.ru/openmap/"
-CACHE_LIFETIME = timedelta(hours=12) # Время жизни кэша в Redis
-USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-DAY_MAP = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота', None]
-MOSCOW_TZ = pytz.timezone('Europe/Moscow')
+CACHE_LIFETIME = timedelta(hours=12)  # Время жизни кэша в Redis
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+)
+DAY_MAP = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", None]
+MOSCOW_TZ = pytz.timezone("Europe/Moscow")
 
 # --- Настройки базы данных и Redis ---
 # Имена ключей в Redis
 REDIS_SCHEDULE_CACHE_KEY = "timetable:schedule_cache"
 REDIS_SCHEDULE_HASH_KEY = "timetable:schedule_hash"
+REDIS_LAST_UPDATE_KEY = "timetable:last_successful_update"
+
 
 # --- Пути к медиа- и скриншот-файлам ---
 class Settings(BaseSettings):
@@ -25,7 +33,7 @@ class Settings(BaseSettings):
     REDIS_URL: str
     DATABASE_URL: str
     # RabbitMQ configuration for Dramatiq [[memory:6606082]]
-    DRAMATIQ_BROKER_URL: str | None = None  
+    DRAMATIQ_BROKER_URL: str | None = None
     RABBITMQ_USER: str | None = None
     RABBITMQ_PASSWORD: str | None = None
     MEDIA_PATH: str = "bot/media"
@@ -42,16 +50,13 @@ class Settings(BaseSettings):
     IMAGE_GENERATION_SEMAPHORE: int = 4
     IMAGE_SERVICE_SEMAPHORE: int = 2
     IMAGE_CACHE_MAX_MB: int = 750  # Increased for 8GB RAM
-    # OpenTelemetry settings
     OTEL_SERVICE_NAME: str = "voenmeh-timetable-bot"
     OTEL_ENVIRONMENT: str | None = None
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     OTEL_EXPORTER_OTLP_HEADERS: str | None = None
     OTEL_ENABLED: bool = True
-    model_config = {
-        "env_file": ".env",
-        "extra": "ignore"
-    }
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
 
 settings = Settings()
 
@@ -87,18 +92,20 @@ admin_ids_str = settings.ADMIN_ID
 ADMIN_IDS = []
 if admin_ids_str:
     try:
-        ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(',') if admin_id.strip()]
+        ADMIN_IDS = [int(admin_id.strip()) for admin_id in admin_ids_str.split(",") if admin_id.strip()]
     except ValueError:
         print("ОШИБКА: Неверный формат ADMIN_IDS. ID должны быть числами, разделенными запятой.")
-        
+
 FEEDBACK_CHAT_ID = settings.FEEDBACK_CHAT_ID
 
 # --- Подписка для полного качества изображения ---
 # Может быть ID канала (например, -1001234567890) или @username
 SUBSCRIPTION_CHANNEL = settings.SUBSCRIPTION_CHANNEL
 
+
 # --- Redis клиент ---
 def get_redis_client():
     """Возвращает Redis клиент для использования в других модулях."""
     from redis.asyncio import Redis
+
     return Redis.from_url(settings.REDIS_URL)

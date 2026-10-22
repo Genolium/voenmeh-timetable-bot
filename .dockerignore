@@ -1,3 +1,39 @@
 .venv/
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git repository
+.git/
+.github/
+
+# Test & coverage artifacts
+tests/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Large media & runtime data (handled via volumes)
+generated_images/
 bot/media/work.gif
+data/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+# Secrets and local-only files
+.env
+.env.*
+*.pem
+*.key
+*.crt
+project_code.txt
+schedules_backup_*.json
+code_collector.py
+test_themes.py
+generate_test_image.py
+generate_all_images.py
+
+test_output/

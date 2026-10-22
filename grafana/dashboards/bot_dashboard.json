@@ -333,7 +333,7 @@
     },
     {
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 89 },
-      
+
       "id": 72,
       "title": "Last Schedule Update",
       "type": "stat",

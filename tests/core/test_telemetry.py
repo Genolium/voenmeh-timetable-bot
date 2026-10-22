@@ -7,7 +7,7 @@ from core.telemetry import setup_telemetry, shutdown_telemetry
 
 
 def test_setup_telemetry_builds_providers(monkeypatch):
-    monkeypatch.setattr(telemetry_module, "_is_endpoint_reachable", lambda *args, **kwargs: True)
+    monkeypatch.setattr(telemetry_module, "_is_endpoint_reachable", lambda *_, **__: True)
 
     handles = setup_telemetry(
         service_name="test-service",
@@ -37,7 +37,7 @@ def test_setup_telemetry_returns_none_when_disabled():
 
 
 def test_setup_telemetry_returns_none_when_endpoint_unreachable(monkeypatch):
-    monkeypatch.setattr(telemetry_module, "_is_endpoint_reachable", lambda *args, **kwargs: False)
+    monkeypatch.setattr(telemetry_module, "_is_endpoint_reachable", lambda *_, **__: False)
 
     handles = setup_telemetry(
         service_name="test-service",
@@ -48,6 +48,4 @@ def test_setup_telemetry_returns_none_when_endpoint_unreachable(monkeypatch):
 
 
 def test_shutdown_telemetry_accepts_none():
-    # Should not raise even if handles is None
     shutdown_telemetry(None)
-

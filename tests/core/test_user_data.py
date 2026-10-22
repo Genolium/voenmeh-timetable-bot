@@ -1,11 +1,14 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from core.user_data import UserDataManager, cached
-from core.db import Base, User
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+
+import pytest
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+from core.db import Base, User
+from core.user_data import UserDataManager, cached
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
 
 @pytest.fixture
 async def user_data_manager():
@@ -22,12 +25,19 @@ async def user_data_manager():
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
 
+
 @pytest.fixture
 async def manager_db():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     manager = UserDataManager("sqlite+aiosqlite:///:memory:", redis_url=None)
+
+    # Mock Redis to prevent real connection and shared state
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None  # Cache miss by default
+    manager._redis_client = mock_redis
+
     manager.engine = engine
     manager.async_session_maker.configure(bind=engine)
     try:
@@ -36,6 +46,7 @@ async def manager_db():
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
+
 
 @pytest.fixture
 async def manager_with_db():
@@ -52,6 +63,7 @@ async def manager_with_db():
             await conn.run_sync(Base.metadata.drop_all)
         await engine.dispose()
 
+
 @pytest.mark.asyncio
 async def test_register_user_and_get_group(user_data_manager):
     await user_data_manager.register_user(123, "testuser")
@@ -62,15 +74,22 @@ async def test_register_user_and_get_group(user_data_manager):
     group = await user_data_manager.get_user_group(123)
     assert group == "О735Б"
 
+
 @pytest.mark.asyncio
-async def test_get_user_settings_for_unknown_user_returns_defaults(manager_db: UserDataManager):
+async def test_get_user_settings_for_unknown_user_returns_defaults(
+    manager_db: UserDataManager,
+):
     settings = await manager_db.get_user_settings(999)
     assert settings == {
         "evening_notify": False,
         "morning_summary": False,
         "lesson_reminders": False,
-        "reminder_time_minutes": 60,
+        "reminder_time_minutes": 20,
+        "theme": "standard",
+        "morning_time": "08:00",
+        "evening_time": "20:00",
     }
+
 
 @pytest.mark.asyncio
 async def test_update_setting_invalid_name_is_ignored(manager_db: UserDataManager):
@@ -81,18 +100,22 @@ async def test_update_setting_invalid_name_is_ignored(manager_db: UserDataManage
     assert settings["morning_summary"] is True
     assert settings["lesson_reminders"] is True
 
+
 @pytest.mark.asyncio
 async def test_set_reminder_time_and_retrieve(manager_db: UserDataManager):
     await manager_db.register_user(2, "u2")
     await manager_db.set_user_group(2, "G")
     await manager_db.set_reminder_time(2, 45)
     reminders = await manager_db.get_users_for_lesson_reminders()
-    assert (2, "G", 45) in reminders
+    assert (2, "G", 45, "ru") in reminders
+
 
 @pytest.mark.asyncio
 async def test_counts_methods(manager_db: UserDataManager):
-    await manager_db.register_user(10, "a"); await manager_db.set_user_group(10, "X")
-    await manager_db.register_user(11, "b"); await manager_db.set_user_group(11, "Y")
+    await manager_db.register_user(10, "a")
+    await manager_db.set_user_group(10, "X")
+    await manager_db.register_user(11, "b")
+    await manager_db.set_user_group(11, "Y")
     total = await manager_db.get_total_users_count()
     assert total == 2
     new_100 = await manager_db.get_new_users_count(100)
@@ -104,17 +127,23 @@ async def test_counts_methods(manager_db: UserDataManager):
     ids = await manager_db.get_all_user_ids()
     assert sorted(ids) == [10, 11]
 
+
 @pytest.mark.asyncio
-async def test_users_for_evening_morning_and_lesson_reminders(manager_db: UserDataManager):
-    await manager_db.register_user(1, "u1"); await manager_db.set_user_group(1, "G")
-    await manager_db.register_user(2, "u2"); await manager_db.set_user_group(2, "G")
+async def test_users_for_evening_morning_and_lesson_reminders(
+    manager_db: UserDataManager,
+):
+    await manager_db.register_user(1, "u1")
+    await manager_db.set_user_group(1, "G")
+    await manager_db.register_user(2, "u2")
+    await manager_db.set_user_group(2, "G")
     await manager_db.update_setting(2, "morning_summary", False)
     ev = await manager_db.get_users_for_evening_notify()
     mrn = await manager_db.get_users_for_morning_summary()
     rem = await manager_db.get_users_for_lesson_reminders()
-    assert sorted(ev) == [(1, 'G'), (2, 'G')]
-    assert mrn == [(1, 'G')]
-    assert rem == [(1, 'G', 20), (2, 'G', 20)]
+    assert sorted(ev) == [(1, "G", "ru", "student"), (2, "G", "ru", "student")]
+    assert mrn == [(1, "G", "ru", "student")]
+    assert rem == [(1, "G", 20, "ru"), (2, "G", 20, "ru")]
+
 
 class TestUserDataManagerWithSQLAlchemy:
     @pytest.mark.asyncio
@@ -153,7 +182,10 @@ class TestUserDataManagerWithSQLAlchemy:
             "evening_notify": True,
             "morning_summary": True,
             "lesson_reminders": True,
-            "reminder_time_minutes": 60
+            "reminder_time_minutes": 20,
+            "theme": "standard",
+            "morning_time": "08:00",
+            "evening_time": "20:00",
         }
         await manager_with_db.update_setting(456, "morning_summary", False)
         new_settings = await manager_with_db.get_user_settings(456)
@@ -200,17 +232,20 @@ class TestUserDataManagerWithSQLAlchemy:
         unsubscribed = await manager_with_db.get_unsubscribed_count()
         assert unsubscribed == 2
         breakdown = await manager_with_db.get_subscription_breakdown()
-        assert breakdown['evening'] == 2
-        assert breakdown['morning'] == 1
-        assert breakdown['reminders'] == 1
+        assert breakdown["evening"] == 2
+        assert breakdown["morning"] == 1
+        assert breakdown["reminders"] == 1
 
     @pytest.mark.asyncio
     async def test_get_group_distribution(self, manager_with_db: UserDataManager):
         for i in range(1, 4):
-            await manager_with_db.register_user(i, f"u{i}"); await manager_with_db.set_user_group(i, "A")
-        await manager_with_db.register_user(4, "u4"); await manager_with_db.set_user_group(4, "B")
+            await manager_with_db.register_user(i, f"u{i}")
+            await manager_with_db.set_user_group(i, "A")
+        await manager_with_db.register_user(4, "u4")
+        await manager_with_db.set_user_group(4, "B")
         for i in range(5, 12):
-            await manager_with_db.register_user(i, f"u{i}"); await manager_with_db.set_user_group(i, "C")
+            await manager_with_db.register_user(i, f"u{i}")
+            await manager_with_db.set_user_group(i, "C")
         dist = await manager_with_db.get_group_distribution()
         assert dist["1 студент"] == 1
         assert dist["2-5 студентов"] == 1
@@ -251,7 +286,7 @@ class TestUserDataManagerCaching:
 
         # Создаем мок Redis клиента
         mock_redis = AsyncMock()
-        cached_data = json.dumps([1, 2, 3]).encode('utf-8')
+        cached_data = json.dumps([1, 2, 3]).encode("utf-8")
         mock_redis.get.return_value = cached_data
         mock_redis.setex = AsyncMock()
         manager_with_db._redis_client = mock_redis
@@ -259,7 +294,7 @@ class TestUserDataManagerCaching:
         # Создаем тестовую функцию с декоратором
         @cached(ttl=60)
         async def test_function(self, x: int) -> list:
-            return [x, x+1, x+2]  # Эта строка не должна выполниться
+            return [x, x + 1, x + 2]  # Эта строка не должна выполниться
 
         # Вызываем функцию
         result = await test_function(manager_with_db, 1)
@@ -281,8 +316,14 @@ class TestUserDataManagerCaching:
 
         # Настраиваем scan для возврата ключей
         mock_redis.scan.side_effect = [
-            (0, [b'cache:get_users_for_evening_notify:123', b'cache:get_users_for_morning_summary:456']),
-            (0, [])  # Конец сканирования
+            (
+                0,
+                [
+                    b"cache:get_users_for_evening_notify:123",
+                    b"cache:get_users_for_morning_summary:456",
+                ],
+            ),
+            (0, []),  # Конец сканирования
         ]
 
         # Вызываем очистку кэша
@@ -309,11 +350,11 @@ class TestUserDataManagerCaching:
         manager_with_db._redis_client = None
         manager_with_db._redis_url = None
 
-        # Мокаем get_redis_client
-        with pytest.mock.patch('core.config.get_redis_client') as mock_get_redis:
-            mock_redis = AsyncMock()
-            mock_get_redis.return_value = mock_redis
+        # Мокаем get_redis_client как async функцию
+        from unittest.mock import patch
 
+        mock_redis = AsyncMock()
+        with patch("core.config.get_redis_client", MagicMock(return_value=mock_redis)) as mock_get_redis:
             result = await manager_with_db._get_redis_client()
 
             assert result == mock_redis
@@ -330,15 +371,15 @@ class TestUserDataManagerCaching:
 
         # Настраиваем scan для возврата ключей
         mock_redis.scan.side_effect = [
-            (0, [b'cache:get_users_for_evening_notify:123']),
-            (0, [])  # Конец сканирования
+            (0, [b"cache:get_users_for_evening_notify:123"]),
+            (0, []),  # Конец сканирования
         ]
 
         # Регистрируем пользователя
         await manager_with_db.register_user(123, "testuser")
 
-        # Проверяем, что кэш был очищен
-        mock_redis.delete.assert_called()
+        # Проверяем, что кэш НЕ был очищен (оптимизация)
+        mock_redis.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_invalidation_on_group_update(self, manager_with_db):
@@ -351,8 +392,8 @@ class TestUserDataManagerCaching:
 
         # Настраиваем scan для возврата ключей
         mock_redis.scan.side_effect = [
-            (0, [b'cache:get_users_for_morning_summary:456']),
-            (0, [])  # Конец сканирования
+            (0, [b"cache:get_users_for_morning_summary:456"]),
+            (0, []),  # Конец сканирования
         ]
 
         # Регистрируем и устанавливаем группу
@@ -373,8 +414,8 @@ class TestUserDataManagerCaching:
 
         # Настраиваем scan для возврата ключей
         mock_redis.scan.side_effect = [
-            (0, [b'cache:get_users_for_lesson_reminders:789']),
-            (0, [])  # Конец сканирования
+            (0, [b"cache:get_users_for_lesson_reminders:789"]),
+            (0, []),  # Конец сканирования
         ]
 
         # Регистрируем пользователя и обновляем настройки
@@ -442,7 +483,7 @@ class TestUserDataManagerCaching:
         # Регистрируем пользователя
         await user_data_manager.register_user(12345, "test_user")
 
-        valid_themes = ["standard", "light", "dark", "classic", "coffee"]
+        valid_themes = user_data_manager.VALID_THEMES
 
         for theme in valid_themes:
             # Устанавливаем тему

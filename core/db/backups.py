@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import os
 from dataclasses import dataclass
 from datetime import datetime
@@ -47,10 +48,6 @@ async def _run_subprocess(
     env: Optional[dict[str, str]] = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> None:
-    """
-    Run a subprocess command asynchronously and raise BackupError on failure.
-    """
-
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -80,10 +77,6 @@ def _prepare_connection_env(info: DatabaseConnectionInfo) -> dict[str, str]:
 
 
 def _sanitize_dump_file(sql_path: Path) -> None:
-    """
-    Remove SET statements that reference settings unsupported by the target server.
-    """
-
     try:
         original = sql_path.read_text(encoding="utf-8")
     except FileNotFoundError:
@@ -106,10 +99,6 @@ async def create_db_backup(
     filename_prefix: str = "db_backup",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> Path:
-    """
-    Create a PostgreSQL database backup using pg_dump and return the resulting file path.
-    """
-
     db_url = os.getenv("DATABASE_URL")
     if not db_url:
         raise BackupError("DATABASE_URL environment variable is not set.")
@@ -153,10 +142,6 @@ async def restore_db_backup(
     *,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> None:
-    """
-    Restore a PostgreSQL database from the provided SQL dump file using psql.
-    """
-
     if not sql_file.exists():
         raise BackupError(f"Backup file {sql_file} does not exist.")
 
@@ -166,6 +151,8 @@ async def restore_db_backup(
 
     conn = DatabaseConnectionInfo.from_url(db_url)
     env = _prepare_connection_env(conn)
+
+    _sanitize_dump_file(sql_file)
 
     cmd = [
         "psql",
@@ -183,6 +170,13 @@ async def restore_db_backup(
         str(sql_file),
     ]
 
-    _sanitize_dump_file(sql_file)
     await _run_subprocess(*cmd, env=env, timeout=timeout)
 
+
+def maybe_decompress_gzip(source: Path) -> Path:
+    if source.suffix.lower() != ".gz":
+        return source
+    target = source.with_suffix("")
+    with gzip.open(source, "rb") as src, open(target, "wb") as dst:
+        dst.write(src.read())
+    return target

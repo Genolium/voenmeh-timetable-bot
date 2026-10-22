@@ -6,6 +6,7 @@ from aiogram.types import TelegramObject
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
 
+from bot.middlewares.event_utils import extract_event_type, extract_from_user
 from core.metrics import EVENTS_PROCESSED, HANDLER_DURATION
 
 logger = logging.getLogger(__name__)
@@ -19,11 +20,10 @@ class LoggingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        user_id = "N/A"
-        if hasattr(event, "from_user") and getattr(event.from_user, "id", None):
-            user_id = event.from_user.id
+        from_user = extract_from_user(event)
+        user_id = getattr(from_user, "id", "N/A") if from_user is not None else "N/A"
 
-        event_type = type(event).__name__
+        event_type = extract_event_type(event)
 
         EVENTS_PROCESSED.labels(event_type=event_type).inc()
 
@@ -45,13 +45,13 @@ class LoggingMiddleware(BaseMiddleware):
             "aiogram.handler": handler_name,
         }
 
-        with tracer.start_as_current_span(
-            "aiogram.event",
-            attributes=span_attributes,
-        ) as span, HANDLER_DURATION.labels(handler_name=handler_name).time():
+        with (
+            tracer.start_as_current_span("aiogram.event", attributes=span_attributes) as span,
+            HANDLER_DURATION.labels(handler_name=handler_name).time(),
+        ):
             try:
                 return await handler(event, data)
-            except Exception as error:  # pylint: disable=broad-except
+            except Exception as error:  # pragma: no cover
                 span.record_exception(error)
                 span.set_status(Status(StatusCode.ERROR, str(error)))
                 adapter.error("Exception caught in handler", exc_info=True)
