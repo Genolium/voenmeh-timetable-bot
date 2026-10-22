@@ -18,7 +18,7 @@ addopts = "-p no:cacheprovider"
 
 [tool.coverage.run]
 source = ["bot", "core"]
-branch = false
+branch = true
 
 [tool.coverage.report]
 show_missing = true

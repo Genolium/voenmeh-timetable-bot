@@ -369,6 +369,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
     old_hash = (await redis_client.get(REDIS_SCHEDULE_HASH_KEY) or b"").decode()
     # Add retries
     attempts = 0
+    new_schedule_data = None
     while attempts < 3:
         try:
             new_schedule_data = await fetch_and_parse_all_schedules()
@@ -383,15 +384,14 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
                 async with AlertSender({}) as sender:
                     await sender.send({"severity": "critical", "summary": "Schedule parse failed"})
-                return
+
+    if new_schedule_data is None:
+        # Бюджет попыток исчерпан: сохраняем прежнее расписание.
+        logger.critical("Schedule parse failed after retries; keeping the previous schedule.")
+        return
 
     # For race condition: Use Redis lock
     async with redis_client.lock("timetable_manager_update_lock", timeout=300, blocking_timeout=120):
-        if new_schedule_data is None:
-            logger.info("Данные расписания не изменились или недоступны (условный запрос).")
-            # Freshness обновляется только после успешного получения данных.
-            return
-
         if not new_schedule_data:
             logger.error("Не удалось получить расписание с сервера вуза.")
             # Проверяем, есть ли актуальные данные в основном кэше

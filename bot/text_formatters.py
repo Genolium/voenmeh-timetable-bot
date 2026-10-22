@@ -624,41 +624,42 @@ def generate_reminder_text(
     else:
         return None
 
-    if lesson:
-        subject = lesson.get("subject", "N/A")
-        type_str = lesson.get("type", "N/A")
-        time_str = lesson.get("time", "N/A")
+    # К этому месту lesson гарантированно непустой: обе ветки ("first"/"break")
+    # требуют непустую пару, а "final" возвращается раньше.
+    subject = lesson.get("subject", "N/A")
+    type_str = lesson.get("type", "N/A")
+    time_str = lesson.get("time", "N/A")
 
-        # We construct the lesson detail string.
-        # This part was hardcoded: <b>{subject}</b> ({type}) в <b>{time}</b>
-        # Let's verify if we extracted a template for this. Checking i18n...
-        # I didn't add a specific template for this line in previous steps!
-        # I should add it or construct it here.
-        # "reminder_lesson_template" was in my thought plan but I might have missed it in json or used a different name.
-        # Checking JSON keys I added... I missed "reminder_lesson_template".
-        # I will use a default format here, or hardcode the generic structure which is fairly universal:
-        # Subject (Type) at Time
+    # We construct the lesson detail string.
+    # This part was hardcoded: <b>{subject}</b> ({type}) в <b>{time}</b>
+    # Let's verify if we extracted a template for this. Checking i18n...
+    # I didn't add a specific template for this line in previous steps!
+    # I should add it or construct it here.
+    # "reminder_lesson_template" was in my thought plan but I might have missed it in json or used a different name.
+    # Checking JSON keys I added... I missed "reminder_lesson_template".
+    # I will use a default format here, or hardcode the generic structure which is fairly universal:
+    # Subject (Type) at Time
 
-        text += f"<b>{esc(subject)}</b> ({esc(type_str)}) "
-        # "в" is Russian specific.
-        # I should probably use a small helper or just " @ " or similar, or better yet, add to i18n.
-        # For now to be safe, I'll use a neutral format or try my best.
-        # Actually I can use i18n.get("fmt_time_at", lang) if I had it.
-        # Let's assume standard format for now: "Time: 12:00" or similar.
-        # Or just keep it simple: <b>Subject</b> (Type)\n🕒 <b>Time</b>
+    text += f"<b>{esc(subject)}</b> ({esc(type_str)}) "
+    # "в" is Russian specific.
+    # I should probably use a small helper or just " @ " or similar, or better yet, add to i18n.
+    # For now to be safe, I'll use a neutral format or try my best.
+    # Actually I can use i18n.get("fmt_time_at", lang) if I had it.
+    # Let's assume standard format for now: "Time: 12:00" or similar.
+    # Or just keep it simple: <b>Subject</b> (Type)\n🕒 <b>Time</b>
 
-        # Wait, I can perform a quick fix on JSON later if needed.
-        # For now I will use: "🕒 <b>{time}</b>"
+    # Wait, I can perform a quick fix on JSON later if needed.
+    # For now I will use: "🕒 <b>{time}</b>"
 
-        text += f"\n🕒 <b>{time_str}</b>\n"
+    text += f"\n🕒 <b>{time_str}</b>\n"
 
-        info_parts = [f"📍 {esc(room)}" for room in [lesson.get("room")] if room]
-        if teachers := lesson.get("teachers"):
-            # Use localized "with {teachers}" format
-            teacher_fmt = i18n.get("fmt_teacher_with", lang)
-            info_parts.append(teacher_fmt.format(teachers=teachers))
+    info_parts = [f"📍 {esc(room)}" for room in [lesson.get("room")] if room]
+    if teachers := lesson.get("teachers"):
+        # Use localized "with {teachers}" format
+        teacher_fmt = i18n.get("fmt_teacher_with", lang)
+        info_parts.append(teacher_fmt.format(teachers=teachers))
 
-        if info_parts:
-            text += " ".join(info_parts)
+    if info_parts:
+        text += " ".join(info_parts)
 
     return text + i18n.get("unsubscribe_footer", lang)

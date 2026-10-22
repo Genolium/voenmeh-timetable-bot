@@ -34,6 +34,10 @@ from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.encoder import JSONEncoder
 from dramatiq.errors import RateLimitExceeded
+from dramatiq.middleware import Middleware
+from dramatiq.middleware.retries import Retries
+from dramatiq.middleware.time_limit import TimeLimit
+from dramatiq.results.backends import RedisBackend
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
@@ -105,46 +109,9 @@ def get_redis_client(decode_responses: bool = False):
 
 
 # --- Конфигурация брокера RabbitMQ ---
-broker_url = os.getenv("DRAMATIQ_BROKER_URL")
-rabbitmq_broker = None
-if broker_url:
-    # Configure RabbitMQ broker with URL-based configuration
-    # Connection parameters are handled via rabbitmq.conf and retry middleware
-    rabbitmq_broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
-    # Настройка энкодера
-    rabbitmq_broker.encoder = JSONEncoder()
-else:
-    # В тестовой/CI-среде допускаем отсутствие брокера: используем StubBroker
-    try:
-        from dramatiq.brokers.stub import StubBroker
-
-        rabbitmq_broker = StubBroker()
-    except Exception:
-        # В крайнем случае — создаём in-memory stub через стандартный Broker API
-        from dramatiq import Broker
-
-        class _NoopBroker(Broker):
-            def __init__(self):
-                super().__init__()
-
-            def declare_actor(self, actor):
-                return
-
-            def enqueue(self, message, *, delay=None):
-                return
-
-        rabbitmq_broker = _NoopBroker()
-
-# Add retry middleware for better connection stability
-from dramatiq.middleware import Middleware
-from dramatiq.middleware.retries import Retries
-from dramatiq.middleware.time_limit import TimeLimit
-from dramatiq.results.backends import RedisBackend
-
-
 # Enhanced retry middleware with exponential backoff for RabbitMQ connection issues
 class RobustRetries(Retries):
-    """Enhanced retry middleware with better handling for connection issues."""
+    """Enhanced retry middleware with exponential backoff for RabbitMQ connection issues."""
 
     def after_process_message(self, broker, message, *, result=None, exception=None):
         if exception is not None:
@@ -176,59 +143,103 @@ class RobustRetries(Retries):
         super().after_process_message(broker, message, result=result, exception=exception)
 
 
-# Configure middleware stack with guards against duplicates
-rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
-try:
-    if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
-        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))  # 30 minutes (соответствует RabbitMQ consumer_timeout)
-except Exception:
-    # Fallback: attempt to add once; ignore if duplicated by framework
+def _configure_broker_middleware(broker) -> None:
+    """Навешивает middleware на брокер с защитой от дублей."""
+    broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
     try:
-        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
+        if not any(isinstance(m, TimeLimit) for m in getattr(broker, "middleware", [])):
+            broker.add_middleware(TimeLimit(time_limit=1800000))  # 30 минут (RabbitMQ consumer_timeout)
     except Exception:
-        pass
+        # Fallback: attempt to add once; ignore if duplicated by framework
+        try:
+            broker.add_middleware(TimeLimit(time_limit=1800000))
+        except Exception:
+            pass
 
-# Note: Connection stability is enhanced via rabbitmq.conf settings,
-# connection pooling config above, and robust retry middleware
 
-dramatiq.set_broker(rabbitmq_broker)
+def _create_noop_broker():
+    """Минимальный in-memory брокер на случай отсутствия dramatiq StubBroker."""
+    from dramatiq import Broker
 
-# --- Harden broker URL defaults if missing heartbeat/timeouts ---
-if broker_url:
-    try:
-        # Append sane defaults if not present in URL
-        # Works for amqp and amqps URLs
-        from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+    class _NoopBroker(Broker):
+        def __init__(self):
+            super().__init__()
+            self.encoder = JSONEncoder()
 
-        _parsed = urlparse(broker_url)
-        _q = dict(parse_qsl(_parsed.query, keep_blank_values=True))
-        _q.setdefault("heartbeat", "600")  # Большой heartbeat для жёсткой нагрузки
-        _q.setdefault("blocked_connection_timeout", "600")  # Больше времени на блокированное соединение
-        _q.setdefault("connection_attempts", "10")
-        _q.setdefault("retry_delay", "5")
-        # Ensure socket-level timeout to avoid lingering dead connections
-        _q.setdefault("socket_timeout", "20")
-        if _q != dict(parse_qsl(_parsed.query, keep_blank_values=True)):
-            _new = _parsed._replace(query=urlencode(_q))
-            broker_url = urlunparse(_new)
-            # Reconfigure broker with new URL only if different
-            if getattr(rabbitmq_broker, "url", None) != broker_url:
-                rabbitmq_broker.close()
-                rabbitmq_broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
-                rabbitmq_broker.encoder = JSONEncoder()
-                rabbitmq_broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
-                try:
-                    if not any(isinstance(m, TimeLimit) for m in getattr(rabbitmq_broker, "middleware", [])):
-                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
-                except Exception:
+        def declare_actor(self, actor):
+            return
+
+        def enqueue(self, message, *, delay=None):
+            return
+
+    return _NoopBroker()
+
+
+def _create_broker(broker_url: str | None):
+    """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
+    if broker_url:
+        # Connection parameters are handled via rabbitmq.conf and retry middleware
+        broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
+    else:
+        try:
+            from dramatiq.brokers.stub import StubBroker
+
+            broker = StubBroker()
+        except Exception:
+            broker = _create_noop_broker()
+    # Энкодер должен совпадать с production, иначе сообщения сериализуются по-разному.
+    broker.encoder = JSONEncoder()
+    _configure_broker_middleware(broker)
+    return broker
+
+
+def _harden_broker_url(broker_url: str) -> tuple[str, bool]:
+    """Добавляет разумные таймауты в URL брокера. Возвращает (url, changed)."""
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(broker_url)
+    original = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query = dict(original)
+    query.setdefault("heartbeat", "600")  # Большой heartbeat для жёсткой нагрузки
+    query.setdefault("blocked_connection_timeout", "600")  # Больше времени на блокированное соединение
+    query.setdefault("connection_attempts", "10")
+    query.setdefault("retry_delay", "5")
+    # Ensure socket-level timeout to avoid lingering dead connections
+    query.setdefault("socket_timeout", "20")
+    if query == original:
+        return broker_url, False
+    return urlunparse(parsed._replace(query=urlencode(query))), True
+
+
+def _setup_broker(broker_url: str | None):
+    """Создаёт брокер, применяет жёсткие таймауты к URL и регистрирует его в Dramatiq."""
+    broker = _create_broker(broker_url)
+    dramatiq.set_broker(broker)
+
+    # --- Harden broker URL defaults if missing heartbeat/timeouts ---
+    if broker_url:
+        try:
+            hardened_url, changed = _harden_broker_url(broker_url)
+            if changed:
+                broker_url = hardened_url
+                # Reconfigure broker with new URL only if different
+                if getattr(broker, "url", None) != broker_url:
                     try:
-                        rabbitmq_broker.add_middleware(TimeLimit(time_limit=1800000))
+                        broker.close()
                     except Exception:
                         pass
-                dramatiq.set_broker(rabbitmq_broker)
-    except Exception:
-        # Do not fail worker on URL tweak errors
-        pass
+                    broker = _create_broker(broker_url)
+                    dramatiq.set_broker(broker)
+        except Exception:
+            # Do not fail worker on URL tweak errors
+            pass
+    return broker, broker_url
+
+
+broker_url = os.getenv("DRAMATIQ_BROKER_URL")
+# Note: Connection stability is enhanced via rabbitmq.conf settings,
+# connection pooling config above, and robust retry middleware
+rabbitmq_broker, broker_url = _setup_broker(broker_url)
 
 # Redis-клиент для других нужд (не для брокера)
 redis_url = os.getenv("REDIS_URL")
@@ -452,21 +463,22 @@ def generate_week_image_task(
                     # Используем контекстный менеджер для корректного закрытия сессии бота
                     assert bot_for_images is not None
                     async with bot_for_images:
-                        # Вычисляем тему пользователя, если доступен user_id
+                        # Вычисляем тему пользователя. В этой ветке user_id всегда задан,
+                        # т.к. авто-генерация обрабатывается выше.
                         user_theme = None
-                        if user_id is not None:
-                            db_url = os.getenv("DATABASE_URL")
-                            if db_url:
-                                udm = UserDataManager(db_url=db_url, redis_url=redis_url)
+                        assert user_id is not None
+                        db_url = os.getenv("DATABASE_URL")
+                        if db_url:
+                            udm = UserDataManager(db_url=db_url, redis_url=redis_url)
+                            try:
+                                user_theme = await udm.get_user_theme(user_id)
+                            except Exception:
+                                user_theme = None
+                            finally:
                                 try:
-                                    user_theme = await udm.get_user_theme(user_id)
+                                    await udm.engine.dispose()
                                 except Exception:
-                                    user_theme = None
-                                finally:
-                                    try:
-                                        await udm.engine.dispose()
-                                    except Exception:
-                                        pass
+                                    pass
                         success, _ = await image_service.get_or_generate_week_image(
                             group=group,
                             week_key=week_key,

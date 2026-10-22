@@ -7,6 +7,7 @@ CI enables them because Docker is available on ubuntu-latest.
 import os
 import socket
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +17,18 @@ from testcontainers.community.rabbitmq import RabbitMqContainer
 from testcontainers.community.redis import RedisContainer
 
 from core.manager import TimetableManager
+
+
+def _ensure_docker_host() -> None:
+    """На Docker Desktop сокет лежит в ~/.docker/run, а не в /var/run."""
+    if os.getenv("DOCKER_HOST"):
+        return
+    desktop_socket = Path.home() / ".docker" / "run" / "docker.sock"
+    if desktop_socket.exists():
+        os.environ["DOCKER_HOST"] = f"unix://{desktop_socket}"
+
+
+_ensure_docker_host()
 
 pytestmark = [
     pytest.mark.integration,

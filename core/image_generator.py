@@ -544,8 +544,8 @@ async def generate_schedule_image(
                                 page.set_default_timeout(60000)
                                 page.set_default_navigation_timeout(60000)
 
-                if last_error is not None:
-                    logging.error(f"Генерация для {group} не удалась: {last_error}")
+                # Сюда попадаем только после неудачи генерации.
+                logging.error(f"Генерация для {group} не удалась: {last_error}")
                 return False
             finally:
                 try:

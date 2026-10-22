@@ -59,6 +59,8 @@ __pycache__/
 # #################### #
 code_collector.py
 *.txt
+# Файлы зависимостей должны попадать в репозиторий
+!requirements*.txt
 *.log
 *.log.*
 npm-debug.log*
