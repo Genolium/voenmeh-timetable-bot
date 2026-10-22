@@ -158,6 +158,9 @@ jobs:
     needs: [test, lint]
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
 
+    env:
+      IMAGE_NAME: genolium/voenmeh-timetable-bot
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -165,17 +168,46 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
+    - name: Set up QEMU (multi-arch build)
+      uses: docker/setup-qemu-action@v3
+
+    # Все секреты проекта живут в .env. На раннере с .env (self-hosted)
+    # читаем их оттуда; если раннер без .env — пробуем репозиторные секреты.
+    - name: Resolve Docker Hub credentials
+      env:
+        SECRET_DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        SECRET_DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+      run: |
+        set -a
+        if [ -f .env ]; then
+          . ./.env
+          set +a
+          echo "Файл .env найден — используем DOCKER_* из него"
+        fi
+        USERNAME="${DOCKER_USERNAME:-$SECRET_DOCKER_USERNAME}"
+        PASSWORD="${DOCKER_PASSWORD:-$SECRET_DOCKER_PASSWORD}"
+        if [ -n "$USERNAME" ] && [ -n "$PASSWORD" ]; then
+          echo "DOCKER_USERNAME=$USERNAME" >> "$GITHUB_ENV"
+          echo "DOCKER_PASSWORD=$PASSWORD" >> "$GITHUB_ENV"
+          echo "docker_creds=available" >> "$GITHUB_ENV"
+          echo "Креды найдены — образ будет опубликован"
+        else
+          echo "docker_creds=none" >> "$GITHUB_ENV"
+          echo "Кредов нет — образ только собирается, публикация пропущена"
+        fi
+
     - name: Log in to Docker Hub
+      if: env.docker_creds == 'available'
       uses: docker/login-action@v3
       with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+        username: ${{ env.DOCKER_USERNAME }}
+        password: ${{ env.DOCKER_PASSWORD }}
 
     - name: Extract metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
-        images: genolium/voenmeh-timetable-bot
+        images: ${{ env.IMAGE_NAME }}
         tags: |
           type=ref,event=branch
           type=ref,event=pr
@@ -183,6 +215,7 @@ jobs:
           type=raw,value=latest,enable={{is_default_branch}}
 
     - name: Build and push Docker image
+      if: env.docker_creds == 'available'
       uses: docker/build-push-action@v5
       with:
         context: .
@@ -192,6 +225,20 @@ jobs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
         platforms: linux/amd64,linux/arm64
+
+    # Публикация недоступна (нет .env и нет репозиторных секретов) —
+    # всё равно проверяем, что образ собирается.
+    - name: Build Docker image (verification only)
+      if: env.docker_creds != 'available'
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        platforms: linux/amd64
 
   # Деплой на staging (для develop ветки)
   deploy-staging:
