@@ -60,6 +60,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
+        pip install -r requirements.lock
         pip install -r requirements-dev.txt
 
     - name: Wait for databases
@@ -84,6 +85,7 @@ jobs:
         DATABASE_URL: postgresql://test:test@localhost:5432/test_db
         REDIS_URL: redis://localhost:6379/0
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        RUN_INTEGRATION: "1"
       run: |
         pytest --cov=bot --cov=core --cov-report=xml --cov-report=term-missing --cov-fail-under=100 --tb=short
 

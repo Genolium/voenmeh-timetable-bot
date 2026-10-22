@@ -11,6 +11,9 @@ skip = ["migrations", "tests"]
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: requires Docker/testcontainers",
+]
 addopts = "-p no:cacheprovider"
 
 [tool.coverage.run]
