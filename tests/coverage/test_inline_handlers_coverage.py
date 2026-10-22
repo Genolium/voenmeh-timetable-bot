@@ -6,12 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from bot.handlers import inline_handlers as ih
-from bot.handlers.inline_handlers import (
-    DAY_ALIASES,
-    _send_schedule_result,
-    inline_query_handler,
-    parse_day_from_query,
-)
+from bot.handlers.inline_handlers import DAY_ALIASES, _send_schedule_result, inline_query_handler, parse_day_from_query
 from core.config import MOSCOW_TZ
 
 

@@ -11,11 +11,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from core.db.models import Base, RequiredChannel
-from core.subscription_filter import (
-    KEY_CHANNELS_LIST,
-    KEY_FILTER_ENABLED,
-    SubscriptionFilterManager,
-)
+from core.subscription_filter import KEY_CHANNELS_LIST, KEY_FILTER_ENABLED, SubscriptionFilterManager
 
 
 @pytest.fixture

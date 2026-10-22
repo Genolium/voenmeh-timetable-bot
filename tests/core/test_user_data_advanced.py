@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from core.user_data import UserDataManager
-from core.db import User
+
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.db import User
+from core.user_data import UserDataManager
 
 
 @pytest.fixture

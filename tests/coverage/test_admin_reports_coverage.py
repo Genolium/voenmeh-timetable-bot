@@ -8,12 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.admin_reports import (
-    AdminReportsGenerator,
-    send_daily_reports,
-    send_monthly_reports,
-    send_weekly_reports,
-)
+from core.admin_reports import AdminReportsGenerator, send_daily_reports, send_monthly_reports, send_weekly_reports
 
 STATS = (
     1000,

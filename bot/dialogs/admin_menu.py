@@ -41,6 +41,53 @@ def _is_cancel(text: str) -> bool:
     return raw in {"отмена", "cancel", "отменить"}
 
 
+async def on_override_input(message: Message, message_input: MessageInput, manager: DialogManager):
+    """Админская коррекция: group|YYYY-MM-DD|HH:MM-HH:MM|subject|room|type."""
+    parts = [part.strip() for part in (message.text or "").split("|")]
+    if len(parts) != 6:
+        await message.answer(
+            "Формат: <code>группа|YYYY-MM-DD|HH:MM-HH:MM|предмет|аудитория|тип</code>",
+            parse_mode="HTML",
+        )
+        return
+    group, date_str, time_str, subject, room, lesson_type = parts
+    try:
+        from datetime import datetime as _datetime
+
+        target_date = _datetime.strptime(date_str, "%Y-%m-%d").date()
+        start_raw, end_raw = [part.strip() for part in time_str.replace("–", "-").split("-", 1)]
+        _datetime.strptime(start_raw, "%H:%M")
+        _datetime.strptime(end_raw, "%H:%M")
+    except ValueError:
+        await message.answer("❌ Неверная дата или время.")
+        return
+    redis_client = manager.middleware_data.get("redis_client")
+    if not redis_client:
+        await message.answer("❌ Redis недоступен.")
+        return
+    from core.schedule_overrides import set_group_override
+
+    await set_group_override(
+        redis_client,
+        group,
+        target_date,
+        [
+            {
+                "time": f"{start_raw}-{end_raw}",
+                "start_time_raw": start_raw,
+                "end_time_raw": end_raw,
+                "subject": subject,
+                "type": lesson_type,
+                "room": room,
+                "teachers": "",
+                "groups": [group.upper()],
+            }
+        ],
+    )
+    await message.answer(f"✅ Коррекция сохранена для <b>{group.upper()}</b> на {date_str}.", parse_mode="HTML")
+    await manager.switch_to(Admin.menu)
+
+
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
@@ -1079,6 +1126,7 @@ admin_dialog = Dialog(
         ),
         Row(
             SwitchTo(Const("👤 Пользователи"), id="section_users", state=Admin.enter_user_id),
+            SwitchTo(Const("✏️ Коррекция расписания"), id="section_override", state=Admin.schedule_override),
         ),
         Row(
             SwitchTo(Const("📊 Статистика"), id=WidgetIds.STATS, state=Admin.stats),
@@ -1211,6 +1259,12 @@ admin_dialog = Dialog(
         MessageInput(on_broadcast_received, content_types=[ContentType.ANY]),
         SwitchTo(Const("◀️ В админ-панель"), id="broadcast_back", state=Admin.menu),
         state=Admin.broadcast,
+    ),
+    Window(
+        Const("✏️ Коррекция расписания\n\n" "Введите: группа|YYYY-MM-DD|HH:MM-HH:MM|предмет|аудитория|тип"),
+        MessageInput(on_override_input, content_types=[ContentType.TEXT]),
+        SwitchTo(Const("◀️ В админ-панель"), id="override_back", state=Admin.menu),
+        state=Admin.schedule_override,
     ),
     Window(
         Const("Введите ID пользователя для управления:"),

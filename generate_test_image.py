@@ -82,7 +82,7 @@ async def main():
         for week_name, week_slug in week_types:
             filename = f"test_schedule_{week_slug}_{lang}.png"
             output_path = output_dir / filename
-            
+
             # For non-ru languages, we might want to change the week name passed to the function
             # checking core/image_generator.py... it uses week_type string to determine odd/even logic:
             # week_slug = "odd" if "Неч" in week_type else "even"
@@ -93,14 +93,14 @@ async def main():
             # i18n_week_type = i18n.get("week_odd" if week_slug == "odd" else "week_even", current_lang)
             # So the input `week_type` is only used for detection if it contains "Неч".
             # Let's pass the Russian string ensuring it works for detection.
-            
+
             success = await generate_schedule_image(
-                schedule_data=test_data, 
-                week_type=week_name, 
-                group="TEST_GROUP", 
-                output_path=str(output_path), 
+                schedule_data=test_data,
+                week_type=week_name,
+                group="TEST_GROUP",
+                output_path=str(output_path),
                 user_theme=None,
-                lang=lang
+                lang=lang,
             )
 
             counter += 1

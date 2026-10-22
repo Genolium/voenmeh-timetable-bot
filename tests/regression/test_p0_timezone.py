@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from core.time_utils import now_msk_naive, to_msk_naive
 from core.config import MOSCOW_TZ
+from core.time_utils import now_msk_naive, to_msk_naive
 
 
 def test_now_msk_naive_matches_moscow_time_without_tzinfo():

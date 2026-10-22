@@ -695,3 +695,21 @@ async def test_graduated_delete_errors_are_swallowed(monkeypatch):
     udm.get_students_with_groups.return_value = [(2, "OLD")]
     redis.incr.return_value = 2
     await sched.handle_graduated_groups(udm, tm, redis)
+
+
+async def test_monitor_image_invalidation_error_is_swallowed(monkeypatch):
+    redis = make_redis()
+    redis.get.return_value = b"old"
+    monkeypatch.setattr(
+        sched,
+        "fetch_and_parse_all_schedules",
+        AsyncMock(return_value={"__current_xml_hash__": "new"}),
+    )
+    monkeypatch.setattr(sched, "TimetableManager", lambda *a: MagicMock(save_to_cache=AsyncMock()))
+    monkeypatch.setattr(sched, "send_schedule_diff_notifications", AsyncMock(return_value={"G1"}))
+    monkeypatch.setattr(
+        "core.image_cache_manager.invalidate_generated_images_for_groups",
+        AsyncMock(side_effect=RuntimeError("cache down")),
+    )
+    monkeypatch.setattr(sched, "manager_ref", None)
+    await sched.monitor_schedule_changes(make_udm(), redis, MagicMock())

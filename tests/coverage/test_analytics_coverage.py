@@ -5,12 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.analytics import (
-    FEATURE_KEY_PREFIX,
-    generate_dynamics_chart,
-    get_top_features,
-    track_feature_click,
-)
+from core.analytics import FEATURE_KEY_PREFIX, generate_dynamics_chart, get_top_features, track_feature_click
 
 
 def _daily_key(days_ago: int) -> str:

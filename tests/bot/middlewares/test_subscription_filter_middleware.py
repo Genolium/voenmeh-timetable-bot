@@ -3,10 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiogram.types import CallbackQuery, Message, Update, User
 
-from bot.middlewares.subscription_filter_middleware import (
-    SUB_CHECK_CALLBACK,
-    SubscriptionFilterMiddleware,
-)
+from bot.middlewares.subscription_filter_middleware import SUB_CHECK_CALLBACK, SubscriptionFilterMiddleware
 
 
 @pytest.fixture

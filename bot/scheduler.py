@@ -417,9 +417,10 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             global_timetable_manager_instance = new_manager
             if manager_ref is not None:
                 manager_ref.set(new_manager)
+            changed_groups = None
             if old_manager is not None and old_manager is not new_manager:
                 try:
-                    await send_schedule_diff_notifications(user_data_manager, old_manager, new_manager)
+                    changed_groups = await send_schedule_diff_notifications(user_data_manager, old_manager, new_manager)
                 except Exception as e:
                     logger.warning(f"Не удалось отправить diff-уведомления: {e}")
             try:
@@ -429,11 +430,15 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             except Exception:
                 pass
 
-            # Инвалидируем кэш изображений: он не должен отдавать старое расписание
+            # Инвалидируем кэш изображений точечно по изменившимся группам.
             try:
-                from core.image_cache_manager import invalidate_all_generated_images
+                from core.image_cache_manager import invalidate_all_generated_images, invalidate_generated_images_for_groups
 
-                await invalidate_all_generated_images(redis_client)
+                if changed_groups:
+                    await invalidate_generated_images_for_groups(redis_client, changed_groups)
+                elif changed_groups is None:
+                    # Diff не удался — безопаснее очистить всё, чем отдать старое.
+                    await invalidate_all_generated_images(redis_client)
             except Exception as e:
                 logger.warning(f"Не удалось очистить кэш изображений: {e}")
 
@@ -603,7 +608,7 @@ async def send_schedule_diff_notifications(
             users_with_groups = await user_data_manager.get_all_users_with_groups()
         if not users_with_groups:
             logger.info("Нет пользователей для отправки дифф-уведомлений")
-            return
+            return set()
 
         # Группируем по (группа, язык), чтобы отправить локализованный текст.
         groups_to_users = {}
@@ -701,11 +706,14 @@ async def send_schedule_diff_notifications(
             except Exception as e:
                 logger.warning(f"Не удалось уведомить администраторов о дифф-уведомлениях: {e}")
 
+        return groups_with_changes
+
     except Exception as e:
         logger.error(f"Критическая ошибка при отправке дифф-уведомлений: {e}")
         import traceback
 
         logger.error(traceback.format_exc())
+        return None
 
 
 async def handle_graduated_groups(

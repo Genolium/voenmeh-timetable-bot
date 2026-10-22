@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.dlq_manager import DLQManager, REDIS_DLQ_KEY
+from core.dlq_manager import REDIS_DLQ_KEY, DLQManager
 
 
 @pytest.fixture

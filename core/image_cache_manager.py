@@ -507,6 +507,30 @@ class ImageCacheManager:
             return {"cache_key": cache_key, "error": str(e), "overall_status": "error"}
 
 
+async def invalidate_generated_images_for_groups(redis_client: Redis | None, groups: set[str] | list[str]) -> int:
+    """Удаляет кэш только для указанных групп."""
+    removed = 0
+    cache_dir = MEDIA_PATH / "generated"
+    normalized = {group.upper() for group in groups if group}
+    if cache_dir.exists():
+        for group in normalized:
+            for file_path in cache_dir.glob(f"{group}_*.png"):
+                try:
+                    file_path.unlink()
+                    removed += 1
+                except Exception as e:
+                    logger.warning(f"Failed to remove generated image {file_path}: {e}")
+    if redis_client is not None:
+        for group in normalized:
+            try:
+                async for key in redis_client.scan_iter(f"image_cache:*{group}_*"):
+                    await redis_client.delete(key)
+            except Exception as e:
+                logger.warning(f"Failed to clear image cache keys for {group}: {e}")
+    logger.info(f"Invalidated image cache for {len(normalized)} groups: {removed} files removed")
+    return removed
+
+
 async def invalidate_all_generated_images(redis_client: Redis | None = None) -> int:
     """Удаляет все сгенерированные изображения и связанные ключи Redis.
 

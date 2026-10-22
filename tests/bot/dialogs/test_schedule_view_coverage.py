@@ -1,9 +1,11 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from bot.dialogs.schedule_view import on_send_original_file, get_schedule_data, get_week_image_data
+
+import pytest
+from aiogram.types import CallbackQuery, ChatMemberLeft, ChatMemberMember, User
+
 from bot.dialogs.constants import DialogDataKeys
+from bot.dialogs.schedule_view import get_schedule_data, get_week_image_data, on_send_original_file
 from bot.dialogs.states import Schedule
-from aiogram.types import CallbackQuery, User, ChatMemberMember, ChatMemberLeft
 
 
 @pytest.fixture

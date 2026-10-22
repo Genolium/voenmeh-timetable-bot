@@ -4,9 +4,9 @@
 #
 #    pip-compile --output-file=requirements.lock --strip-extras requirements.txt
 #
-aiofiles==24.1.0
+aiofiles==25.1.0
     # via aiogram
-aiogram==3.20.0.post0
+aiogram==3.31.0
     # via
     #   -r requirements.txt
     #   aiogram-dialog
@@ -14,7 +14,7 @@ aiogram-dialog==2.4.0
     # via -r requirements.txt
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.11.18
+aiohttp==3.14.4
     # via
     #   -r requirements.txt
     #   aiogram
@@ -48,12 +48,6 @@ cycler==0.12.1
     # via matplotlib
 cyrtranslit==1.2.0
     # via -r requirements.txt
-deprecated==3.0.0
-    # via
-    #   opentelemetry-api
-    #   opentelemetry-exporter-otlp-proto-grpc
-    #   opentelemetry-exporter-otlp-proto-http
-    #   opentelemetry-semantic-conventions
 dramatiq==1.18.0
     # via -r requirements.txt
 fonttools==4.67.0
@@ -62,7 +56,7 @@ frozenlist==1.8.0
     # via
     #   aiohttp
     #   aiosignal
-googleapis-common-protos==1.75.0
+googleapis-common-protos==1.75.5
     # via
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
@@ -74,8 +68,6 @@ idna==3.20
     # via
     #   requests
     #   yarl
-importlib-metadata==8.4.0
-    # via opentelemetry-api
 jinja2==3.1.6
     # via
     #   -r requirements.txt
@@ -100,46 +92,59 @@ numpy==2.5.4
     # via
     #   contourpy
     #   matplotlib
-opentelemetry-api==1.27.0
+opentelemetry-api==1.45.1
     # via
     #   -r requirements.txt
+    #   opentelemetry-exporter-http-transport
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-logging
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-exporter-otlp==1.27.0
+opentelemetry-exporter-http-transport==0.66b1
+    # via opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp==1.45.1
     # via -r requirements.txt
-opentelemetry-exporter-otlp-proto-common==1.27.0
+opentelemetry-exporter-otlp-common==0.66b1
     # via
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-exporter-otlp-proto-grpc==1.27.0
+opentelemetry-exporter-otlp-proto-common==1.45.1
+    # via
+    #   opentelemetry-exporter-otlp-proto-grpc
+    #   opentelemetry-exporter-otlp-proto-http
+opentelemetry-exporter-otlp-proto-grpc==1.45.1
     # via opentelemetry-exporter-otlp
-opentelemetry-exporter-otlp-proto-http==1.27.0
+opentelemetry-exporter-otlp-proto-http==1.45.1
     # via opentelemetry-exporter-otlp
-opentelemetry-instrumentation==0.48b0
+opentelemetry-instrumentation==0.66b1
     # via opentelemetry-instrumentation-logging
-opentelemetry-instrumentation-logging==0.48b0
+opentelemetry-instrumentation-logging==0.66b1
     # via -r requirements.txt
-opentelemetry-proto==1.27.0
+opentelemetry-proto==1.45.1
     # via
     #   opentelemetry-exporter-otlp-proto-common
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-sdk==1.27.0
+opentelemetry-sdk==1.45.1
     # via
     #   -r requirements.txt
+    #   opentelemetry-exporter-otlp-common
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
-opentelemetry-semantic-conventions==0.48b0
-    # via opentelemetry-sdk
+opentelemetry-semantic-conventions==0.66b1
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-logging
+    #   opentelemetry-sdk
 packaging==26.3
-    # via matplotlib
+    # via
+    #   matplotlib
+    #   opentelemetry-instrumentation
 pika==1.4.4
     # via dramatiq
-pillow==11.3.0
+pillow==13.0.0
     # via
     #   -r requirements.txt
     #   matplotlib
@@ -153,8 +158,9 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
-protobuf==4.25.9
+protobuf==6.33.5
     # via
+    #   -r requirements.txt
     #   googleapis-common-protos
     #   opentelemetry-proto
 psutil==7.0.0
@@ -174,9 +180,9 @@ pyee==14.0.0
     # via playwright
 pyparsing==3.3.3
     # via matplotlib
-python-dateutil==2.9.0.post0
+python-dateutil==3.0.0
     # via matplotlib
-python-dotenv==1.1.1
+python-dotenv==1.2.2
     # via
     #   -r requirements.txt
     #   pydantic-settings
@@ -191,7 +197,9 @@ rapidfuzz==3.13.0
 redis==6.2.0
     # via -r requirements.txt
 requests==2.34.2
-    # via opentelemetry-exporter-otlp-proto-http
+    # via
+    #   opentelemetry-exporter-http-transport
+    #   opentelemetry-exporter-otlp-proto-http
 six==1.17.0
     # via python-dateutil
 sqlalchemy==2.0.41
@@ -206,7 +214,11 @@ typing-extensions==4.16.0
     #   aiosqlite
     #   alembic
     #   grpcio
+    #   opentelemetry-api
+    #   opentelemetry-exporter-otlp-proto-grpc
+    #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pyee
@@ -215,7 +227,9 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
     # via pydantic
 tzdata==2025.2
-    # via -r requirements.txt
+    # via
+    #   -r requirements.txt
+    #   python-dateutil
 tzlocal==5.3.1
     # via
     #   -r requirements.txt
@@ -224,14 +238,10 @@ urllib3==2.8.0
     # via requests
 websockets==15.0.1
     # via -r requirements.txt
-wrapt==1.17.3
-    # via
-    #   deprecated
-    #   opentelemetry-instrumentation
+wrapt==2.5.1
+    # via opentelemetry-instrumentation
 yarl==1.25.1
     # via aiohttp
-zipp==4.1.2
-    # via importlib-metadata
 
 # The following packages are considered to be unsafe in a requirements file:
 # setuptools

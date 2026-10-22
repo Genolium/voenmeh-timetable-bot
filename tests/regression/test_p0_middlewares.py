@@ -1,11 +1,6 @@
 from types import SimpleNamespace
 
-from bot.middlewares.event_utils import (
-    extract_callback_data,
-    extract_from_user,
-    extract_message,
-    extract_text,
-)
+from bot.middlewares.event_utils import extract_callback_data, extract_from_user, extract_message, extract_text
 
 
 def _update(**kwargs):

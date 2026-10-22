@@ -1,9 +1,11 @@
-import pytest
-import json
 import gzip
+import json
 import pickle
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from core.manager import TimetableManager
 
 

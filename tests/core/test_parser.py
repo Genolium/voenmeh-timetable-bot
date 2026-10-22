@@ -4,11 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.parser import (
-    fetch_and_parse_all_schedules,
-    load_fallback_schedule,
-    save_fallback_schedule,
-)
+from core.parser import fetch_and_parse_all_schedules, load_fallback_schedule, save_fallback_schedule
 
 
 @pytest.fixture

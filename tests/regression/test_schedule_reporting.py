@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from bot.dialogs.admin_menu import on_override_input
 from bot.dialogs.schedule_view import on_report_error_click
 from bot.dialogs.states import Feedback
 from core.manager import TimetableManager
@@ -83,3 +84,50 @@ async def test_report_error_opens_feedback_with_context():
     dm.start.assert_awaited_once()
     assert dm.start.call_args.args[0] is Feedback.enter_feedback
     assert "G1" in dm.start.call_args.kwargs["data"]["feedback_context"]
+
+
+@pytest.mark.asyncio
+async def test_admin_override_ui_window_handler_saves():
+    redis = FakeRedis()
+    dm = MagicMock()
+    dm.middleware_data = {"redis_client": redis}
+    dm.switch_to = AsyncMock()
+    message = MagicMock()
+    message.text = "G1|2026-10-22|11:00-12:30|New|101|лек"
+    message.answer = AsyncMock()
+
+    await on_override_input(message, MagicMock(), dm)
+
+    stored = await get_group_override(redis, "G1", date(2026, 10, 22))
+    assert stored[0]["subject"] == "New"
+    dm.switch_to.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_override_ui_rejects_bad_format():
+    dm = MagicMock()
+    dm.middleware_data = {"redis_client": FakeRedis()}
+    message = MagicMock()
+    message.text = "broken"
+    message.answer = AsyncMock()
+
+    await on_override_input(message, MagicMock(), dm)
+
+    message.answer.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_override_ui_rejects_bad_time_and_missing_redis():
+    dm = MagicMock()
+    dm.middleware_data = {"redis_client": FakeRedis()}
+    message = MagicMock()
+    message.answer = AsyncMock()
+    message.text = "G1|2026-10-22|bad|New|101|лек"
+    await on_override_input(message, MagicMock(), dm)
+    message.answer.assert_awaited_once()
+
+    message.answer.reset_mock()
+    dm.middleware_data = {}
+    message.text = "G1|2026-10-22|11:00-12:30|New|101|лек"
+    await on_override_input(message, MagicMock(), dm)
+    message.answer.assert_awaited_once()

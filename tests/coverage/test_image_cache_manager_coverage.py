@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core import image_cache_manager as icm_module
-from core.image_cache_manager import ImageCacheManager, invalidate_all_generated_images
+from core.image_cache_manager import ImageCacheManager, invalidate_all_generated_images, invalidate_generated_images_for_groups
 
 
 class _AwareDatetime(datetime):
@@ -603,3 +603,41 @@ async def test_invalidate_all_generated_images_redis_errors(tmp_path, monkeypatc
             raise Exception("scan boom")
 
     assert await invalidate_all_generated_images(ScanBrokenRedis()) == 0
+
+
+@pytest.mark.asyncio
+async def test_invalidate_generated_images_for_groups(tmp_path, monkeypatch):
+    monkeypatch.setattr(icm_module, "MEDIA_PATH", tmp_path)
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "G1_odd_ru.png").write_bytes(b"x")
+    (generated / "G2_odd_ru.png").write_bytes(b"x")
+
+    class ScanRedis:
+        deleted: list[str] = []
+
+        async def scan_iter(self, pattern):
+            yield "image_cache:data:G1_odd_ru"
+
+        async def delete(self, key):
+            self.deleted.append(key)
+
+    redis = ScanRedis()
+    removed = await invalidate_generated_images_for_groups(redis, ["G1"])
+
+    assert removed == 1
+    assert not (generated / "G1_odd_ru.png").exists()
+    assert (generated / "G2_odd_ru.png").exists()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_generated_images_for_groups_errors_are_swallowed(tmp_path, monkeypatch):
+    monkeypatch.setattr(icm_module, "MEDIA_PATH", tmp_path)
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "G1_odd_ru.png").write_bytes(b"x")
+    redis = FakeRedis()
+    redis.scan_iter = MagicMock(side_effect=RuntimeError("redis down"))
+    monkeypatch.setattr(Path, "unlink", MagicMock(side_effect=OSError("file down")))
+
+    assert await invalidate_generated_images_for_groups(redis, ["G1"]) == 0

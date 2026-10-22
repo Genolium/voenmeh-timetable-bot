@@ -5,6 +5,7 @@ Revises: perf_indexes_001, add_semester_settings_table
 Create Date: 2025-08-16 13:30:00.000000
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa  # noqa: F401

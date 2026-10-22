@@ -73,6 +73,9 @@ class Admin(StatesGroup):
     backup_upload_wait = State()
     backup_upload_confirm = State()
 
+    # Админская коррекция расписания
+    schedule_override = State()
+
     # Фильтр обязательной подписки на каналы
     sub_filter_menu = State()
     sub_filter_add_channel = State()

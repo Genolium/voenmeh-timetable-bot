@@ -2,10 +2,11 @@ from datetime import date, datetime, time
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from bot.text_formatters import (
+    format_full_week_text,
     format_schedule_text,
     format_teacher_schedule_text,
-    format_full_week_text,
     generate_dynamic_header,
 )
 from core.config import MOSCOW_TZ

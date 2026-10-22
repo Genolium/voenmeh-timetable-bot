@@ -8,10 +8,7 @@ import pytest
 from bot.middlewares.i18n_middleware import I18nMiddleware
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
-from bot.middlewares.subscription_filter_middleware import (
-    SUB_CHECK_CALLBACK,
-    SubscriptionFilterMiddleware,
-)
+from bot.middlewares.subscription_filter_middleware import SUB_CHECK_CALLBACK, SubscriptionFilterMiddleware
 from bot.middlewares.user_data_middleware import UserDataMiddleware
 
 

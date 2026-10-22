@@ -1,7 +1,9 @@
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
-from core.image_generator import generate_schedule_image, _prepare_days, shutdown_image_generator
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
+
+import pytest
+
+from core.image_generator import _prepare_days, generate_schedule_image, shutdown_image_generator
 
 
 @pytest.fixture

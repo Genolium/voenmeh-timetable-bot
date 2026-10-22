@@ -1,4 +1,5 @@
 import pytest
+
 from core.text_utils import normalize_group_name, transliterate_failed_search
 
 

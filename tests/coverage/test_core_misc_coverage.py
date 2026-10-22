@@ -26,13 +26,7 @@ import core.db  # noqa: F401  (import covers module-level statements)
 import core.db.models  # noqa: F401
 from core import transliteration as translit_module
 from core.i18n import I18n
-from core.schedule_diff import (
-    ChangeType,
-    GroupScheduleDiff,
-    LessonChange,
-    ScheduleDiffDetector,
-    ScheduleDiffFormatter,
-)
+from core.schedule_diff import ChangeType, GroupScheduleDiff, LessonChange, ScheduleDiffDetector, ScheduleDiffFormatter
 from core.semester_calendar import SemesterInfo, get_semester_info
 from core.text_utils import normalize_group_name, transliterate_failed_search
 from core.themes import DEFAULT_THEME, get_all_theme_ids, get_theme_meta, is_valid_theme
