@@ -7,8 +7,8 @@ CI enables them because Docker is available on ubuntu-latest.
 import os
 import socket
 import subprocess
+import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import redis
@@ -17,6 +17,8 @@ from testcontainers.community.rabbitmq import RabbitMqContainer
 from testcontainers.community.redis import RedisContainer
 
 from core.manager import TimetableManager
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _ensure_docker_host() -> None:
@@ -41,8 +43,8 @@ def test_postgres_migrations_apply_to_head():
         database_url = postgres.get_connection_url()
         env = {**os.environ, "DATABASE_URL": database_url}
         result = subprocess.run(
-            [".venv/bin/alembic", "upgrade", "head"],
-            cwd=os.getcwd(),
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            cwd=str(REPO_ROOT),
             env=env,
             capture_output=True,
             text=True,

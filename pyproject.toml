@@ -5,7 +5,11 @@ target-version = ["py313"]
 [tool.isort]
 profile = "black"
 line_length = 127
-skip = ["migrations", "tests"]
+# Уважаем "magic trailing comma" black, иначе isort схлопывает многострочные
+# импорты, а black снова их разворачивает — бесконечный цикл правок.
+split_on_trailing_comma = true
+# Миграции alembic генерируются и правятся вручную, их не сортируем.
+skip = ["migrations"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

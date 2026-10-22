@@ -7,15 +7,10 @@ module touches the network, Docker or a real Telegram account.
 """
 
 import asyncio
-import gc
-import sys
 import time
-import types
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
-
-import pytest
 
 import bot.scheduler as sched
 import bot.tasks as tasks

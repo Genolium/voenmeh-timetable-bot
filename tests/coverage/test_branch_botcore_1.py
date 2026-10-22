@@ -7,13 +7,10 @@ replaced by in-test doubles, so the module stays fast and completely offline.
 """
 
 import asyncio
-import sys
 import time
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
-
-import pytest
 
 import bot.scheduler as sched
 import bot.tasks as tasks
