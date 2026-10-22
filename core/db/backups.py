@@ -180,4 +180,3 @@ def maybe_decompress_gzip(source: Path) -> Path:
     with gzip.open(source, "rb") as src, open(target, "wb") as dst:
         dst.write(src.read())
     return target
-

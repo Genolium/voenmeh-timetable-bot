@@ -2,12 +2,13 @@ import logging
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import selectinload
 
 from core.db.models import Feedback
 from core.metrics import FEATURE_POPULARITY, USER_ACTIONS
+from core.time_utils import now_msk_naive
 
 
 class FeedbackManager:
@@ -43,7 +44,7 @@ class FeedbackManager:
                 message_type=message_type,
                 file_id=file_id,
                 is_answered=False,
-                created_at=datetime.utcnow(),
+                created_at=now_msk_naive(),
             )
             session.add(feedback)
             await session.commit()
@@ -66,7 +67,7 @@ class FeedbackManager:
             FEATURE_POPULARITY.labels(
                 feature_name="feedback",
                 user_type="unknown",
-                day_of_week=datetime.now().strftime("%A").lower(),
+                day_of_week=now_msk_naive().strftime("%A").lower(),
             ).inc()
             USER_ACTIONS.labels(action="feedback_sent", user_type="unknown", source="user_interface").inc()
 
@@ -92,7 +93,7 @@ class FeedbackManager:
                 base = base.where(Feedback.user_id == user_id)
 
             # Подсчет общего количества
-            count_query = select(Feedback.id)
+            count_query = select(func.count(Feedback.id))
             if only_unanswered is True:
                 count_query = count_query.where(Feedback.is_answered == False)
             elif only_unanswered is False:
@@ -133,7 +134,7 @@ class FeedbackManager:
                     is_answered=True,
                     admin_response=response_text,
                     admin_id=admin_id,
-                    answered_at=datetime.utcnow(),
+                    answered_at=now_msk_naive(),
                 )
             )
             await session.commit()
@@ -157,7 +158,7 @@ class FeedbackManager:
                 FEATURE_POPULARITY.labels(
                     feature_name="admin_feedback",
                     user_type="admin",
-                    day_of_week=datetime.now().strftime("%A").lower(),
+                    day_of_week=now_msk_naive().strftime("%A").lower(),
                 ).inc()
                 USER_ACTIONS.labels(action="feedback_answered", user_type="admin", source="admin_panel").inc()
 
@@ -186,7 +187,7 @@ class FeedbackManager:
             unanswered = len(unanswered_result.fetchall())
 
             # Фидбеки за последние 7 дней
-            week_ago = datetime.utcnow() - timedelta(days=7)
+            week_ago = now_msk_naive() - timedelta(days=7)
             recent_result = await session.execute(select(Feedback).where(Feedback.created_at >= week_ago))
             recent = len(recent_result.fetchall())
 

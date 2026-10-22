@@ -122,16 +122,16 @@ class TestAdminReportsGenerator:
         # Мокаем gather_stats
         mock_user_data_manager.gather_stats.return_value = (
             1000,  # total
-            500,   # dau
-            700,   # wau
-            900,   # mau
-            800,   # subscribed
-            50,    # unsubscribed
+            500,  # dau
+            700,  # wau
+            900,  # mau
+            800,  # subscribed
+            50,  # unsubscribed
             {"evening": 400, "morning": 300, "reminders": 200},  # breakdown
             [("О735Б", 150), ("О735А", 120)],  # top_groups
             {"1 студент": 5, "2-5 студентов": 15},  # group_dist
         )
-        
+
         # Мокаем Prometheus метрики
         with patch.object(admin_reports_generator, "_get_prometheus_metrics_weekly") as mock_metrics:
             mock_metrics.return_value = {
@@ -156,16 +156,16 @@ class TestAdminReportsGenerator:
         # Мокаем gather_stats
         mock_user_data_manager.gather_stats.return_value = (
             1000,  # total
-            500,   # dau
-            700,   # wau
-            900,   # mau
-            800,   # subscribed
-            50,    # unsubscribed
+            500,  # dau
+            700,  # wau
+            900,  # mau
+            800,  # subscribed
+            50,  # unsubscribed
             {"evening": 400, "morning": 300, "reminders": 200},  # breakdown
             [("О735Б", 150), ("О735А", 120)],  # top_groups
             {"1 студент": 5, "2-5 студентов": 15},  # group_dist
         )
-        
+
         # Мокаем Prometheus метрики
         with patch.object(admin_reports_generator, "_get_prometheus_metrics_monthly") as mock_metrics:
             mock_metrics.return_value = {

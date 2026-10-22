@@ -51,11 +51,13 @@ def create_alert_app(
 
     async def health_check(request: web.Request) -> web.Response:
         """Liveness probe - бот жив и отвечает."""
-        return web.json_response({
-            "status": "ok",
-            "service": "voenmeh-timetable-bot",
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-        })
+        return web.json_response(
+            {
+                "status": "ok",
+                "service": "voenmeh-timetable-bot",
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+            }
+        )
 
     async def readiness_check(request: web.Request) -> web.Response:
         """Readiness probe - все зависимости готовы к обработке запросов."""

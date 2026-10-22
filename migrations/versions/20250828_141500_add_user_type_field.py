@@ -5,6 +5,7 @@ Revises: perf_indexes_001
 Create Date: 2025-08-28 14:15:00.000000
 
 """
+
 import sqlalchemy as sa
 from alembic import op
 

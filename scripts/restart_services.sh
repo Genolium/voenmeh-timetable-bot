@@ -46,8 +46,8 @@ restart_service() {
     local service=$1
     log "Перезапуск сервиса: $service"
 
-    if docker-compose ps | grep -q "$service"; then
-        docker-compose restart "$service"
+    if docker compose ps | grep -q "$service"; then
+        docker compose restart "$service"
         success "Сервис $service перезапущен"
     else
         warning "Сервис $service не найден или не запущен"
@@ -59,7 +59,7 @@ check_service() {
     local service=$1
     log "Проверка состояния сервиса: $service"
 
-    if docker-compose ps | grep -q "$service.*Up"; then
+    if docker compose ps | grep -q "$service.*Up"; then
         success "Сервис $service работает"
     else
         warning "Сервис $service не работает"
@@ -73,11 +73,11 @@ if [ $# -eq 0 ]; then
 
     # Останавливаем все сервисы
     log "Остановка всех сервисов..."
-    docker-compose down
+    docker compose down
 
     # Запускаем все сервисы
     log "Запуск всех сервисов..."
-    docker-compose up -d
+    docker compose up -d
 
     # Ждем немного для запуска
     log "Ожидание запуска сервисов..."
@@ -98,13 +98,13 @@ elif [ "$1" = "rabbitmq" ]; then
     log "Перезапуск RabbitMQ с очисткой..."
 
     # Останавливаем RabbitMQ
-    docker-compose stop rabbitmq
+    docker compose stop rabbitmq
 
     # Ждем полной остановки
     sleep 5
 
     # Запускаем RabbitMQ
-    docker-compose up -d rabbitmq
+    docker compose up -d rabbitmq
 
     # Ждем запуска
     log "Ожидание запуска RabbitMQ..."
@@ -137,12 +137,12 @@ elif [ "$1" = "redis" ]; then
 elif [ "$1" = "status" ]; then
     # Показать статус всех сервисов
     log "Статус всех сервисов:"
-    docker-compose ps
+    docker compose ps
 
 elif [ "$1" = "logs" ]; then
     # Показать логи всех сервисов
     log "Логи всех сервисов (Ctrl+C для выхода):"
-    docker-compose logs -f
+    docker compose logs -f
 
 elif [ "$1" = "help" ] || [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo "Использование: $0 [service_name]"
@@ -173,5 +173,5 @@ fi
 if [ "$1" != "status" ] && [ "$1" != "logs" ] && [ "$1" != "help" ]; then
     echo ""
     log "Текущий статус сервисов:"
-    docker-compose ps
+    docker compose ps
 fi

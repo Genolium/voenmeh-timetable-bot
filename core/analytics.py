@@ -13,6 +13,8 @@ from typing import Dict, List, Optional, Tuple
 
 import matplotlib
 
+from core.time_utils import now_msk_naive
+
 # Использовать неинтерактивный бэкенд Agg для работы без GUI / в контейнере
 matplotlib.use("Agg")
 import matplotlib.dates as mdates
@@ -41,7 +43,7 @@ async def track_feature_click(redis_client, feature_name: str) -> None:
         return
 
     try:
-        today_str = datetime.now().strftime("%Y%m%d")
+        today_str = now_msk_naive().strftime("%Y%m%d")
         daily_key = f"{FEATURE_KEY_PREFIX}:daily:{today_str}"
         total_key = f"{FEATURE_KEY_PREFIX}:total"
 
@@ -71,7 +73,7 @@ async def get_top_features(
 
     try:
         aggregated: Dict[str, int] = {}
-        now = datetime.now()
+        now = now_msk_naive()
 
         # Суммируем посуточные счётчики
         for i in range(days):
@@ -104,10 +106,7 @@ async def get_top_features(
             return []
 
         sorted_features = sorted(aggregated.items(), key=lambda x: x[1], reverse=True)[:limit]
-        return [
-            (code, FEATURE_NAMES.get(code, code), count)
-            for code, count in sorted_features
-        ]
+        return [(code, FEATURE_NAMES.get(code, code), count) for code, count in sorted_features]
     except Exception as e:
         logger.warning(f"Failed to get top features: {e}")
         return []
@@ -122,14 +121,14 @@ def generate_dynamics_chart(
 ) -> io.BytesIO:
     """
     Генерирует наглядный график динамики в современном темном стиле (High-DPI PNG).
-    
+
     Args:
         dates: Список дат для оси X
         new_users: Список новых пользователей по дням
         active_users: Список активных пользователей (DAU) по дням
         notifications_sent: Список отправленных уведомлений по дням (опционально)
         period_title: Текстовая подпись периода для заголовка
-        
+
     Returns:
         BytesIO буфер с PNG изображением
     """
@@ -140,15 +139,15 @@ def generate_dynamics_chart(
     text_color = "#CDD6F4"
     subtext_color = "#A6ADC8"
 
-    color_dau = "#A6E3A1"        # Зелёный/мятный для активных (DAU)
-    color_new = "#89DCEB"        # Голубой/бирюзовый для новых
-    color_notify = "#CBA6F7"     # Лавандовый для уведомлений
+    color_dau = "#A6E3A1"  # Зелёный/мятный для активных (DAU)
+    color_new = "#89DCEB"  # Голубой/бирюзовый для новых
+    color_notify = "#CBA6F7"  # Лавандовый для уведомлений
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=150, facecolor=bg_color)
     ax.set_facecolor(card_color)
 
     if not dates:
-        dates = [datetime.now() - timedelta(days=i) for i in reversed(range(7))]
+        dates = [now_msk_naive() - timedelta(days=i) for i in reversed(range(7))]
         new_users = [0] * len(dates)
         active_users = [0] * len(dates)
 

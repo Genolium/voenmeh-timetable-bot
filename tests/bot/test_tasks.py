@@ -382,9 +382,7 @@ async def test_standalone_send_message_success():
     mock_bot_instance = AsyncMock()
     with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot_instance)):
         await _send_message(123456789, "Test message")
-        mock_bot_instance.send_message.assert_called_once_with(
-            123456789, "Test message", disable_web_page_preview=True
-        )
+        mock_bot_instance.send_message.assert_called_once_with(123456789, "Test message", disable_web_page_preview=True)
 
 
 @pytest.mark.asyncio

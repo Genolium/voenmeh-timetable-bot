@@ -7,6 +7,13 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
+from bot.middlewares.event_utils import (
+    extract_callback_data,
+    extract_event_type,
+    extract_from_user,
+    extract_message,
+    extract_text,
+)
 from core.metrics import (
     ACTIVE_SESSIONS,
     BOT_COMMANDS,
@@ -18,6 +25,7 @@ from core.metrics import (
     USER_ACTIVITY_DAILY,
     USER_ACTIVITY_HOURLY,
 )
+from core.time_utils import now_msk_naive
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +37,7 @@ class ActivityLoggingMiddleware(BaseMiddleware):
 
     def __init__(self):
         self.last_user_actions = {}  # Для отслеживания интервалов между действиями
+        self.active_sessions: dict[str, float] = {}
 
     async def __call__(
         self,
@@ -36,16 +45,17 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: Dict[str, Any],
     ) -> Any:
-        # Получаем информацию о пользователе
+        # Получаем информацию о пользователе (outer middleware получает Update)
+        from_user = extract_from_user(event)
         user_id = "unknown"
         username = "unknown"
         user_type = "unknown"
         user_group = "unknown"
 
-        if hasattr(event, "from_user") and getattr(event.from_user, "id", None):
-            user_id = str(event.from_user.id)
-            username = getattr(event.from_user, "username", "unknown")
-            user_full_name = getattr(event.from_user, "full_name", "unknown")
+        if from_user is not None and getattr(from_user, "id", None):
+            user_id = str(from_user.id)
+            username = getattr(from_user, "username", "unknown")
+            user_full_name = getattr(from_user, "full_name", "unknown")
 
         # Получаем тип пользователя из данных (если доступно)
         # В UserDataMiddleware данные пользователя уже должны быть в middleware_data
@@ -59,26 +69,19 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             user_group = "unknown"
 
         # Определяем тип события и действие
-        event_type = type(event).__name__
+        event_type = extract_event_type(event)
+        text_value = extract_text(event)
+        callback_data = extract_callback_data(event)
         action = "unknown"
 
-        # Определяем конкретное действие
-        if (
-            hasattr(event, "text")
-            and getattr(event, "text", None)
-            and not str(getattr(event, "text", "")).startswith("<MagicMock")
-        ):
-            # Это сообщение с текстом (не callback и не MagicMock)
-            text_value = str(getattr(event, "text", ""))
-            if text_value.startswith("/"):
+        if text_value and not str(text_value).startswith("<MagicMock"):
+            if str(text_value).startswith("/"):
                 action = "command"
-                BOT_COMMANDS.labels(command=text_value[1:], user_type=user_type).inc()
+                BOT_COMMANDS.labels(command=str(text_value)[1:], user_type=user_type).inc()
             else:
                 action = "text_message"
-        elif hasattr(event, "data") and not str(getattr(event, "data", "")).startswith("<MagicMock"):
-            # Это callback query (не MagicMock)
+        elif callback_data is not None and not str(callback_data).startswith("<MagicMock"):
             action = "button_click"
-            # Определяем диалог и состояние
             dialog_name = "unknown"
             state = "unknown"
             if "dialog_manager" in data:
@@ -94,7 +97,7 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         feature = self._determine_feature(event, data)
 
         # Получаем текущий час и день недели
-        now = datetime.now()
+        now = now_msk_naive()
         hour_of_day = str(now.hour)
         day_of_week = now.strftime("%A").lower()
 
@@ -122,11 +125,11 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             "event_type": event_type,
             "hour_of_day": hour_of_day,
             "day_of_week": day_of_week,
-            "message_text": (str(getattr(event, "text", None)) if hasattr(event, "text") else None),
-            "callback_data": (str(getattr(event, "data", None)) if hasattr(event, "data") else None),
+            "message_text": extract_text(event),
+            "callback_data": extract_callback_data(event),
             "chat_id": (
-                str(getattr(getattr(event, "chat", None), "id", None))
-                if hasattr(event, "chat") and hasattr(event.chat, "id")
+                str(getattr(getattr(extract_message(event), "chat", None), "id", None))
+                if extract_message(event) is not None
                 else None
             ),
         }
@@ -159,12 +162,9 @@ class ActivityLoggingMiddleware(BaseMiddleware):
     def _determine_feature(self, event: TelegramObject, data: Dict[str, Any]) -> str:
         """Определяет, какую функцию/фичу использует пользователь."""
 
-        if (
-            hasattr(event, "text")
-            and getattr(event, "text", None)
-            and not str(getattr(event, "text", "")).startswith("<MagicMock")
-        ):
-            text = str(getattr(event, "text", "")).lower()
+        text_value = extract_text(event)
+        if text_value and not str(text_value).startswith("<MagicMock"):
+            text = str(text_value).lower()
 
             # Команды
             if text.startswith("/"):
@@ -187,8 +187,9 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             else:
                 return "text_input"
 
-        elif hasattr(event, "data") and not str(getattr(event, "data", "")).startswith("<MagicMock"):
-            callback_data = str(getattr(event, "data", ""))
+        callback_data = extract_callback_data(event)
+        if callback_data is not None and not str(callback_data).startswith("<MagicMock"):
+            callback_data = str(callback_data)
 
             # Определяем по callback_data или по диалогу
             if "schedule" in callback_data.lower() or "расписани" in callback_data.lower() or "view" in callback_data.lower():
@@ -203,8 +204,6 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                 return "settings"
             elif "admin" in callback_data.lower():
                 return "admin_panel"
-            elif "event" in callback_data.lower() or "мероприят" in callback_data.lower():
-                return "events"
             elif "feedback" in callback_data.lower() or "фидбек" in callback_data.lower():
                 return "feedback"
             elif "back" in callback_data.lower() or "cancel" in callback_data.lower() or "menu" in callback_data.lower():
@@ -239,15 +238,10 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if action == "command" and user_id not in self.last_user_actions:
             NEW_USERS_DAILY.labels(registration_source="bot_usage", user_type=user_type).inc()
 
-        # Обновляем активные сессии (примерная оценка)
-        current_hour = datetime.now().hour
-        active_sessions_key = f"{current_hour}_{user_type}"
-        ACTIVE_SESSIONS.labels(user_type=user_type).set(
-            len(
-                [
-                    uid
-                    for uid, last_time in self.last_user_actions.items()
-                    if time.time() - last_time < 3600  # Активен в последний час
-                ]
-            )
-        )
+        # Активные сессии: O(1) на событие, редкая очистка вместо полного обхода.
+        now_ts = time.time()
+        self.active_sessions[user_id] = now_ts
+        if len(self.active_sessions) > 1000 and len(self.active_sessions) % 100 == 0:
+            cutoff = now_ts - 3600
+            self.active_sessions = {uid: ts for uid, ts in self.active_sessions.items() if ts >= cutoff}
+        ACTIVE_SESSIONS.labels(user_type=user_type).set(len(self.active_sessions))

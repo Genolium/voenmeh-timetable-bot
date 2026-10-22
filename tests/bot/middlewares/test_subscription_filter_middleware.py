@@ -3,10 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiogram.types import CallbackQuery, Message, Update, User
 
-from bot.middlewares.subscription_filter_middleware import (
-    SUB_CHECK_CALLBACK,
-    SubscriptionFilterMiddleware,
-)
+from bot.middlewares.subscription_filter_middleware import SUB_CHECK_CALLBACK, SubscriptionFilterMiddleware
 
 
 @pytest.fixture
@@ -67,9 +64,7 @@ class TestSubscriptionFilterMiddleware:
         mw = SubscriptionFilterMiddleware(mock_session_factory, mock_redis)
         mw.manager.is_filter_enabled = AsyncMock(return_value=True)
         mw.manager.get_required_channels = AsyncMock(
-            return_value=[
-                {"channel_id": "@ch1", "title": "Канал 1", "invite_link": "https://t.me/ch1"}
-            ]
+            return_value=[{"channel_id": "@ch1", "title": "Канал 1", "invite_link": "https://t.me/ch1"}]
         )
         mw.manager.check_user_subscription = AsyncMock(
             return_value=(False, [{"channel_id": "@ch1", "title": "Канал 1", "invite_link": "https://t.me/ch1"}])

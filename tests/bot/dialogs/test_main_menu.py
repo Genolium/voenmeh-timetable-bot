@@ -3,12 +3,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 from aiogram_dialog import StartMode
 
-from bot.dialogs.main_menu import (
-    on_group_entered,
-    on_lang_selected,
-    on_show_tutorial_clicked,
-    on_skip_tutorial_clicked,
-)
+from bot.dialogs.main_menu import on_group_entered, on_lang_selected, on_show_tutorial_clicked, on_skip_tutorial_clicked
 from bot.dialogs.states import About, MainMenu, Schedule
 
 

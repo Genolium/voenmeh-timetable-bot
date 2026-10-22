@@ -3,26 +3,38 @@ import hashlib
 import json
 import logging
 import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
 
-import re
-from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, USER_AGENT, VOENMEH_SU_API_URL
-from core.metrics import ERRORS_TOTAL, RETRIES_TOTAL
+from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT, VOENMEH_SU_API_URL
+from core.metrics import ERRORS_TOTAL, EXTERNAL_SERVICE_STATUS, PARSER_DURATION, PARSER_STATS, RETRIES_TOTAL
 
 # Заготовки для условного кэширования
 _LAST_ETAG: str | None = None
 _LAST_MODIFIED: str | None = None
 _LAST_VOENMEH_SU_UPDATED_AT: str | None = None
 
+
 class _NotModifiedSentinel:
     def __repr__(self) -> str:
         return "<NOT_MODIFIED>"
 
+
 NOT_MODIFIED = _NotModifiedSentinel()
+
+MIN_GROUP_SUCCESS_RATIO = 0.8
+
+
+def has_enough_groups(parsed_count: int, requested_count: int, ratio: float = MIN_GROUP_SUCCESS_RATIO) -> bool:
+    """True if at least ``ratio`` of requested groups were parsed successfully."""
+    if requested_count <= 0:
+        return False
+    return parsed_count >= max(1, int(requested_count * ratio))
+
 
 # Путь к fallback файлу с расписанием
 FALLBACK_SCHEDULE_PATH = Path(__file__).parent.parent / "data" / "fallback_schedule.json"
@@ -31,20 +43,17 @@ FALLBACK_SCHEDULE_PATH = Path(__file__).parent.parent / "data" / "fallback_sched
 def load_fallback_schedule() -> dict | None:
     """
     Загружает fallback данные расписания из локального файла.
-    Если файл не существует, пытается создать начальный fallback файл.
+
+    Если файла нет — возвращает None. Мы намеренно не создаём выдуманное
+    расписание: лучше показать ошибку, чем пары, которых не существует.
 
     Returns:
-        Словарь с данными расписания или None если файл недоступен и не может быть создан
+        Словарь с данными расписания или None если файл недоступен
     """
     try:
         if not FALLBACK_SCHEDULE_PATH.exists():
             logging.warning(f"Fallback schedule file not found: {FALLBACK_SCHEDULE_PATH}")
-            # Попытка создать начальный fallback файл
-            if create_initial_fallback_schedule():
-                logging.info(f"Created initial fallback schedule file: {FALLBACK_SCHEDULE_PATH}")
-            else:
-                logging.error("Failed to create initial fallback schedule file")
-                return None
+            return None
 
         with open(FALLBACK_SCHEDULE_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -83,95 +92,7 @@ def save_fallback_schedule(data: dict) -> bool:
         return False
 
 
-def create_initial_fallback_schedule() -> bool:
-    """
-    Создает начальный fallback файл с базовыми данными, если файл не существует.
-
-    Returns:
-        True если файл создан или уже существует, False в случае ошибки
-    """
-    if FALLBACK_SCHEDULE_PATH.exists():
-        logging.info(f"Fallback schedule file already exists: {FALLBACK_SCHEDULE_PATH}")
-        return True
-
-    # Создаем базовые fallback данные
-    initial_data = {
-        "__metadata__": {
-            "period": {"StartYear": "2024", "StartMonth": "09", "StartDay": "01"},
-            "weeks": {"CurrentWeekType": "odd", "WeekStart": "2024-09-01"},
-        },
-        "__current_xml_hash__": "initial_fallback_2024",
-        "__teachers_index__": {},
-        "__classrooms_index__": {},
-        # Добавляем примеры групп для основных факультетов Военмеха
-        "О735Б": {
-            "odd": {
-                "Понедельник": [
-                    {
-                        "time": "09:00-10:30",
-                        "subject": "Математика (fallback)",
-                        "start_time_raw": "09:00",
-                        "end_time_raw": "10:30",
-                        "room": "101",
-                        "teachers": "Иванов И.И.",
-                        "week_type": "odd",
-                    }
-                ]
-            },
-            "even": {
-                "Вторник": [
-                    {
-                        "time": "10:40-12:10",
-                        "subject": "Физика (fallback)",
-                        "start_time_raw": "10:40",
-                        "end_time_raw": "12:10",
-                        "room": "102",
-                        "teachers": "Петров П.П.",
-                        "week_type": "even",
-                    }
-                ]
-            },
-        },
-        "О735А": {
-            "odd": {
-                "Среда": [
-                    {
-                        "time": "09:00-10:30",
-                        "subject": "Химия (fallback)",
-                        "start_time_raw": "09:00",
-                        "end_time_raw": "10:30",
-                        "room": "201",
-                        "teachers": "Сидорова А.А.",
-                        "week_type": "odd",
-                    }
-                ]
-            },
-            "even": {
-                "Четверг": [
-                    {
-                        "time": "10:40-12:10",
-                        "subject": "Информатика (fallback)",
-                        "start_time_raw": "10:40",
-                        "end_time_raw": "12:10",
-                        "room": "301",
-                        "teachers": "Иванов И.И.",
-                        "week_type": "even",
-                    }
-                ]
-            },
-        },
-    }
-
-    try:
-        return save_fallback_schedule(initial_data)
-    except Exception as e:
-        logging.error(f"Failed to create initial fallback schedule: {e}")
-        return False
-
-
-async def fetch_and_parse_from_voenmeh_su(
-    session: aiohttp.ClientSession | None = None, force: bool = False
-) -> dict | None:
+async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None = None, force: bool = False) -> dict | None:
     """
     Загружает и парсит актуальное расписание с официального API https://voenmeh.su.
 
@@ -329,9 +250,19 @@ async def fetch_and_parse_from_voenmeh_su(
 
             all_schedules[grp.upper()] = group_schedule
 
+        parsed_groups = [k for k in all_schedules if not k.startswith("__")]
+        if not has_enough_groups(len(parsed_groups), len(groups)):
+            logging.error(
+                "voenmeh.su вернул только %s из %s групп — считаем ответ частичным и отклоняем",
+                len(parsed_groups),
+                len(groups),
+            )
+            ERRORS_TOTAL.labels(source="parser_voenmeh_su_partial").inc()
+            return None
+
         # Разбираем период учебного года для корректной работы TimetableManager
         period_str = meta.get("period", "")
-        now = datetime.now()
+        now = datetime.now(MOSCOW_TZ)
         start_year = now.year if now.month >= 8 else now.year - 1
         start_month = 9
         start_day = 1
@@ -367,13 +298,19 @@ async def fetch_and_parse_from_voenmeh_su(
 
         _LAST_VOENMEH_SU_UPDATED_AT = meta_updated_at
 
-        logging.info(
-            f"Успешно спарсено {len([k for k in all_schedules if not k.startswith('__')])} групп с voenmeh.su"
-        )
+        logging.info(f"Успешно спарсено {len([k for k in all_schedules if not k.startswith('__')])} групп с voenmeh.su")
+        try:
+            EXTERNAL_SERVICE_STATUS.labels(service_name="schedule_parser").set(1)
+        except Exception:
+            pass
         return all_schedules
 
     except Exception as e:
         ERRORS_TOTAL.labels(source="parser_voenmeh_su").inc()
+        try:
+            EXTERNAL_SERVICE_STATUS.labels(service_name="schedule_parser").set(0)
+        except Exception:
+            pass
         logging.error(f"Ошибка парсинга с voenmeh.su: {e}", exc_info=True)
         return None
     finally:
@@ -387,7 +324,7 @@ async def fetch_and_parse_from_voenmeh_su(
 async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = None) -> dict | None:
     """
     Загружает и парсит XML расписание с сервера университета (API_URL).
-    
+
     Проверяет актуальность года расписания. Если обнаружен прошлый учебный год
     (например, TimetableGroup50.xml от 2024/2025 года при текущем 2026/2027),
     данные отклоняются во избежание сброса расписания на старое.
@@ -409,9 +346,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         while attempts < 3:
             attempts += 1
             try:
-                async with session.get(
-                    API_URL, timeout=aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)
-                ) as response:
+                async with session.get(API_URL, timeout=aiohttp.ClientTimeout(total=45, connect=10, sock_read=30)) as response:
                     response.raise_for_status()
                     if response.status == 304:
                         return NOT_MODIFIED
@@ -455,7 +390,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
 
         # Проверка на устаревший год (защита от сброса на прошлый год)
         if API_URL == "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml":
-            now = datetime.now()
+            now = datetime.now(MOSCOW_TZ)
             current_academic_year = now.year if now.month >= 8 else now.year - 1
             xml_start_year = int(period_meta.get("StartYear", 0))
             if xml_start_year and xml_start_year < current_academic_year:
@@ -581,7 +516,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         all_schedules["__classrooms_index__"] = {c: list(l.values()) for c, l in classrooms_index.items()}
         all_schedules["__current_xml_hash__"] = current_hash
 
-        logging.info(f"XML расписание успешно загружено. Найдено {len([k for k in all_schedules if not k.startswith('__')])} групп.")
+        logging.info(
+            f"XML расписание успешно загружено. Найдено {len([k for k in all_schedules if not k.startswith('__')])} групп."
+        )
         return all_schedules
 
     except Exception as e:
@@ -599,7 +536,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
 async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = None, force: bool = False) -> dict | None:
     """
     Асинхронно загружает и парсит актуальное расписание.
-    
+
     Приоритет источников:
       1. Основной официальный API https://voenmeh.su (с быстрым conditional check по updated_at)
       2. Резервный XML с voenmeh.ru (с валидацией актуальности учебного года)
@@ -607,6 +544,22 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
     """
     logging.info("Загрузка полного расписания (основной источник: API voenmeh.su)...")
 
+    _started = datetime.now()
+    try:
+        result = await _fetch_and_parse_all_schedules_impl(session=session, force=force)
+    finally:
+        try:
+            PARSER_DURATION.labels(operation_type="full").observe((datetime.now() - _started).total_seconds())
+        except Exception:
+            pass
+    if result is not None:
+        PARSER_STATS.labels(operation="parse_schedule", status="success").inc()
+    else:
+        PARSER_STATS.labels(operation="parse_schedule", status="failed").inc()
+    return result
+
+
+async def _fetch_and_parse_all_schedules_impl(session=None, force: bool = False) -> dict | None:
     # 1. Основной источник: voenmeh.su
     try:
         voenmeh_su_data = await fetch_and_parse_from_voenmeh_su(session=session, force=force)
@@ -655,4 +608,3 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
 
     logging.critical("Нет доступных данных расписания ни из одного источника.")
     return None
-

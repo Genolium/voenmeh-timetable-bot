@@ -149,11 +149,11 @@ class TestFeedbackManager:
         # Мокаем результаты запросов
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_feedback]
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_result.scalar.return_value = 1  # total count
-        
+
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер
@@ -173,11 +173,11 @@ class TestFeedbackManager:
         # Мокаем результаты запросов
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_feedback]
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_result.scalar.return_value = 1
-        
+
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер
@@ -196,11 +196,11 @@ class TestFeedbackManager:
         # Мокаем результаты запросов
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_feedback]
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_result.scalar.return_value = 1
-        
+
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер
@@ -219,11 +219,11 @@ class TestFeedbackManager:
         # Мокаем результаты запросов
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_feedback]
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_result.scalar.return_value = 25  # Общее количество больше лимита
-        
+
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер
@@ -242,11 +242,11 @@ class TestFeedbackManager:
         # Мокаем результаты запросов
         mock_scalars = MagicMock()
         mock_scalars.all.return_value = [sample_feedback]
-        
+
         mock_result = MagicMock()
         mock_result.scalars.return_value = mock_scalars
         mock_result.scalar.return_value = 1
-        
+
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер

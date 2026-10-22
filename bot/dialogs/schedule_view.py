@@ -7,31 +7,32 @@ from aiogram import Bot
 from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo
-from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.link_preview import LinkPreview
+from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 
 from bot.tasks import generate_week_image_task, send_week_original_if_subscribed_task
 from bot.text_formatters import (
-    calculate_semester_week_number,
+    format_full_week_text,
     format_schedule_text,
     format_teacher_schedule_text,
     generate_dynamic_header,
 )
 from bot.utils.image_compression import get_telegram_safe_image_path
-from core.config import MEDIA_PATH, MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, SUBSCRIPTION_CHANNEL
+from core.config import MEDIA_PATH, MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, REDIS_LAST_UPDATE_KEY, SUBSCRIPTION_CHANNEL
+from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
 from core.metrics import GROUP_POPULARITY, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME, USER_ACTIVITY_DAILY
-from core.i18n import i18n
 
 from .constants import DialogDataKeys, WidgetIds
-from .states import FindMenu, MainMenu, Schedule, SettingsMenu
+from .states import About, Feedback, FindMenu, MainMenu, Schedule, SettingsMenu
 
 
 async def cleanup_old_cache():
     """Очищает ВСЕ картинки из кэша (файлы + Redis)."""
+    redis_client = None
     try:
         # Получаем Redis клиент из middleware
         from core.config import get_redis_client
@@ -91,10 +92,17 @@ async def cleanup_old_cache():
 
     except Exception as e:
         logging.error(f"Ошибка при очистке кэша: {e}")
+    finally:
+        try:
+            if redis_client is not None:
+                await redis_client.aclose()
+        except Exception:
+            pass
 
 
 async def get_cache_info():
     """Возвращает информацию о размере кэша (файлы + Redis)."""
+    redis_client = None
     try:
         # Получаем Redis клиент
         from core.config import get_redis_client
@@ -127,7 +135,7 @@ async def get_cache_info():
             "total_size_mb": cache_stats.get("file_size_mb", 0),
             "cache_dir": str(output_dir),
             "files": file_list,
-            "redis_keys": cache_stats.get("redis_keys", 0),
+            "redis_keys": cache_stats.get("redis_count", 0),
             "redis_size_mb": cache_stats.get("redis_size_mb", 0),
         }
 
@@ -137,14 +145,19 @@ async def get_cache_info():
     except Exception as e:
         logging.error(f"Ошибка при получении информации о кэше: {e}")
         return {"error": str(e)}
+    finally:
+        try:
+            if redis_client is not None:
+                await redis_client.aclose()
+        except Exception:
+            pass
 
 
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
-    session_factory = dialog_manager.middleware_data.get("session_factory")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
-    
+
     # CRITICAL: Fetch user language from DB for proper localization
     lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
     ctx = dialog_manager.current_context()
@@ -188,14 +201,31 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     # Метрики активности и популярности
     try:
         GROUP_POPULARITY.labels(group_name=group.upper()).inc()
-        USER_ACTIVITY_DAILY.labels(action_type="view_day", user_group=group.upper()).inc()
+        USER_ACTIVITY_DAILY.labels(
+            action_type="view_day",
+            user_group=group.upper(),
+            hour_of_day=str(datetime.now(MOSCOW_TZ).hour),
+        ).inc()
     except Exception:
         pass
 
     dynamic_header, progress_bar = generate_dynamic_header(day_info.get("lessons", []), current_date, lang=lang)
 
-    # Рассчитываем номер недели с начала семестра
-    week_number = await calculate_semester_week_number(current_date, session_factory)
+    # Номер недели уже посчитан менеджером по единому календарю
+    week_number = day_info.get("week_number", 0) if isinstance(day_info, dict) else 0
+
+    # I18n - use lang from DB instead of middleware
+    _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
+
+    # Свежесть расписания: показываем только реально сохранённое успешное обновление.
+    schedule_freshness = ""
+    try:
+        raw_updated_at = await manager.redis.get(REDIS_LAST_UPDATE_KEY)
+        if raw_updated_at:
+            updated_at = datetime.fromtimestamp(int(raw_updated_at), MOSCOW_TZ)
+            schedule_freshness = _("schedule_updated_at", date=updated_at.strftime("%d.%m"), time=updated_at.strftime("%H:%M"))
+    except Exception:
+        pass
 
     # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
     schedule_text = (
@@ -204,23 +234,26 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
         else format_schedule_text(day_info, week_number, lang=lang)
     )
 
-    # I18n - use lang from DB instead of middleware
-    _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
-
     return {
         "dynamic_header": dynamic_header,
         "progress_bar": progress_bar,
+        "schedule_freshness": schedule_freshness,
         "schedule_text": schedule_text,
         "has_lessons": bool(day_info.get("lessons")),
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
         "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
-        
         "btn_week": _("btn_week"),
         "btn_change_group": _("btn_change_group"),
         "btn_settings": _("btn_settings"),
         "btn_search": _("btn_search"),
         "btn_news": _("btn_news"),
+        "full_quality_gate_text": _("full_quality_gate_text"),
+        "btn_check_subscription": _("btn_check_subscription"),
+        "btn_help": _("btn_help"),
+        "btn_feedback": _("btn_feedback"),
+        "btn_text_week": _("btn_text_week"),
+        "btn_report_error": _("btn_report_error"),
     }
 
 
@@ -241,13 +274,14 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
         # Устанавливаем блокировку на 3 секунды
         await manager_obj.redis.set(last_click_key, "1", ex=3)
         from core.analytics import track_feature_click
+
         await track_feature_click(manager_obj.redis, "image_export")
     except Exception:
         pass
 
     # Сохраняем user_id, запускаем генерацию и фиксируем состояние на Schedule.view
     ctx.dialog_data["user_id"] = user_id
-    
+
     # Показываем уведомление о начале генерации
     try:
         udm = manager.middleware_data.get("user_data_manager")
@@ -275,7 +309,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     bot = dialog_manager.middleware_data.get("bot")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
-    
+
     # CRITICAL: Fetch user language from DB for proper localization
     lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
@@ -293,7 +327,11 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     # Метрики активности и популярности
     try:
         GROUP_POPULARITY.labels(group_name=group.upper()).inc()
-        USER_ACTIVITY_DAILY.labels(action_type="view_week", user_group=group.upper()).inc()
+        USER_ACTIVITY_DAILY.labels(
+            action_type="view_week",
+            user_group=group.upper(),
+            hour_of_day=str(datetime.now(MOSCOW_TZ).hour),
+        ).inc()
     except Exception:
         pass
 
@@ -352,8 +390,10 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     # Формируем подпись
     subject_line_key = "schedule_teacher_title" if ctx.dialog_data.get("user_type") == "teacher" else "schedule_group_title"
     subject_line = _(subject_line_key, group=group)
-    
-    final_caption = _("schedule_week_caption", subject_line=subject_line, week_name=week_name, start=start_date_str, end=end_date_str)
+
+    final_caption = _(
+        "schedule_week_caption", subject_line=subject_line, week_name=week_name, start=start_date_str, end=end_date_str
+    )
 
     # Получаем или генерируем изображение
     # CRITICAL: Используем user_id из события если в контексте нет — иначе тема не будет учтена
@@ -362,7 +402,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         user_id_for_image = user_id
         ctx.dialog_data["user_id"] = user_id  # Сохраняем для последующих вызовов
     placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
-    
+
     # Определяем тему пользователя (если доступно)
     user_theme = None
     try:
@@ -395,19 +435,26 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
         "start_date": start_date_str,
         "end_date": end_date_str,
         "btn_original": _("btn_original"),
-        "btn_back": _("btn_back")
+        "btn_back": _("btn_back"),
     }
 
 
 async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Callback handler для кнопки 'Оригинал' без параметра button"""
-    logging.info(f"🔔 on_send_original_file_callback TRIGGERED by user {callback.from_user.id if callback.from_user else 'unknown'}")
+    logging.info(
+        f"🔔 on_send_original_file_callback TRIGGERED by user {callback.from_user.id if callback.from_user else 'unknown'}"
+    )
     await on_send_original_file(callback, None, dialog_manager)
 
 
 async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager: DialogManager):
     """Повторная проверка подписки и попытка отправки оригинала."""
     await on_send_original_file(callback, None, dialog_manager)
+
+
+async def on_check_subscription_button(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Кнопка внутри окна-гейта полного качества."""
+    await on_send_original_file(callback, None, manager)
 
 
 async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -478,42 +525,50 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     output_path = output_dir / f"{cache_key}.png"
     logging.info(f"📂 on_send_original_file: cache_key={cache_key}, output_path={output_path}, exists={output_path.exists()}")
 
-    # Проверка подписки на канал, если настроено
+    # Проверка подписки через единый механизм БД/legacy-канала
     try:
-        if SUBSCRIPTION_CHANNEL:
-            bot: Bot = manager.middleware_data.get("bot")
-            member = await bot.get_chat_member(SUBSCRIPTION_CHANNEL, callback.from_user.id)
-            status = getattr(member, "status", None)
-            if status not in ("member", "administrator", "creator"):
-                # Переводим пользователя в окно-гейт
-                try:
-                    await manager.switch_to(Schedule.full_quality_gate)
-                except Exception:
-                    pass
-                # Корректно формируем ссылку на канал
-                channel_link = SUBSCRIPTION_CHANNEL
-                if channel_link.startswith("@"):
-                    channel_link = f"https://t.me/{channel_link[1:]}"
-                elif channel_link.startswith("-"):
-                    channel_link = f"tg://resolve?domain={channel_link}"
-                elif not channel_link.startswith("http"):
-                    channel_link = f"https://t.me/{channel_link}"
+        from core.subscription_filter import is_user_subscribed
 
+        bot: Bot = manager.middleware_data.get("bot")
+        subscribed = await is_user_subscribed(
+            user_id=callback.from_user.id,
+            bot=bot,
+            session_factory=manager.middleware_data.get("session_factory"),
+            redis_client=manager.middleware_data.get("redis_client"),
+            fallback_channel=SUBSCRIPTION_CHANNEL,
+        )
+        if not subscribed:
+            # Переводим пользователя в реальное окно-гейт
+            try:
+                await manager.switch_to(Schedule.full_quality_gate)
+            except Exception:
+                pass
+            # Корректно формируем ссылку на канал
+            channel_link = SUBSCRIPTION_CHANNEL or ""
+            if channel_link.startswith("@"):
+                channel_link = f"https://t.me/{channel_link[1:]}"
+            elif channel_link.startswith("-"):
+                channel_link = f"tg://resolve?domain={channel_link}"
+            elif channel_link and not channel_link.startswith("http"):
+                channel_link = f"https://t.me/{channel_link}"
+
+            if channel_link:
                 kb = InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text="🔔 Подписаться", url=channel_link)],
-                        [InlineKeyboardButton(text="✅ Проверить подписку", callback_data="check_sub")],
+                        [InlineKeyboardButton(text=i18n.get("btn_subscribe", lang=lang), url=channel_link)],
+                        [InlineKeyboardButton(text=i18n.get("btn_check_subscription", lang=lang), callback_data="check_sub")],
                     ]
                 )
                 await callback.message.answer(
-                    "Доступ к полному качеству доступен по подписке на канал.",
+                    i18n.get("full_quality_gate_text", lang=lang),
                     reply_markup=kb,
+                    parse_mode="HTML",
                 )
-                try:
-                    await callback.answer()
-                except Exception:
-                    pass
-                return
+            try:
+                await callback.answer()
+            except Exception:
+                pass
+            return
     except Exception:
         pass
 
@@ -545,6 +600,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
 
             # Создаём кэш-менеджер и image_service для генерации
             from core.image_service import ImageService
+
             cache_manager = ImageCacheManager(manager_obj.redis, cache_ttl_hours=24)
             bot: Bot = manager.middleware_data.get("bot")
             image_service = ImageService(cache_manager, bot)
@@ -597,6 +653,7 @@ async def on_date_shift(callback: CallbackQuery, button: Button, manager: Dialog
     ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = new_date.isoformat()
     try:
         from core.analytics import track_feature_click
+
         manager_obj = manager.middleware_data.get("manager")
         if manager_obj and hasattr(manager_obj, "redis"):
             await track_feature_click(manager_obj.redis, "day_nav")
@@ -608,11 +665,61 @@ async def on_today_click(callback: CallbackQuery, button: Button, manager: Dialo
     manager.current_context().dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
     try:
         from core.analytics import track_feature_click
+
         manager_obj = manager.middleware_data.get("manager")
         if manager_obj and hasattr(manager_obj, "redis"):
             await track_feature_click(manager_obj.redis, "day_nav")
     except Exception:
         pass
+
+
+async def on_text_week_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+    ctx = manager.current_context()
+    manager_obj: TimetableManager = manager.middleware_data.get("manager")
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id
+    lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
+    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
+    current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
+    week_start = current_date - timedelta(days=current_date.weekday())
+    week_schedule = {}
+    week_name = ""
+    for offset in range(6):
+        target = week_start + timedelta(days=offset)
+        if ctx.dialog_data.get("user_type") == "teacher":
+            info = await manager_obj.get_teacher_schedule(group, target_date=target)
+        else:
+            info = await manager_obj.get_schedule_for_day(group, target_date=target)
+        if info and not info.get("error"):
+            week_name = info.get("week_name", week_name)
+            week_schedule[info.get("day_name", "")] = info.get("lessons", [])
+    title = i18n.get(
+        "schedule_teacher_title" if ctx.dialog_data.get("user_type") == "teacher" else "schedule_group_title",
+        lang=lang,
+        group=group,
+    )
+    text = f"{title}\n\n{format_full_week_text(week_schedule, week_name or i18n.get('week_even', lang), lang=lang)}"
+    await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.start(About.page_1, mode=StartMode.RESET_STACK)
+
+
+async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+    await manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
+
+
+async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+    ctx = manager.current_context()
+    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
+    target_date = ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO, "")
+    context = f"Жалоба на расписание: {group}, {target_date}"
+    await manager.start(
+        Feedback.enter_feedback,
+        data={"feedback_context": context},
+        mode=StartMode.RESET_STACK,
+    )
 
 
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
@@ -639,7 +746,6 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
 
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
-    
     await callback.answer(_("news_toast"))
     await callback.message.answer(
         _("news_message"),
@@ -683,6 +789,7 @@ schedul_dialog_windows = [
         ),
         Format("{dynamic_header}"),
         Format("{progress_bar}"),
+        Format("{schedule_freshness}"),
         Format("{schedule_text}"),
         Row(
             Button(
@@ -713,7 +820,11 @@ schedul_dialog_windows = [
                 Format("{btn_week}"),
                 id="week_as_image",
                 on_click=on_full_week_image_click,
-                when=lambda data, w, m: data.get("user_type") != "teacher",
+            ),
+            Button(
+                Format("{btn_text_week}"),
+                id="week_as_text",
+                on_click=on_text_week_click,
             ),
             Button(
                 Format("{btn_change_group}"),
@@ -724,7 +835,6 @@ schedul_dialog_windows = [
                 Format("{btn_settings}"),
                 id=WidgetIds.SETTINGS,
                 on_click=on_settings_click,
-                when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
         ),
         Row(
@@ -732,14 +842,17 @@ schedul_dialog_windows = [
                 Format("{btn_search}"),
                 id=WidgetIds.FIND_BTN,
                 on_click=on_find_click,
-                when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
             Button(
                 Format("{btn_news}"),
                 id="news_btn",
                 on_click=on_news_clicked,
-                when=lambda data, w, m: data.get("user_type") != "teacher",
             ),
+        ),
+        Row(
+            Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
+            Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),
+            Button(Format("{btn_report_error}"), id="report_error_btn", on_click=on_report_error_click),
         ),
         LinkPreview(is_disabled=True),
         state=Schedule.view,
@@ -747,9 +860,21 @@ schedul_dialog_windows = [
         parse_mode="HTML",
     ),
     Window(
-        Const(
-            "🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."
+        Format("{full_quality_gate_text}"),
+        Row(
+            Button(
+                Format("{btn_check_subscription}"),
+                id="quality_gate_check",
+                on_click=on_check_subscription_button,
+            ),
+            SwitchTo(Format("{btn_back}"), id="quality_gate_back", state=Schedule.view),
         ),
+        state=Schedule.full_quality_gate,
+        getter=get_schedule_data,
+        parse_mode="HTML",
+    ),
+    Window(
+        Const("🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."),
         Row(
             Button(
                 Format("{btn_original}"),

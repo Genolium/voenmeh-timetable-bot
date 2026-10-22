@@ -49,4 +49,3 @@ def test_setup_telemetry_returns_none_when_endpoint_unreachable(monkeypatch):
 
 def test_shutdown_telemetry_accepts_none():
     shutdown_telemetry(None)
-

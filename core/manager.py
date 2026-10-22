@@ -1,12 +1,14 @@
 import gzip
 import json
 import pickle
+import time
 from datetime import date, datetime, timedelta
 
 from rapidfuzz import fuzz, process
 from redis.asyncio.client import Redis
 
-from core.config import CACHE_LIFETIME, DAY_MAP, REDIS_SCHEDULE_CACHE_KEY
+from core.config import CACHE_LIFETIME, DAY_MAP, MOSCOW_TZ, REDIS_SCHEDULE_CACHE_KEY
+from core.semester_calendar import get_semester_info
 
 
 class TimetableManager:
@@ -27,6 +29,7 @@ class TimetableManager:
         self._current_xml_hash = all_schedules_data.get("__current_xml_hash__", "")
         self.semester_start_date = None
         self._use_compression = True  # Включаем сжатие для оптимизации
+        self._semester_settings_cache: tuple[float, tuple | None] | None = None
 
         if "period" in self.metadata:
             try:
@@ -47,7 +50,7 @@ class TimetableManager:
         """
         print("Инициализация TimetableManager...")
 
-        async with redis_client.lock("timetable_init_lock"):
+        async with redis_client.lock("timetable_init_lock", timeout=300, blocking_timeout=120):
             cached_data = await redis_client.get(REDIS_SCHEDULE_CACHE_KEY)
 
             if cached_data:
@@ -204,107 +207,37 @@ class TimetableManager:
             print(f"Ошибка загрузки индексов из кэша: {e}")
         return False
 
-    def get_week_type(self, target_date: date) -> tuple[str, str] | None:
-        """
-        Определяет тип недели ('odd'/'even') для указанной даты.
-        """
-        if not self.semester_start_date:
-            return None
-        if target_date < self.semester_start_date:
-            return ("odd", "Нечетная (до начала семестра)")
-
-        target_weekday = target_date.weekday()
-        target_week_monday = target_date - timedelta(days=target_weekday)
-
-        days_to_target_week = (target_week_monday - self.semester_start_date).days
-
-        if days_to_target_week < 0:
-            week_number = 1
-        else:
-            week_number = (days_to_target_week // 7) + 1
-
-        return ("odd", "Нечетная") if week_number % 2 == 1 else ("even", "Четная")
-
     async def get_academic_week_type(self, target_date: date) -> tuple[str, str]:
         """
         Определяет тип недели на основе академического календаря.
 
-        Правила:
-        - 1 сентября всегда нечетная неделя
-        - Первая неделя зимнего семестра (обычно январь) - нечетная
-        - Недели чередуются: нечетная -> четная -> нечетная -> четная
-        - Все дни одной календарной недели (понедельник-воскресенье) имеют одинаковый тип
+        Единственный источник истины — core.semester_calendar. Настройки из БД
+        хранят месяц/день и автоматически переносятся на нужный учебный год.
         """
-        year = target_date.year
+        info = await self.get_semester_info_for(target_date)
+        week_name = "Нечетная" if info.week_key == "odd" else "Четная"
+        return (info.week_key, week_name)
 
-        # Пытаемся получить настройки из базы данных
-        fall_semester_start = None
-        spring_semester_start = None
-
-        # Если есть доступ к настройкам семестров, используем их
+    async def get_semester_info_for(self, target_date: date):
+        """Возвращает SemesterInfo для даты (для текста и картинок)."""
+        settings = None
         if hasattr(self, "_semester_settings_manager"):
-            try:
-                # Пытаемся получить настройки из менеджера
-                settings = await self._semester_settings_manager.get_semester_settings()
-                if settings:
-                    fall_semester_start, spring_semester_start = settings
-            except:
-                # Если не удалось получить настройки, используем значения по умолчанию
-                pass
-
-        # Если настройки не получены, используем значения по умолчанию
-        if fall_semester_start is None:
-            fall_semester_start = date(year, 9, 1)  # 1 сентября
-        if spring_semester_start is None:
-            spring_semester_start = date(year, 2, 9)  # 9 февраля
-
-        # Если дата до начала осеннего семестра, используем предыдущий год
-        if target_date < fall_semester_start:
-            year -= 1
-            fall_semester_start = date(year, 9, 1)
-            spring_semester_start = date(year + 1, 2, 9)
-
-        # Определяем, в каком семестре мы находимся
-        if fall_semester_start <= target_date < spring_semester_start:
-            # Осенний семестр
-            semester_start = fall_semester_start
-            semester_name = "осеннего"
-        elif target_date >= spring_semester_start:
-            # Весенний семестр
-            semester_start = spring_semester_start
-            semester_name = "весеннего"
-        else:
-            # Лето - используем осенний семестр предыдущего года
-            semester_start = date(year - 1, 9, 1)
-            semester_name = "осеннего"
-
-        # Для целей расписания важно, чтобы дни одной календарной недели были одинаковыми,
-        # но академические недели считаются от даты начала семестра
-
-        # Находим понедельник недели начала семестра
-        semester_start_weekday = semester_start.weekday()
-        start_monday = semester_start - timedelta(days=semester_start_weekday)
-
-        # Находим понедельник недели, в которую попадает целевая дата
-        target_weekday = target_date.weekday()
-        target_week_monday = target_date - timedelta(days=target_weekday)
-
-        # Вычисляем количество дней от понедельника начала семестра до понедельника целевой недели
-        days_to_target_week = (target_week_monday - start_monday).days
-
-        week_number = days_to_target_week // 7
-
-        # Определяем тип недели (нечетная для even week_numbers)
-        is_odd = (week_number % 2) == 0
-
-        week_type = "odd" if is_odd else "even"
-        week_name = "Нечетная" if is_odd else "Четная"
-
-        return (week_type, week_name)
+            now = time.monotonic()
+            cached = getattr(self, "_semester_settings_cache", None)
+            if cached and now - cached[0] < 60:
+                settings = cached[1]
+            else:
+                try:
+                    settings = await self._semester_settings_manager.get_semester_settings()
+                    self._semester_settings_cache = (now, settings)
+                except Exception:
+                    settings = None
+        fall_semester_start, spring_semester_start = settings if settings else (None, None)
+        return get_semester_info(target_date, fall_semester_start, spring_semester_start)
 
     async def get_schedule_for_day(self, group_number: str, target_date: date = None) -> dict | None:
         """Возвращает расписание для группы на конкретный день."""
-        target_date = target_date or date.today()
+        target_date = target_date or datetime.now(MOSCOW_TZ).date()
         group_schedule = self._schedules.get(group_number.upper())
         if not group_schedule:
             # Проверяем, есть ли похожие группы
@@ -325,22 +258,50 @@ class TimetableManager:
             return {"error": error_message}
 
         # Используем новую академическую логику определения недели
-        week_info = await self.get_academic_week_type(target_date)
-        week_key, week_name = week_info
+        info = await self.get_semester_info_for(target_date)
+        week_key = info.week_key
+        week_name = "Нечетная" if week_key == "odd" else "Четная"
         day_name = DAY_MAP[target_date.weekday()]
 
-        lessons = group_schedule.get(week_key, {}).get(day_name, []) if day_name else []
+        lessons = group_schedule.get(week_key, {}).get(day_name, []) if day_name and info.is_active else []
+
+        try:
+            from core.schedule_overrides import get_group_override
+
+            override = await get_group_override(self.redis, group_number.upper(), target_date)
+            if override is not None:
+                lessons = override
+        except Exception:
+            pass
 
         return {
             "group": group_number.upper(),
             "date": target_date,
             "day_name": day_name or "Воскресенье",
             "week_name": week_name,
+            "week_key": week_key,
+            "week_number": info.week_number,
             "lessons": sorted(
                 lessons,
                 key=lambda x: x.get("start_time_raw", ""),
             ),
         }
+
+    def find_groups(self, query: str) -> list[str]:
+        """Находит группы по подстроке, исключая служебные ключи."""
+        normalized = (query or "").strip().upper()
+        if not normalized:
+            return []
+        return sorted(group for group in self._schedules if not group.startswith("__") and normalized in group.upper())
+
+    def find_groups_fuzzy(self, query: str, limit: int = 20, score_cutoff: int = 55) -> list[str]:
+        """Нечёткий поиск групп для опечаток и неполного ввода."""
+        normalized = (query or "").strip().upper()
+        if len(normalized) < 2:
+            return []
+        candidates = [group for group in self._schedules if not group.startswith("__")]
+        results = process.extract(normalized, candidates, scorer=fuzz.WRatio, score_cutoff=score_cutoff, limit=limit)
+        return [group for group, _score, _idx in results]
 
     def find_teachers(self, query: str) -> list[str]:
         """Находит фамилии преподавателей, содержащие поисковый запрос (регистронезависимо)."""
@@ -425,12 +386,13 @@ class TimetableManager:
                     return {"error": f"Преподаватель '{teacher_name}' не найден в индексе."}
 
         # Используем новую академическую логику определения недели
-        week_info = await self.get_academic_week_type(target_date)
-        week_key_num, week_name = week_info
+        info = await self.get_semester_info_for(target_date)
+        week_key_num = info.week_key
+        week_name = "Нечетная" if week_key_num == "odd" else "Четная"
         day_name = DAY_MAP[target_date.weekday()]
 
         lessons_for_day = []
-        if day_name:
+        if day_name and info.is_active:
             all_teacher_lessons = self._teachers_index.get(exact_match, [])
             for lesson in all_teacher_lessons:
                 if lesson.get("day") == day_name:
@@ -447,6 +409,8 @@ class TimetableManager:
             "date": target_date,
             "day_name": day_name or "Воскресенье",
             "week_name": week_name,
+            "week_key": week_key_num,
+            "week_number": info.week_number,
             "lessons": sorted(
                 lessons_for_day,
                 key=lambda x: x.get("start_time_raw", ""),
@@ -479,12 +443,13 @@ class TimetableManager:
             return {"error": f"Аудитория '{classroom_number}' не найдена в индексе."}
 
         # Используем новую академическую логику определения недели
-        week_info = await self.get_academic_week_type(target_date)
-        week_key_num, week_name = week_info
+        info = await self.get_semester_info_for(target_date)
+        week_key_num = info.week_key
+        week_name = "Нечетная" if week_key_num == "odd" else "Четная"
         day_name = DAY_MAP[target_date.weekday()]
 
         lessons_for_day = []
-        if day_name:
+        if day_name and info.is_active:
             all_classroom_lessons = self._classrooms_index.get(classroom_number, [])
             for lesson in all_classroom_lessons:
                 if lesson.get("day") == day_name:
@@ -501,6 +466,8 @@ class TimetableManager:
             "date": target_date,
             "day_name": day_name or "Воскресенье",
             "week_name": week_name,
+            "week_key": week_key_num,
+            "week_number": info.week_number,
             "lessons": sorted(
                 lessons_for_day,
                 key=lambda x: x.get("start_time_raw", ""),
@@ -524,10 +491,9 @@ class TimetableManager:
         if not self._use_compression:
             return json.dumps(data, ensure_ascii=False).encode("utf-8")
 
-        # Используем pickle для более эффективной сериализации + gzip для сжатия
-        serialized = pickle.dumps(data)
-        compressed = gzip.compress(serialized, compresslevel=6)
-        return compressed
+        # JSON безопаснее pickle и не выполняет код при чтении из Redis.
+        serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return gzip.compress(serialized, compresslevel=6)
 
     def _decompress_data(self, compressed_data: bytes) -> dict:
         """Разжимает данные из Redis."""
@@ -535,9 +501,13 @@ class TimetableManager:
             return json.loads(compressed_data.decode("utf-8"))
 
         try:
-            # Пытаемся разжать как сжатые данные
             decompressed = gzip.decompress(compressed_data)
-            return pickle.loads(decompressed)
-        except (gzip.BadGzipFile, pickle.UnpicklingError):
-            # Если не получилось, пробуем как обычный JSON (обратная совместимость)
+        except gzip.BadGzipFile:
+            # Обратная совместимость с несжатым JSON.
             return json.loads(compressed_data.decode("utf-8"))
+
+        try:
+            return json.loads(decompressed.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # Читаем старые кэши, записанные pickle, но новые записи — только JSON.
+            return pickle.loads(decompressed)

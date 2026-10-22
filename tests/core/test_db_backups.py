@@ -78,4 +78,3 @@ def test_maybe_decompress_gzip(tmp_path: Path):
     result = maybe_decompress_gzip(gz_path)
     assert result.exists()
     assert result.suffix == ".sql"
-

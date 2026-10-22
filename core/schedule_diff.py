@@ -3,11 +3,14 @@
 Позволяет отправлять пользователям только уведомления о реальных изменениях.
 """
 
+import html
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+from core.i18n import i18n
 
 logger = logging.getLogger(__name__)
 
@@ -223,50 +226,61 @@ class ScheduleDiffFormatter:
         ChangeType.TYPE_CHANGED: "🔄",
     }
 
-    CHANGE_DESCRIPTIONS = {
-        ChangeType.LESSON_ADDED: "Добавлена пара",
-        ChangeType.LESSON_REMOVED: "Отменена пара",
-        ChangeType.TIME_CHANGED: "Изменено время",
-        ChangeType.ROOM_CHANGED: "Изменена аудитория",
-        ChangeType.TEACHER_CHANGED: "Изменен преподаватель",
-        ChangeType.SUBJECT_CHANGED: "Изменен предмет",
-        ChangeType.TYPE_CHANGED: "Изменен тип пары",
+    CHANGE_DESCRIPTION_KEYS = {
+        ChangeType.LESSON_ADDED: "diff_added",
+        ChangeType.LESSON_REMOVED: "diff_removed",
+        ChangeType.TIME_CHANGED: "diff_time",
+        ChangeType.ROOM_CHANGED: "diff_room",
+        ChangeType.TEACHER_CHANGED: "diff_teacher",
+        ChangeType.SUBJECT_CHANGED: "diff_subject",
+        ChangeType.TYPE_CHANGED: "diff_type",
     }
 
     @classmethod
-    def format_change(cls, change: LessonChange) -> str:
+    def format_change(cls, change: LessonChange, lang: str = "ru") -> str:
         """Форматирует одно изменение в читаемый текст."""
         icon = cls.CHANGE_ICONS.get(change.change_type, "🔄")
-        description = cls.CHANGE_DESCRIPTIONS.get(change.change_type, "Изменение")
+        description = i18n.get(
+            cls.CHANGE_DESCRIPTION_KEYS.get(change.change_type, "diff_default"),
+            lang=lang,
+        )
+        subject = html.escape(change.subject or "", quote=False)
+        time_value = html.escape(change.time or "", quote=False)
+        room = html.escape(change.room or "", quote=False)
+        teacher = html.escape(change.teacher or "", quote=False)
+        old_value = html.escape(change.old_value or "", quote=False)
+        new_value = html.escape(change.new_value or "", quote=False)
+        at = i18n.get("diff_at", lang=lang)
+        for_word = i18n.get("diff_for", lang=lang)
 
         if change.change_type == ChangeType.LESSON_ADDED:
-            parts = [f"<b>{change.subject}</b>"]
-            if change.time:
-                parts.append(f"в <b>{change.time}</b>")
-            if change.room:
-                parts.append(f"📍 {change.room}")
-            if change.teacher:
-                parts.append(f"🧑‍🏫 {change.teacher}")
+            parts = [f"<b>{subject}</b>"]
+            if time_value:
+                parts.append(f"{at} <b>{time_value}</b>")
+            if room:
+                parts.append(f"📍 {room}")
+            if teacher:
+                parts.append(f"🧑‍🏫 {teacher}")
             return f"{icon} {description}: {' '.join(parts)}"
 
         elif change.change_type == ChangeType.LESSON_REMOVED:
-            parts = [f"<b>{change.subject}</b>"]
-            if change.time:
-                parts.append(f"в <b>{change.time}</b>")
+            parts = [f"<b>{subject}</b>"]
+            if time_value:
+                parts.append(f"{at} <b>{time_value}</b>")
             return f"{icon} {description}: {' '.join(parts)}"
 
         else:  # Изменения в существующих парах
-            base = f"{icon} {description} для <b>{change.subject}</b>"
-            if change.time:
-                base += f" в <b>{change.time}</b>"
+            base = f"{icon} {description} {for_word} <b>{subject}</b>"
+            if time_value:
+                base += f" {at} <b>{time_value}</b>"
 
-            if change.old_value and change.new_value:
-                base += f": <i>{change.old_value}</i> → <b>{change.new_value}</b>"
+            if old_value and new_value:
+                base += f": <i>{old_value}</i> → <b>{new_value}</b>"
 
             return base
 
     @classmethod
-    def format_group_diff(cls, diff: GroupScheduleDiff) -> Optional[str]:
+    def format_group_diff(cls, diff: GroupScheduleDiff, lang: str = "ru") -> Optional[str]:
         """
         Форматирует изменения в расписании группы для отправки пользователям.
 
@@ -280,7 +294,12 @@ class ScheduleDiffFormatter:
             return None
 
         date_str = diff.date.strftime("%d.%m.%Y")
-        header = f"🔔 <b>Изменения в расписании {diff.group}</b>\n📅 <b>{date_str}</b>\n\n"
+        header = i18n.get(
+            "diff_header",
+            lang=lang,
+            group=html.escape(diff.group, quote=False),
+            date=date_str,
+        )
 
         # Группируем изменения по типам для лучшей читаемости
         changes_by_type = {}
@@ -301,12 +320,12 @@ class ScheduleDiffFormatter:
         ]:
             if change_type in changes_by_type:
                 for change in changes_by_type[change_type]:
-                    formatted_changes.append(cls.format_change(change))
+                    formatted_changes.append(cls.format_change(change, lang=lang))
 
         if not formatted_changes:
             return None
 
         message = header + "\n".join(formatted_changes)
-        message += "\n\n<i>Проверьте актуальное расписание в боте</i>"
+        message += i18n.get("diff_footer", lang=lang)
 
         return message

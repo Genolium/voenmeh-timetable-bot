@@ -23,3 +23,17 @@ data/
 # OS artifacts
 .DS_Store
 Thumbs.db
+# Secrets and local-only files
+.env
+.env.*
+*.pem
+*.key
+*.crt
+project_code.txt
+schedules_backup_*.json
+code_collector.py
+test_themes.py
+generate_test_image.py
+generate_all_images.py
+
+test_output/

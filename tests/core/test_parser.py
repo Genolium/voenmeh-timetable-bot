@@ -4,12 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.parser import (
-    create_initial_fallback_schedule,
-    fetch_and_parse_all_schedules,
-    load_fallback_schedule,
-    save_fallback_schedule,
-)
+from core.parser import fetch_and_parse_all_schedules, load_fallback_schedule, save_fallback_schedule
 
 
 @pytest.fixture
@@ -478,72 +473,7 @@ def test_save_fallback_schedule_permission_error(tmp_path):
         pass
 
 
-
-
-
 # --- Тесты для инициализации fallback файла ---
-
-
-def test_create_initial_fallback_schedule_file_exists(tmp_path):
-    """Тест create_initial_fallback_schedule когда файл уже существует."""
-    # Создаем существующий файл
-    fallback_file = tmp_path / "existing_fallback.json"
-    fallback_file.write_text('{"test": "existing"}', encoding="utf-8")
-
-    # Мокаем FALLBACK_SCHEDULE_PATH
-    with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        result = create_initial_fallback_schedule()
-
-        # Должен вернуть True, так как файл уже существует
-        assert result is True
-
-        # Файл не должен быть изменен
-        with open(fallback_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        assert data == {"test": "existing"}
-
-
-def test_create_initial_fallback_schedule_create_new(tmp_path):
-    """Тест create_initial_fallback_schedule создания нового файла."""
-    # Создаем путь к несуществующему файлу
-    fallback_file = tmp_path / "new_fallback.json"
-
-    # Мокаем FALLBACK_SCHEDULE_PATH
-    with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        result = create_initial_fallback_schedule()
-
-        # Должен вернуть True
-        assert result is True
-        assert fallback_file.exists()
-
-        # Проверяем содержимое созданного файла
-        with open(fallback_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        # Проверяем что созданы базовые данные
-        assert data["__current_xml_hash__"] == "initial_fallback_2024"
-        assert "О735Б" in data
-        assert "О735А" in data
-        assert data["О735Б"]["odd"]["Понедельник"][0]["subject"] == "Математика (fallback)"
-        assert data["О735А"]["even"]["Четверг"][0]["subject"] == "Информатика (fallback)"
-
-
-def test_create_initial_fallback_schedule_save_error(tmp_path):
-    """Тест create_initial_fallback_schedule при ошибке сохранения."""
-    # Мокаем save_fallback_schedule чтобы он возвращал False
-    with patch("core.parser.save_fallback_schedule", return_value=False):
-        # Создаем путь к файлу в несуществующей директории
-        fallback_file = tmp_path / "readonly" / "fallback.json"
-
-        # Мокаем FALLBACK_SCHEDULE_PATH
-        with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-            result = create_initial_fallback_schedule()
-
-            # Должен вернуть False из-за ошибки сохранения
-            assert result is False
-
-
-
 
 
 def test_load_fallback_schedule_create_initial_fails(tmp_path):
@@ -553,12 +483,10 @@ def test_load_fallback_schedule_create_initial_fails(tmp_path):
 
     # Мокаем FALLBACK_SCHEDULE_PATH
     with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        # Мокаем create_initial_fallback_schedule чтобы он возвращал False
-        with patch("core.parser.create_initial_fallback_schedule", return_value=False):
-            result = load_fallback_schedule()
+        result = load_fallback_schedule()
 
-            # Должен вернуть None
-            assert result is None
+        # Должен вернуть None, выдуманное расписание не создаётся
+        assert result is None
 
 
 def test_load_fallback_schedule_loads_existing_file(tmp_path):
@@ -576,16 +504,11 @@ def test_load_fallback_schedule_loads_existing_file(tmp_path):
 
     # Мокаем FALLBACK_SCHEDULE_PATH
     with patch("core.parser.FALLBACK_SCHEDULE_PATH", fallback_file):
-        # Мокаем create_initial_fallback_schedule чтобы убедиться что он НЕ вызывается
-        with patch("core.parser.create_initial_fallback_schedule") as mock_create:
-            result = load_fallback_schedule()
+        result = load_fallback_schedule()
 
-            # Должен вернуть данные из файла
-            assert result is not None
-            assert result["__current_xml_hash__"] == "test_existing_hash"
-
-            # create_initial_fallback_schedule не должен вызываться
-            mock_create.assert_not_called()
+        # Должен вернуть данные из файла
+        assert result is not None
+        assert result["__current_xml_hash__"] == "test_existing_hash"
 
 
 @pytest.mark.asyncio
@@ -707,6 +630,7 @@ async def test_fetch_and_parse_from_voenmeh_su_meta_error():
 @pytest.mark.asyncio
 async def test_fetch_and_parse_all_schedules_uses_voenmeh_su_fallback(monkeypatch):
     """Тест: при сбое основного сервера XML используется резервный API voenmeh.su."""
+
     # Основной сервер возвращает ошибку
     class FailingSession:
         def __init__(self, *args, **kwargs):

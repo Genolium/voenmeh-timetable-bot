@@ -126,7 +126,7 @@ async def test_weather_api_cache_hit(monkeypatch):
     api = WeatherAPI(api_key="k", city_id="1")
     # Подготовим кэш на ближайший слот
     target = datetime.now(timezone.utc)
-    key = f"{target.date().isoformat()}_{(target.hour // 3)*3:02d}h"
+    key = f"{target.date().isoformat()}_{(target.hour // 3)*3:02d}h_ru"
     WeatherAPI._cache[key] = {
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None),
         "data": {

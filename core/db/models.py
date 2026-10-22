@@ -27,7 +27,7 @@ class User(Base):
     morning_summary: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
 
-    reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=60, server_default="60", nullable=False)
+    reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=20, server_default="20", nullable=False)
     morning_time: Mapped[str] = mapped_column(String(5), default="08:00", server_default="08:00", nullable=False)
     evening_time: Mapped[str] = mapped_column(String(5), default="20:00", server_default="20:00", nullable=False)
 
@@ -65,27 +65,6 @@ class SemesterSettings(Base):
     updated_by: Mapped[int] = mapped_column(BigInteger, nullable=False)  # Telegram ID администратора
 
 
-class Event(Base):
-    __tablename__ = "events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    start_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
-    end_at: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
-    location: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    link: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    image_file_id: Mapped[str | None] = mapped_column(String(512), nullable=True)  # Telegram file_id
-    is_published: Mapped[bool] = mapped_column(Boolean, default=True, server_default="t", nullable=False)
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_events_start", "start_at"),
-        Index("idx_events_published", "is_published"),
-    )
-
-
 class Feedback(Base):
     __tablename__ = "feedback"
 
@@ -111,13 +90,16 @@ class Feedback(Base):
 
 class ScheduleChangeLog(Base):
     """Журнал аудита изменений расписания (Audit Trail)."""
+
     __tablename__ = "schedule_change_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     target_name: Mapped[str] = mapped_column(String(100), nullable=False)  # Группа или ФИО преподавателя
     target_type: Mapped[str] = mapped_column(String(20), default="group", nullable=False)  # 'group' или 'teacher'
     schedule_date: Mapped[datetime] = mapped_column(Date, nullable=False)  # Дата изменённого дня
-    change_type: Mapped[str] = mapped_column(String(50), nullable=False)  # added, removed, time_changed, room_changed, teacher_changed
+    change_type: Mapped[str] = mapped_column(
+        String(50), nullable=False
+    )  # added, removed, time_changed, room_changed, teacher_changed
     subject: Mapped[str] = mapped_column(String(255), nullable=False)
     lesson_time: Mapped[str | None] = mapped_column(String(50), nullable=True)
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -133,6 +115,7 @@ class ScheduleChangeLog(Base):
 
 class FailedMessage(Base):
     """Таблица Dead-Letter Queue (DLQ) для аудита неотправленных сообщений."""
+
     __tablename__ = "failed_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -154,6 +137,7 @@ class FailedMessage(Base):
 
 class SubscriptionFilterSetting(Base):
     """Глобальные настройки фильтра обязательной подписки на каналы."""
+
     __tablename__ = "subscription_filter_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -163,15 +147,15 @@ class SubscriptionFilterSetting(Base):
 
 class RequiredChannel(Base):
     """Канал для обязательной подписки пользователей."""
+
     __tablename__ = "required_channels"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    channel_id: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)  # Например, '-100123456789' или '@channel'
+    channel_id: Mapped[str] = mapped_column(
+        String(100), unique=True, nullable=False
+    )  # Например, '-100123456789' или '@channel'
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     invite_link: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
-    __table_args__ = (
-        Index("idx_required_channels_channel_id", "channel_id"),
-    )
-
+    __table_args__ = (Index("idx_required_channels_channel_id", "channel_id"),)

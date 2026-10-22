@@ -3,6 +3,7 @@
 
 Отвечает за загрузку файлов переводов и предоставление локализованных текстов.
 """
+
 import json
 import logging
 import os
@@ -18,7 +19,7 @@ class I18n:
         self.default_lang = default_lang
         self.translations: Dict[str, Dict[str, Any]] = {}
         self.available_locales = ["ru", "en", "zh"]
-        
+
         self.reload()
 
     def reload(self):
@@ -58,7 +59,7 @@ class I18n:
         # Фолбэк на дефолтный язык
         if text is None and lang != self.default_lang:
             text = self.translations.get(self.default_lang, {}).get(key)
-        
+
         # Если все еще None, возвращаем ключ
         if text is None:
             return key
@@ -72,6 +73,7 @@ class I18n:
                 return text
 
         return text
+
 
 # Глобальный экземпляр
 i18n = I18n()

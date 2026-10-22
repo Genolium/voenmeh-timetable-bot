@@ -5,6 +5,7 @@ Revises: 20260912_add_blocked_fields
 Create Date: 2026-09-12 22:30:00.000000
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa

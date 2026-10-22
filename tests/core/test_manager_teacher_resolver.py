@@ -67,7 +67,7 @@ def test_resolve_canonical_teacher_fuzzy():
 async def test_get_teacher_schedule_normalizes_name():
     manager = _build_manager()
     # Дата четверга, чтобы совпала с зашитым выше днём
-    thursday = date(2025, 8, 28)
+    thursday = date(2025, 9, 4)
     # Вводим вариант имени в верхнем регистре и с точками/пробелами
     info = await manager.get_teacher_schedule("ЗЕМЛЯНСКАЯ Е. Р.", thursday)
     assert info.get("teacher") == "Землянская Е.Р."
@@ -78,5 +78,5 @@ async def test_get_teacher_schedule_normalizes_name():
 @pytest.mark.asyncio
 async def test_get_teacher_schedule_unknown_returns_error():
     manager = _build_manager()
-    info = await manager.get_teacher_schedule("Несуществующий Преподаватель", date(2025, 8, 28))
+    info = await manager.get_teacher_schedule("Несуществующий Преподаватель", date(2025, 9, 4))
     assert "error" in info

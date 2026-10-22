@@ -14,14 +14,14 @@ def mock_cache_manager():
     mock.is_cached = AsyncMock(return_value=False)
     mock.get_file_path.return_value = Path("test.png")
     mock.cache_image = AsyncMock(return_value=True)
-    
+
     # Mock redis lock
     mock.redis = MagicMock()
     mock_lock = MagicMock()
     mock_lock.__aenter__ = AsyncMock(return_value=None)
     mock_lock.__aexit__ = AsyncMock(return_value=None)
     mock.redis.lock.return_value = mock_lock
-    
+
     return mock
 
 

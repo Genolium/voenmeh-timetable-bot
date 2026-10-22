@@ -17,7 +17,7 @@ from aiogram_dialog import DialogManager
 from redis.asyncio.client import Redis
 
 import main
-from bot.dialogs.states import About, Admin, Events, Feedback, MainMenu, Schedule
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
 from core.config import ADMIN_IDS
 from core.manager import TimetableManager
 from core.user_data import UserDataManager
@@ -200,19 +200,6 @@ class TestCommandHandlers:
         mock_dialog_manager.start.assert_called_once_with(Admin.menu, mode=main.StartMode.RESET_STACK)
 
     @pytest.mark.asyncio
-    async def test_events_command_handler(self):
-        """Тест обработчика /events."""
-        mock_dialog_manager = AsyncMock()
-
-        await main.events_command_handler(MagicMock(), mock_dialog_manager)
-
-        mock_dialog_manager.start.assert_called_once_with(Events.list, mode=main.StartMode.RESET_STACK)
-
-
-class TestRunMetricsServer:
-    """Тесты для функции run_metrics_server."""
-
-    @pytest.mark.asyncio
     async def test_run_metrics_server(self):
         """Тест запуска сервера метрик."""
         with patch("main.start_http_server") as mock_start_http_server, patch("main.logging") as mock_logging:
@@ -224,9 +211,6 @@ class TestRunMetricsServer:
             # Проверяем, что было залогировано сообщение
             mock_logging.info.assert_called_once()
             assert "Prometheus metrics server started" in mock_logging.info.call_args[0][0]
-
-
-
 
 
 class TestErrorHandler:
@@ -290,14 +274,17 @@ class TestMainFunction:
     @pytest.mark.asyncio
     async def test_main_timetable_manager_creation_failed(self):
         """Тест main с ошибкой создания TimetableManager."""
-        with patch.dict(
-            os.environ,
-            {
-                "BOT_TOKEN": "test_token",
-                "REDIS_URL": "redis://localhost",
-                "DATABASE_URL": "sqlite://test.db",
-            },
-        ), patch("main.logging") as mock_logging:
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "BOT_TOKEN": "test_token",
+                    "REDIS_URL": "redis://localhost",
+                    "DATABASE_URL": "sqlite://test.db",
+                },
+            ),
+            patch("main.logging") as mock_logging,
+        ):
             with patch("main.TimetableManager.create", return_value=None):
                 await main.main()
 

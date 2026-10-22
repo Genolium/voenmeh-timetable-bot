@@ -5,6 +5,7 @@ Revises: merge_perf_indexes_and_semester
 Create Date: 2025-01-26 12:00:00.000000
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa

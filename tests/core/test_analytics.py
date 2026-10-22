@@ -14,6 +14,7 @@ class TestAnalytics:
     async def test_track_feature_click(self):
         """Тест отслеживания клика по фиче в Redis."""
         from unittest.mock import MagicMock
+
         mock_redis = AsyncMock()
         mock_pipeline = MagicMock()
         mock_redis.pipeline.return_value = mock_pipeline

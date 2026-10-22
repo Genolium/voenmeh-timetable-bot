@@ -99,11 +99,7 @@ class DLQManager:
 
         try:
             async with self.session_factory() as session:
-                stmt = (
-                    update(FailedMessage)
-                    .where(FailedMessage.id == message_id)
-                    .values(status=new_status)
-                )
+                stmt = update(FailedMessage).where(FailedMessage.id == message_id).values(status=new_status)
                 await session.execute(stmt)
                 await session.commit()
                 return True
