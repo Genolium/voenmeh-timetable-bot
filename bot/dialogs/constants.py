@@ -1,7 +1,9 @@
 from enum import Enum
 
+
 class DialogDataKeys(str, Enum):
     """Ключи для хранения данных в `dialog_data`."""
+
     GROUP = "group"
     SEARCH_TYPE = "search_type"
     TEACHER_NAME = "teacher_name"
@@ -9,8 +11,10 @@ class DialogDataKeys(str, Enum):
     FOUND_ITEMS = "found_items"
     CURRENT_DATE_ISO = "current_date_iso"
 
+
 class WidgetIds(str, Enum):
     """Идентификаторы (ID) для виджетов в диалогах."""
+
     # Settings
     EVENING_NOTIFY = "evening_notify"
     MORNING_SUMMARY = "morning_summary"
@@ -33,7 +37,7 @@ class WidgetIds(str, Enum):
     BACK_TO_MAIN_SCHEDULE = "back_to_main_schedule"
     BACK_TO_CHOICE = "back_to_choice"
     SELECT_FOUND_ITEM = "select_found_item"
-    
+
     # About Menu
     FINISH_TUTORIAL = "finish"
 
@@ -48,11 +52,6 @@ class WidgetIds(str, Enum):
     TEST_EVENING = "test_evening"
     TEST_REMINDERS = "test_reminders"
     GENERATE_FULL_SCHEDULE = "generate_full_schedule"
-    # Admin categories/events
-    ADMIN_CATEGORIES = "admin_categories"
-    ADMIN_EVENTS = "admin_events"
-    # Events user menu
-    EVENTS_OPEN = "events_open"
 
     # Themes
     THEME_STANDARD = "theme_standard"

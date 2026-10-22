@@ -1,12 +1,16 @@
-import aiohttp
 import asyncio
 import logging
-from typing import Dict, Any, Optional
 from datetime import datetime
+from typing import Any, Dict, Optional
+
+import aiohttp
+
 from core.config import MOSCOW_TZ
+
 
 class AlertSender:
     """Мульти-канальный отправитель алертов (Slack/Discord/Telegram/HTTP)."""
+
     def __init__(self, settings: Dict[str, Any]):
         self.settings = settings
         self.session: Optional[aiohttp.ClientSession] = None
@@ -64,13 +68,37 @@ class AlertSender:
         try:
             emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
             blocks = [
-                {"type": "header", "text": {"type": "plain_text", "text": f"{emoji} {alert_data.get('title', 'Alert')}"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": alert_data.get("message", "")}},
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{emoji} {alert_data.get('title', 'Alert')}",
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": alert_data.get("message", "")},
+                },
             ]
             if alert_data.get("tags"):
                 tags = "\n".join([f"• {k}: {v}" for k, v in alert_data["tags"].items()])
-                blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"}})
-            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"{datetime.now(MOSCOW_TZ).isoformat()}"}]})
+                blocks.append(
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"},
+                    }
+                )
+            blocks.append(
+                {
+                    "type": "context",
+                    "elements": [
+                        {
+                            "type": "mrkdwn",
+                            "text": f"{datetime.now(MOSCOW_TZ).isoformat()}",
+                        }
+                    ],
+                }
+            )
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
             cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
             async with cm as r:
@@ -80,7 +108,9 @@ class AlertSender:
 
     async def _send_discord(self, alert_data: Dict[str, Any]) -> bool:
         try:
-            color = {"info": 0x3498db, "warning": 0xf39c12, "critical": 0xe74c3c}.get(alert_data.get("severity", "info"), 0x95a5a6)
+            color = {"info": 0x3498DB, "warning": 0xF39C12, "critical": 0xE74C3C}.get(
+                alert_data.get("severity", "info"), 0x95A5A6
+            )
             embed = {
                 "title": alert_data.get("title", "Alert"),
                 "description": alert_data.get("message", ""),
@@ -121,7 +151,13 @@ class AlertSender:
             api_key = self.settings.get("ALERT_WEBHOOK_API_KEY")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
-            cm = await self._normalize_ctx(self.session.post(self.settings.get("ALERT_WEBHOOK_URL"), json=alert_data, headers=headers))
+            cm = await self._normalize_ctx(
+                self.session.post(
+                    self.settings.get("ALERT_WEBHOOK_URL"),
+                    json=alert_data,
+                    headers=headers,
+                )
+            )
             async with cm as r:
                 return r.status in (200, 201, 202)
         except Exception:

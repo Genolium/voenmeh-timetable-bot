@@ -1,18 +1,22 @@
-import logging
+import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any, Tuple, Callable, TypeVar, Awaitable
 from functools import wraps
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
 
-from sqlalchemy import select, update, func, or_, case, event
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from redis.asyncio.client import Redis
-from core.config import MOSCOW_TZ
+from sqlalchemy import case, event, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from core.config import MOSCOW_TZ
 from core.db import User
+from core.themes import DEFAULT_THEME, get_all_theme_ids, is_valid_theme
+from core.time_utils import now_msk_naive
 
 logger = logging.getLogger(__name__)
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 def cached(ttl: int = 3600) -> Callable:
     """
@@ -24,11 +28,12 @@ def cached(ttl: int = 3600) -> Callable:
     Returns:
         Декоратор для кэширования
     """
+
     def decorator(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
         @wraps(func)
         async def wrapper(self: "UserDataManager", *args: Any, **kwargs: Any) -> T:
-            # Создаем ключ кэша на основе имени функции и аргументов
-            cache_key: str = f"cache:{func.__name__}:{hash(str(args) + str(sorted(kwargs.items())))}"
+            # Создаем детерминированный ключ кэша
+            cache_key = self._get_cache_key(func.__name__, *args, **kwargs)
 
             # Получаем Redis клиент
             redis_client: Redis = await self._get_redis_client()
@@ -38,7 +43,7 @@ def cached(ttl: int = 3600) -> Callable:
                 cached_data = await redis_client.get(cache_key)
                 if cached_data:
                     logger.debug(f"Cache hit for {func.__name__}")
-                    return json.loads(cached_data.decode('utf-8'))
+                    return json.loads(cached_data.decode("utf-8"))
                 else:
                     logger.debug(f"Cache miss for {func.__name__}")
             except Exception as e:
@@ -49,17 +54,15 @@ def cached(ttl: int = 3600) -> Callable:
 
             # Сохраняем результат в кэш
             try:
-                await redis_client.setex(
-                    cache_key,
-                    ttl,
-                    json.dumps(result, default=str, ensure_ascii=False)
-                )
+                await redis_client.setex(cache_key, ttl, json.dumps(result, default=str, ensure_ascii=False))
                 logger.debug(f"Cached result for {func.__name__}")
             except Exception as e:
                 logger.warning(f"Failed to cache result for {func.__name__}: {e}")
 
             return result
+
         return wrapper
+
     return decorator
 
 
@@ -67,17 +70,25 @@ class UserDataManager:
     """
     Класс для управления данными пользователей через SQLAlchemy.
     """
+
     def __init__(self, db_url: str, redis_url: Optional[str] = None) -> None:
         tz_name: str = str(MOSCOW_TZ)
 
-        # Настраиваем часовой пояс на уровне соединения с PostgreSQL
+        # Настраиваем пул соединений и часовой пояс на уровне соединения с PostgreSQL
         engine_kwargs = {}
         try:
-            if db_url.startswith("postgresql") and "+asyncpg" in db_url:
-                # Для asyncpg используем server_settings
-                engine_kwargs["connect_args"] = {
-                    "server_settings": {"TimeZone": tz_name}
-                }
+            if db_url.startswith("postgresql"):
+                engine_kwargs.update(
+                    {
+                        "pool_size": 20,
+                        "max_overflow": 15,
+                        "pool_recycle": 1800,
+                        "pool_pre_ping": True,
+                    }
+                )
+                if "+asyncpg" in db_url:
+                    # Для asyncpg используем server_settings
+                    engine_kwargs["connect_args"] = {"server_settings": {"TimeZone": tz_name}}
         except Exception:
             # На всякий случай не блокируем инициализацию
             engine_kwargs = {}
@@ -87,6 +98,7 @@ class UserDataManager:
         # Для sync-адаптеров (psycopg2) или если server_settings недоступно
         try:
             if db_url.startswith("postgresql") and "+asyncpg" not in db_url:
+
                 @event.listens_for(self.engine.sync_engine, "connect")
                 def _set_timezone(dbapi_connection, connection_record):
                     try:
@@ -96,6 +108,7 @@ class UserDataManager:
                     except Exception:
                         # Не прерываем подключение, если установка TZ не удалась
                         pass
+
         except Exception:
             pass
 
@@ -105,6 +118,29 @@ class UserDataManager:
         self._redis_url = redis_url
         self._redis_client = None
 
+    async def init_db(self) -> None:
+        """Инициализирует схему.
+
+        В production схема управляется Alembic. Для SQLite (тесты) создаём
+        таблицы напрямую, чтобы тестовые сценарии не зависели от миграций.
+        """
+        import core.db  # noqa: F401 - гарантирует регистрацию всех моделей в Base.metadata
+        from core.db.models import Base
+
+        try:
+            if "sqlite" in str(self.engine.url):
+                async with self.engine.begin() as conn:
+                    await conn.run_sync(Base.metadata.create_all)
+                logger.info("✅ Таблицы SQLite успешно инициализированы.")
+            else:
+                from core.db.migrate import assert_schema_current
+
+                await assert_schema_current(self.engine)
+                logger.info("✅ Схема PostgreSQL соответствует последней миграции.")
+        except Exception as e:
+            logger.error(f"❌ Ошибка инициализации таблиц базы данных: {e}", exc_info=True)
+            raise
+
     async def _get_redis_client(self) -> Redis:
         """Получает Redis клиент, создавая его при необходимости."""
         if self._redis_client is None and self._redis_url:
@@ -112,33 +148,64 @@ class UserDataManager:
         elif self._redis_client is None:
             # Fallback: получить из config если URL не передан
             from core.config import get_redis_client
-            self._redis_client = await get_redis_client()
+
+            self._redis_client = get_redis_client()
         return self._redis_client
 
-    async def clear_user_cache(self) -> None:
-        """Очищает кэш пользователей (вызывается при изменении данных)."""
+    def _get_cache_key(self, func_name: str, *args: Any, **kwargs: Any) -> str:
+        """
+        Генерирует детерминированный ключ кэша на основе имени функции и аргументов.
+        Использует MD5 вместо hash() для стабильности между процессами.
+        """
+        # Сериализуем аргументы для создания стабильного хэша
+        # Сортируем kwargs для детерминизма
+        args_str = str(args)
+        kwargs_str = str(sorted(kwargs.items()))
+        data_to_hash = f"{args_str}:{kwargs_str}"
+
+        arg_hash = hashlib.md5(data_to_hash.encode("utf-8")).hexdigest()
+        return f"cache:{func_name}:{arg_hash}"
+
+    async def clear_user_cache(self, user_id: Optional[int] = None) -> None:
+        """Очищает кэш пользователей (вызывается при изменении данных подписок)."""
+        if not self._redis_client:
+            await self._get_redis_client()
+
         if not self._redis_client:
             return
 
         try:
-            # Удаляем ключи кэша для методов получения пользователей
-            cache_patterns: List[str] = [
-                "cache:get_users_for_evening_notify:*",
-                "cache:get_users_for_morning_summary:*",
-                "cache:get_users_for_lesson_reminders:*"
-            ]
+            if user_id is not None:
+                # Инвалидируем только кэш конкретного пользователя
+                # Генерируем ключи точно так же, как декоратор @cached
+                user_patterns = [
+                    self._get_cache_key("get_user_language", user_id),
+                    self._get_cache_key("get_user_theme", user_id),
+                    self._get_cache_key("get_user_group", user_id),
+                ]
+                for key in user_patterns:
+                    deleted = await self._redis_client.delete(key)
+                    if deleted:
+                        logger.debug(f"Cache key deleted: {key}")
+                logger.info(f"User cache cleared for user_id={user_id}")
+            else:
+                # Полная очистка — только при изменении подписок
+                cache_patterns: List[str] = [
+                    "cache:get_users_for_evening_notify:*",
+                    "cache:get_users_for_morning_summary:*",
+                    "cache:get_users_for_lesson_reminders:*",
+                ]
 
-            for pattern in cache_patterns:
-                # Используем SCAN для поиска ключей по паттерну
-                cursor: int = 0
-                while True:
-                    cursor, keys = await self._redis_client.scan(cursor, match=pattern)
-                    if keys:
-                        await self._redis_client.delete(*keys)
-                    if cursor == 0:
-                        break
+                for pattern in cache_patterns:
+                    cursor: int = 0
+                    while True:
+                        cursor, keys = await self._redis_client.scan(cursor, match=pattern)
+                        if keys:
+                            await self._redis_client.delete(*keys)
+                        if cursor == 0:
+                            break
 
-            logger.info("User cache cleared")
+                logger.info("User cache cleared (full)")
         except Exception as e:
             logger.warning(f"Failed to clear user cache: {e}")
 
@@ -147,23 +214,52 @@ class UserDataManager:
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             if user:
-                user.last_active_date = datetime.now(timezone.utc).replace(tzinfo=None)
+                user.last_active_date = now_msk_naive()
+                if user.is_blocked:
+                    user.is_blocked = False
+                    user.blocked_date = None
             else:
                 user = User(user_id=user_id, username=username)
                 session.add(user)
             await session.commit()
+        # НЕ очищаем кэш при простом обновлении last_active_date
 
-        # Очищаем кэш пользователей после регистрации/обновления
-        await self.clear_user_cache()
-
-    async def set_user_group(self, user_id: int, group: str) -> None:
-        """Устанавливает или обновляет учебную группу пользователя."""
+    async def register_user_and_get(self, user_id: int, username: Optional[str]) -> Optional["User"]:
+        """Регистрирует/обновляет пользователя и возвращает его объект за одну сессию."""
         async with self.async_session_maker() as session:
-            stmt = update(User).where(User.user_id == user_id).values(group=group.upper())
+            user = await session.get(User, user_id)
+            if user:
+                user.last_active_date = now_msk_naive()
+                if user.is_blocked:
+                    user.is_blocked = False
+                    user.blocked_date = None
+            else:
+                user = User(user_id=user_id, username=username)
+                session.add(user)
+            await session.commit()
+            await session.refresh(user)
+            return user
+
+    async def set_user_blocked(self, user_id: int, is_blocked: bool = True) -> None:
+        """Устанавливает статус блокировки бота пользователем (отток)."""
+        async with self.async_session_maker() as session:
+            user = await session.get(User, user_id)
+            if user:
+                user.is_blocked = is_blocked
+                user.blocked_date = now_msk_naive() if is_blocked else None
+                await session.commit()
+        await self.clear_user_cache(user_id)
+
+    async def set_user_group(self, user_id: int, group: str | None) -> None:
+        """Устанавливает или обновляет учебную группу пользователя."""
+        normalized = group.upper() if group else None
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(group=normalized)
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения группы
+        # Очищаем кэш конкретного пользователя + broadcast кэш (группа влияет на рассылки)
+        await self.clear_user_cache(user_id)
         await self.clear_user_cache()
 
     async def set_user_type(self, user_id: int, user_type: str) -> None:
@@ -173,7 +269,7 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения типа
+        # Очищаем broadcast кэш (тип влияет на рассылки)
         await self.clear_user_cache()
 
     async def get_user_type(self, user_id: int) -> Optional[str]:
@@ -183,8 +279,9 @@ class UserDataManager:
             result = await session.scalar(stmt)
             return result
 
+    @cached(ttl=300)
     async def get_user_group(self, user_id: int) -> Optional[str]:
-        """Получает учебную группу пользователя."""
+        """Получает учебную группу пользователя (кэшируется на 5 минут)."""
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
             return user.group if user else None
@@ -199,13 +296,27 @@ class UserDataManager:
                     "morning_summary": user.morning_summary,
                     "lesson_reminders": user.lesson_reminders,
                     "reminder_time_minutes": user.reminder_time_minutes,
-                    "theme": user.theme
+                    "theme": user.theme,
+                    "morning_time": user.morning_time,
+                    "evening_time": user.evening_time,
                 }
-            return {"evening_notify": False, "morning_summary": False, "lesson_reminders": False, "reminder_time_minutes": 60, "theme": "standard"}
+            return {
+                "evening_notify": False,
+                "morning_summary": False,
+                "lesson_reminders": False,
+                "reminder_time_minutes": 20,
+                "theme": "standard",
+                "morning_time": "08:00",
+                "evening_time": "20:00",
+            }
 
     async def update_setting(self, user_id: int, setting_name: str, status: bool) -> None:
         """Обновляет конкретную настройку уведомлений для пользователя."""
-        if setting_name not in ["evening_notify", "morning_summary", "lesson_reminders"]:
+        if setting_name not in [
+            "evening_notify",
+            "morning_summary",
+            "lesson_reminders",
+        ]:
             logging.warning(f"Attempt to update invalid setting: {setting_name}")
             return
         async with self.async_session_maker() as session:
@@ -213,7 +324,7 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения настроек
+        # Очищаем broadcast кэш (настройка подписки влияет на рассылки)
         await self.clear_user_cache()
 
     async def set_reminder_time(self, user_id: int, minutes: int) -> None:
@@ -223,7 +334,23 @@ class UserDataManager:
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения времени напоминания
+        # Очищаем broadcast кэш
+        await self.clear_user_cache()
+
+    async def set_morning_time(self, user_id: int, time_str: str) -> None:
+        """Устанавливает время утренней рассылки."""
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(morning_time=time_str)
+            await session.execute(stmt)
+            await session.commit()
+        await self.clear_user_cache()
+
+    async def set_evening_time(self, user_id: int, time_str: str) -> None:
+        """Устанавливает время вечерней рассылки."""
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(evening_time=time_str)
+            await session.execute(stmt)
+            await session.commit()
         await self.clear_user_cache()
 
     async def get_full_user_info(self, user_id: int) -> Optional[User]:
@@ -232,26 +359,48 @@ class UserDataManager:
             user = await session.get(User, user_id)
             return user
 
+    @cached(ttl=300)
     async def get_user_theme(self, user_id: int) -> Optional[str]:
-        """Возвращает тему пользователя (standard, light, dark, classic, coffee)."""
+        """Возвращает тему пользователя (кэшируется на 5 минут)."""
         async with self.async_session_maker() as session:
             user = await session.get(User, user_id)
-            return user.theme if user else 'standard'
+            return user.theme if user else "standard"
+
+    VALID_THEMES = tuple(get_all_theme_ids())
 
     async def set_user_theme(self, user_id: int, theme: str) -> None:
         """Устанавливает тему пользователя."""
-        # Проверяем, что тема валидная
-        valid_themes = ['standard', 'light', 'dark', 'classic', 'coffee']
-        if theme not in valid_themes:
-            logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using 'standard'.")
-            theme = 'standard'
+        if not is_valid_theme(theme):
+            logger.warning(f"Invalid theme '{theme}' for user {user_id}. Using '{DEFAULT_THEME}'.")
+            theme = DEFAULT_THEME
 
         async with self.async_session_maker() as session:
             stmt = update(User).where(User.user_id == user_id).values(theme=theme)
             await session.execute(stmt)
             await session.commit()
 
-        # Очищаем кэш пользователей после изменения темы
+        # Очищаем кэш темы конкретного пользователя
+        await self.clear_user_cache(user_id)
+
+    @cached(ttl=300)
+    async def get_user_language(self, user_id: int) -> str:
+        """Возвращает язык пользователя (кэшируется на 5 минут)."""
+        async with self.async_session_maker() as session:
+            stmt = select(User.language).where(User.user_id == user_id)
+            result = await session.scalar(stmt)
+            return result or "ru"
+
+    async def set_user_language(self, user_id: int, language: str) -> None:
+        """Устанавливает язык пользователя."""
+        if language not in ["ru", "en", "zh"]:
+            language = "ru"
+
+        async with self.async_session_maker() as session:
+            stmt = update(User).where(User.user_id == user_id).values(language=language)
+            await session.execute(stmt)
+            await session.commit()
+
+        await self.clear_user_cache(user_id)
         await self.clear_user_cache()
 
     # --- Методы для статистики ---
@@ -263,7 +412,7 @@ class UserDataManager:
 
     async def get_new_users_count(self, days: int) -> int:
         async with self.async_session_maker() as session:
-            start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+            start_date = now_msk_naive() - timedelta(days=days)
             stmt = select(func.count(User.user_id)).where(User.registration_date >= start_date)
             result = await session.scalar(stmt)
             return result or 0
@@ -278,15 +427,159 @@ class UserDataManager:
 
     async def get_active_users_by_period(self, days: int) -> int:
         async with self.async_session_maker() as session:
-            start_date = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+            start_date = now_msk_naive() - timedelta(days=days)
             stmt = select(func.count(User.user_id)).where(User.last_active_date >= start_date)
             result = await session.scalar(stmt)
             return result or 0
+
+    async def get_blocked_users_count(self, days: Optional[int] = None) -> int:
+        """Возвращает количество пользователей, заблокировавших бота (всего или за указанное число дней)."""
+        async with self.async_session_maker() as session:
+            stmt = select(func.count(User.user_id)).where(User.is_blocked.is_(True))
+            if days is not None:
+                start_date = now_msk_naive() - timedelta(days=days)
+                stmt = stmt.where(User.blocked_date >= start_date)
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_users_without_group_count(self) -> int:
+        """Возвращает количество пользователей, застрявших на онбординге (без выбранной группы)."""
+        async with self.async_session_maker() as session:
+            stmt = select(func.count(User.user_id)).where(User.group.is_(None))
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_dau_previous_day(self) -> int:
+        """Возвращает количество активных пользователей за позапрошлые сутки (от 24 до 48 часов назад)."""
+        async with self.async_session_maker() as session:
+            now = now_msk_naive()
+            start_date = now - timedelta(days=2)
+            end_date = now - timedelta(days=1)
+            stmt = select(func.count(User.user_id)).where(
+                User.last_active_date >= start_date,
+                User.last_active_date < end_date,
+            )
+            result = await session.scalar(stmt)
+            return result or 0
+
+    async def get_daily_dynamics(
+        self,
+        total_users: int,
+        dau: int,
+        subscribed_total: int,
+        new_users_day: int,
+    ) -> Dict[str, Any]:
+        """
+        Рассчитывает дельты метрик по сравнению с предыдущим днём (+/-),
+        сохраняет текущий снепшот в Redis.
+        """
+        redis_client = await self._get_redis_client()
+        today = datetime.now(MOSCOW_TZ)
+        yesterday = today - timedelta(days=1)
+        today_key = f"timetable:stats:snapshot:{today.strftime('%Y%m%d')}"
+        yesterday_key = f"timetable:stats:snapshot:{yesterday.strftime('%Y%m%d')}"
+
+        delta_users_str = f"+{new_users_day}"
+        delta_dau_pct = 0
+        delta_subs_str = "+0"
+
+        if redis_client:
+            try:
+                raw_yesterday = await redis_client.get(yesterday_key)
+                if raw_yesterday:
+                    y_data = json.loads(raw_yesterday)
+                    y_total = y_data.get("total_users", total_users)
+                    y_dau = y_data.get("dau", 0)
+                    y_subs = y_data.get("subscribed_total", subscribed_total)
+
+                    diff_total = total_users - y_total
+                    delta_users_str = f"+{diff_total}" if diff_total >= 0 else str(diff_total)
+
+                    if y_dau > 0:
+                        delta_dau_pct = round(((dau - y_dau) / y_dau) * 100)
+
+                    diff_subs = subscribed_total - y_subs
+                    delta_subs_str = f"+{diff_subs}" if diff_subs >= 0 else str(diff_subs)
+            except Exception as e:
+                logger.warning(f"Error reading yesterday stats snapshot: {e}")
+
+        # Если в Redis ещё нет вчерашнего снепшота, рассчитываем дельту DAU из базы
+        if delta_dau_pct == 0:
+            dau_prev = await self.get_dau_previous_day()
+            if dau_prev > 0:
+                delta_dau_pct = round(((dau - dau_prev) / dau_prev) * 100)
+
+        dau_pct_str = f"+{delta_dau_pct}%" if delta_dau_pct >= 0 else f"{delta_dau_pct}%"
+
+        # Сохраняем текущий снепшот в Redis на 14 дней
+        if redis_client:
+            try:
+                snapshot_data = {
+                    "total_users": total_users,
+                    "dau": dau,
+                    "subscribed_total": subscribed_total,
+                    "new_users": new_users_day,
+                }
+                await redis_client.set(today_key, json.dumps(snapshot_data), ex=86400 * 14)
+            except Exception as e:
+                logger.warning(f"Error saving today stats snapshot: {e}")
+
+        return {
+            "delta_users_str": delta_users_str,
+            "delta_dau_pct_str": dau_pct_str,
+            "delta_subs_str": delta_subs_str,
+        }
+
+    async def get_activity_history(self, days: int = 7) -> Tuple[List[datetime], List[int], List[int]]:
+        """
+        Возвращает историю активности по дням: (список дат, новые пользователи, активные DAU).
+        """
+        now = datetime.now(MOSCOW_TZ)
+        dates = [now - timedelta(days=i) for i in reversed(range(days))]
+        new_users = []
+        active_users = []
+
+        async with self.async_session_maker() as session:
+            for d in dates:
+                start = datetime(d.year, d.month, d.day, 0, 0, 0)
+                end = datetime(d.year, d.month, d.day, 23, 59, 59)
+
+                stmt_new = select(func.count(User.user_id)).where(
+                    User.registration_date >= start,
+                    User.registration_date <= end,
+                )
+                cnt_new = await session.scalar(stmt_new) or 0
+                new_users.append(cnt_new)
+
+                stmt_act = select(func.count(User.user_id)).where(
+                    User.last_active_date >= start,
+                    User.last_active_date <= end,
+                )
+                cnt_act = await session.scalar(stmt_act) or 0
+                active_users.append(cnt_act)
+
+        return dates, new_users, active_users
 
     async def get_all_users_with_groups(self) -> List[Tuple[int, Optional[str]]]:
         """Получает всех пользователей с их группами."""
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group)
+            result = await session.execute(stmt)
+            return [(row.user_id, row.group) for row in result.fetchall()]
+
+    async def get_students_with_groups_and_language(self) -> List[Tuple[int, Optional[str], str]]:
+        """Студенты с группами и языком — для локализованных diff-уведомлений."""
+        async with self.async_session_maker() as session:
+            stmt = select(User.user_id, User.group, User.language).where(
+                or_(User.user_type != "teacher", User.user_type.is_(None))
+            )
+            result = await session.execute(stmt)
+            return [(row.user_id, row.group, row.language or "ru") for row in result.fetchall()]
+
+    async def get_students_with_groups(self) -> List[Tuple[int, Optional[str]]]:
+        """Получает только студентов с группами (без преподавателей)."""
+        async with self.async_session_maker() as session:
+            stmt = select(User.user_id, User.group).where(or_(User.user_type != "teacher", User.user_type.is_(None)))
             result = await session.execute(stmt)
             return [(row.user_id, row.group) for row in result.fetchall()]
 
@@ -308,7 +601,7 @@ class UserDataManager:
             stmt = select(func.count(User.user_id)).where(
                 User.evening_notify == False,
                 User.morning_summary == False,
-                User.lesson_reminders == False
+                User.lesson_reminders == False,
             )
             result = await session.scalar(stmt)
             return result or 0
@@ -319,7 +612,7 @@ class UserDataManager:
             stmt = select(
                 func.count(User.user_id).filter(User.evening_notify == True).label("evening"),
                 func.count(User.user_id).filter(User.morning_summary == True).label("morning"),
-                func.count(User.user_id).filter(User.lesson_reminders == True).label("reminders")
+                func.count(User.user_id).filter(User.lesson_reminders == True).label("reminders"),
             )
             result = await session.execute(stmt)
             row = result.one_or_none()
@@ -334,15 +627,19 @@ class UserDataManager:
                 .group_by(User.group)
                 .subquery()
             )
-            stmt = select(
-                case(
-                    (subquery.c.students_in_group == 1, "1 студент"),
-                    (subquery.c.students_in_group.between(2, 5), "2-5 студентов"),
-                    (subquery.c.students_in_group.between(6, 10), "6-10 студентов"),
-                    else_="11+ студентов"
-                ).label("group_size_category"),
-                func.count().label("number_of_groups")
-            ).group_by("group_size_category").order_by("group_size_category")
+            stmt = (
+                select(
+                    case(
+                        (subquery.c.students_in_group == 1, "1 студент"),
+                        (subquery.c.students_in_group.between(2, 5), "2-5 студентов"),
+                        (subquery.c.students_in_group.between(6, 10), "6-10 студентов"),
+                        else_="11+ студентов",
+                    ).label("group_size_category"),
+                    func.count().label("number_of_groups"),
+                )
+                .group_by("group_size_category")
+                .order_by("group_size_category")
+            )
 
             result = await session.execute(stmt)
             return {row.group_size_category: row.number_of_groups for row in result}
@@ -355,48 +652,104 @@ class UserDataManager:
 
     # --- Методы для рассылок ---
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_evening_notify(self) -> List[Tuple[int, str]]:
-        """Получает пользователей для вечерних уведомлений с кэшированием."""
+    async def get_users_for_evening_notify(self, target_hour: int = 20) -> List[Tuple[int, str, str, str]]:
+        """
+        Получает пользователей для вечерних уведомлений с кэшированием.
+        Возвращает (user_id, group, language, user_type).
+        """
+        target_time = f"{target_hour:02d}:00"
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group).where(User.evening_notify == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language, User.user_type).where(
+                User.evening_notify == True,
+                User.group.isnot(None),
+                User.is_blocked.is_(False),
+                User.evening_time == target_time,
+            )
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_morning_summary(self) -> List[Tuple[int, str]]:
-        """Получает пользователей для утренних уведомлений с кэшированием."""
+    async def get_users_for_morning_summary(self, target_hour: int = 8) -> List[Tuple[int, str, str, str]]:
+        """
+        Получает пользователей для утренних уведомлений с кэшированием.
+        Возвращает (user_id, group, language, user_type).
+        """
+        target_time = f"{target_hour:02d}:00"
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group).where(User.morning_summary == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.language, User.user_type).where(
+                User.morning_summary == True,
+                User.group.isnot(None),
+                User.is_blocked.is_(False),
+                User.morning_time == target_time,
+            )
             result = await session.execute(stmt)
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int]]:
-        """Получает пользователей для напоминаний о парах, включая время напоминания с кэшированием."""
+    async def get_users_for_lesson_reminders(self) -> List[Tuple[int, str, int, str]]:
+        """Получает пользователей для напоминаний о парах (только студентов), включая время напоминания с кэшированием."""
         async with self.async_session_maker() as session:
-            stmt = select(User.user_id, User.group, User.reminder_time_minutes).where(User.lesson_reminders == True, User.group.isnot(None))
+            stmt = select(User.user_id, User.group, User.reminder_time_minutes, User.language).where(
+                User.lesson_reminders == True,
+                User.group.isnot(None),
+                User.is_blocked.is_(False),
+                or_(User.user_type != "teacher", User.user_type.is_(None)),
+            )
             result = await session.execute(stmt)
             rows = result.all()
-            adjusted: List[Tuple[int, str, int]] = []
+            adjusted: List[Tuple[int, str, int, str]] = []
             for row in rows:
-                user_id, group, minutes = row
-                # По требованиям рассылки, дефолтное значение для напоминаний — 20 минут,
-                # даже если в настройках по умолчанию хранится 60.
-                if minutes is None or minutes == 60:
+                user_id, group, minutes, lang = row
+                if minutes is None:
                     minutes = 20
-                adjusted.append((user_id, group, minutes))
+                adjusted.append((user_id, group, minutes, lang))
+            return adjusted
+
+    async def get_users_for_lesson_reminders_with_type(self) -> List[Tuple[int, str, int, str, str]]:
+        """То же, что get_users_for_lesson_reminders, но с типом пользователя.
+
+        Нужно, чтобы напоминания работали и для преподавателей: для них
+        расписание берётся из teacher-индекса, а не из групп.
+        """
+        async with self.async_session_maker() as session:
+            stmt = select(
+                User.user_id,
+                User.group,
+                User.reminder_time_minutes,
+                User.language,
+                User.user_type,
+            ).where(
+                User.lesson_reminders == True,  # noqa: E712
+                User.group.isnot(None),
+                User.is_blocked.is_(False),
+            )
+            result = await session.execute(stmt)
+            adjusted: List[Tuple[int, str, int, str, str]] = []
+            for user_id, group, minutes, lang, user_type in result.all():
+                adjusted.append((user_id, group, minutes if minutes is not None else 20, lang, user_type or "student"))
             return adjusted
 
     async def get_admin_users(self) -> List[int]:
         """Получает список ID администраторов бота."""
         from core.config import ADMIN_IDS
+
         return ADMIN_IDS
 
     async def gather_stats(self) -> tuple:
         """Собирает всю статистику для отчётов."""
         import asyncio
 
-        total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist = await asyncio.gather(
+        (
+            total_users,
+            dau,
+            wau,
+            mau,
+            subscribed_total,
+            unsubscribed_total,
+            subs_breakdown,
+            top_groups,
+            group_dist,
+        ) = await asyncio.gather(
             self.get_total_users_count(),
             self.get_active_users_by_period(days=1),
             self.get_active_users_by_period(days=7),
@@ -405,7 +758,111 @@ class UserDataManager:
             self.get_unsubscribed_count(),
             self.get_subscription_breakdown(),
             self.get_top_groups(limit=5),
-            self.get_group_distribution()
+            self.get_group_distribution(),
         )
 
-        return total_users, dau, wau, mau, subscribed_total, unsubscribed_total, subs_breakdown, top_groups, group_dist
+        return (
+            total_users,
+            dau,
+            wau,
+            mau,
+            subscribed_total,
+            unsubscribed_total,
+            subs_breakdown,
+            top_groups,
+            group_dist,
+        )
+
+    # --- Методы для истории просмотров ---
+    async def add_to_history(
+        self,
+        user_id: int,
+        item_type: str,
+        item_value: str,
+    ) -> None:
+        """
+        Добавляет элемент в историю просмотров пользователя.
+
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента ("group", "teacher", "room")
+            item_value: Значение (название группы/преподавателя/аудитории)
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        key = f"history:{user_id}:{item_type}"
+        try:
+            # Удаляем дубликат, если уже есть
+            await redis.lrem(key, 0, item_value)
+            # Добавляем в начало списка
+            await redis.lpush(key, item_value)
+            # Оставляем только последние 10
+            await redis.ltrim(key, 0, 9)
+            # TTL 7 дней
+            await redis.expire(key, 86400 * 7)
+            logger.debug(f"Added {item_type}:{item_value} to history for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to add to history: {e}")
+
+    async def get_history(
+        self,
+        user_id: int,
+        item_type: str,
+        limit: int = 5,
+    ) -> List[str]:
+        """
+        Получает историю просмотров пользователя.
+
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента ("group", "teacher", "room")
+            limit: Максимальное количество элементов
+
+        Returns:
+            Список недавно просмотренных элементов
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return []
+
+        key = f"history:{user_id}:{item_type}"
+        try:
+            items = await redis.lrange(key, 0, limit - 1)
+            return [i.decode("utf-8") if isinstance(i, bytes) else str(i) for i in items]
+        except Exception as e:
+            logger.warning(f"Failed to get history: {e}")
+            return []
+
+    async def clear_history(
+        self,
+        user_id: int,
+        item_type: Optional[str] = None,
+    ) -> None:
+        """
+        Очищает историю просмотров пользователя.
+
+        Args:
+            user_id: ID пользователя
+            item_type: Тип элемента (если None - очищает все типы)
+        """
+        redis = await self._get_redis_client()
+        if not redis:
+            return
+
+        if item_type:
+            keys = [f"history:{user_id}:{item_type}"]
+        else:
+            keys = [
+                f"history:{user_id}:group",
+                f"history:{user_id}:teacher",
+                f"history:{user_id}:room",
+            ]
+
+        try:
+            for key in keys:
+                await redis.delete(key)
+            logger.debug(f"Cleared history for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to clear history: {e}")

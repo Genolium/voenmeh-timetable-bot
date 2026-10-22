@@ -59,6 +59,8 @@ __pycache__/
 # #################### #
 code_collector.py
 *.txt
+# Файлы зависимостей должны попадать в репозиторий
+!requirements*.txt
 *.log
 *.log.*
 npm-debug.log*
@@ -67,3 +69,14 @@ yarn-error.log*
 lerna-debug.log*
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 .pytest_cache/
+# #################### #
+#  Артефакты сборки/тестов #
+# #################### #
+generated_images/
+test_output/
+.coverage
+coverage.xml
+htmlcov/
+schedules_backup_*.json
+project_code.txt
+bot/media/generated/

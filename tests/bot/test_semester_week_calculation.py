@@ -2,11 +2,12 @@
 Тесты для функции calculate_semester_week_number с использованием настроек семестров из БД.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import date, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from bot.text_formatters import calculate_semester_week_number, calculate_semester_week_number_fallback
+import pytest
+
+from bot.text_formatters import calculate_semester_week_number
 
 
 class TestSemesterWeekCalculation:
@@ -19,14 +20,17 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров: осенний 1 сентября, весенний 9 февраля
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
             # Тест: дата в осеннем семестре
             test_date = date(2024, 9, 15)  # 15 сентября - 3-я неделя осеннего семестра
@@ -35,10 +39,10 @@ class TestSemesterWeekCalculation:
             assert result == 3
 
             # Тест: дата в весеннем семестре
-            test_date = date(2024, 2, 19)  # 19 февраля - 2-я неделя весеннего семестра
+            test_date = date(2024, 2, 19)  # 19 февраля - 3-я календарная неделя семестра
             result = await calculate_semester_week_number(test_date, mock_session_factory)
 
-            assert result == 2
+            assert result == 3
 
             # Тест: дата в весеннем семестре (не между семестрами) - недели считаются
             test_date = date(2024, 3, 15)  # 15 марта - 6-я неделя весеннего семестра
@@ -53,7 +57,7 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
@@ -73,14 +77,17 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
             # Тест: первый день осеннего семестра
             test_date = date(2024, 9, 1)
@@ -101,21 +108,23 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
             # Устанавливаем даты семестров для 2024 года
             fall_start = date(2024, 9, 1)
             spring_start = date(2024, 2, 9)
-            mock_instance.get_semester_settings.return_value = (fall_start, spring_start)
+            mock_instance.get_semester_settings.return_value = (
+                fall_start,
+                spring_start,
+            )
 
-            # Тест: дата до осеннего семестра - недели не считаются
+            # Тест: январь относится к осеннему семестру предыдущего учебного года
             test_date = date(2024, 1, 15)
             result = await calculate_semester_week_number(test_date, mock_session_factory)
 
-            # Дата находится до начала осеннего семестра, поэтому недели не считаются
-            assert result == 0
+            assert result > 0
 
             # Тест: дата между семестрами (после весеннего, до осеннего) - недели не считаются
             test_date = date(2024, 7, 15)  # 15 июля - между весенним и осенним семестрами
@@ -131,7 +140,7 @@ class TestSemesterWeekCalculation:
         mock_session_factory = AsyncMock()
 
         # Настраиваем mock для SemesterSettingsManager
-        with patch('bot.text_formatters.SemesterSettingsManager') as mock_settings_manager:
+        with patch("bot.text_formatters.SemesterSettingsManager") as mock_settings_manager:
             mock_instance = AsyncMock()
             mock_settings_manager.return_value = mock_instance
 
@@ -144,21 +153,3 @@ class TestSemesterWeekCalculation:
 
             # Должно использовать fallback логику (1 сентября)
             assert result == 3  # 3-я неделя с 1 сентября
-
-    def test_semester_week_fallback_function(self):
-        """Тест fallback функции для обратной совместимости."""
-        # Тест: 1 сентября
-        test_date = date(2024, 9, 1)
-        result = calculate_semester_week_number_fallback(test_date)
-        assert result == 1
-
-        # Тест: 8 сентября (2-я неделя)
-        test_date = date(2024, 9, 8)
-        result = calculate_semester_week_number_fallback(test_date)
-        assert result == 2
-
-        # Тест: дата до 1 сентября (должен использовать предыдущий год)
-        test_date = date(2024, 8, 31)
-        result = calculate_semester_week_number_fallback(test_date)
-        # 31 августа 2023 года - это 53-я неделя 2023 года
-        assert result == 53

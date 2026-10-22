@@ -1,12 +1,16 @@
-import os
-import logging
 import asyncio
+import logging
+import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+from core.i18n import i18n
+from core.transliteration import transliterate
 
 """Утилиты генерации изображений расписания через Playwright.
 
@@ -25,10 +29,17 @@ except Exception:
     _async_playwright = None
 async_playwright = _async_playwright
 
-def print_progress_bar(current: int, total: int, prefix: str = "Прогресс", suffix: str = "", length: int = 30):
+
+def print_progress_bar(
+    current: int,
+    total: int,
+    prefix: str = "Прогресс",
+    suffix: str = "",
+    length: int = 30,
+):
     """
     Выводит прогресс-бар в консоль для генерации изображений.
-    
+
     Args:
         current: Текущий прогресс
         total: Общее количество
@@ -37,11 +48,12 @@ def print_progress_bar(current: int, total: int, prefix: str = "Прогресс
         length: Длина прогресс-бара
     """
     filled_length = int(length * current // total)
-    bar = '█' * filled_length + '-' * (length - filled_length)
+    bar = "█" * filled_length + "-" * (length - filled_length)
     percent = f"{100 * current // total}%"
-    print(f'\r{prefix} |{bar}| {percent} {suffix}', end='', flush=True)
+    print(f"\r{prefix} |{bar}| {percent} {suffix}", end="", flush=True)
     if current == total:
         print()  # Новая строка в конце
+
 
 _bg_images_cache = {}
 _template_cache = None
@@ -51,16 +63,32 @@ _template_mtime: float | None = None
 _POOL_MAX_PAGES = int(os.getenv("IMAGE_BROWSER_MAX_PAGES", "60"))  # Перезапуск после N страниц
 _POOL_MAX_AGE_SEC = int(os.getenv("IMAGE_BROWSER_MAX_AGE_SEC", "900"))  # …или после T секунд
 _POOL_HEADLESS_ARGS = [
-    '--headless=new',
-    '--no-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-gpu',
-    '--disable-web-security',
-    '--disable-features=VizDisplayCompositor',
-    '--no-zygote',
-    '--disable-extensions',
-    '--disable-background-networking',
+    "--headless=new",
+    "--no-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--disable-web-security",
+    "--disable-features=VizDisplayCompositor",
+    "--no-zygote",
+    "--disable-extensions",
+    "--disable-background-networking",
 ]
+
+# Глобальный семафор для ограничения страниц на ОДИН процесс/браузер
+# (чтобы не убить память если слишком много тасков)
+_MAX_CONCURRENT_PAGES = int(os.getenv("IMAGE_BROWSER_CONCURRENT_PAGES", "4"))
+_init_thread_lock = threading.Lock()
+
+
+def resolve_week_slug(week_type: str | None, week_key: str | None = None) -> str:
+    """Return "odd" or "even" for image rendering.
+
+    Explicit ``week_key`` wins; otherwise fall back to the historical Russian
+    text heuristic for backward compatibility.
+    """
+    if week_key in {"odd", "even"}:
+        return week_key
+    return "odd" if "Неч" in (week_type or "") else "even"
 
 
 def _time_to_minutes(t: str) -> int:
@@ -72,40 +100,72 @@ def _time_to_minutes(t: str) -> int:
         return 24 * 60 + 59
 
 
-def _prepare_days(schedule_data: dict) -> List[dict]:
-    order = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
+def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
+    # Ключи в schedule_data приходят на русском от парсера
+    order_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+
+    # Маппинг для получения локализованного названия
+    day_key_map = {
+        "Понедельник": "day_0",
+        "Вторник": "day_1",
+        "Среда": "day_2",
+        "Четверг": "day_3",
+        "Пятница": "day_4",
+        "Суббота": "day_5",
+        "Воскресенье": "day_6",
+    }
+
     upper = {k.upper(): v for k, v in schedule_data.items()}
     prepared: List[dict] = []
-    for name in order:
-        lessons = upper.get(name.upper(), [])
+
+    for ru_name in order_ru:
+        lessons = upper.get(ru_name.upper())
+        if lessons is None and ru_name == "Воскресенье":
+            continue  # Обычно воскресенье не показываем, если нет пар
+
+        localized_name = i18n.get(day_key_map[ru_name], lang)
+
         # Определяем первую пару по минимальному времени (в минутах)
-        first = ''
+        first = ""
         if lessons:
             try:
                 first = sorted(
                     lessons,
-                    key=lambda l: _time_to_minutes(l.get('start_time_raw', '23:59'))
-                )[0].get('start_time_raw', '')
+                    key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
+                )[
+                    0
+                ].get("start_time_raw", "")
             except Exception:
-                first = ''
+                first = ""
+        else:
+            lessons = []  # Гарантируем список
+
         items = []
         for l in lessons:
-            title = f"{l.get('subject', '')}{' (' + l.get('type','') + ')' if l.get('type') else ''}"
-            room_raw = (l.get('room', '') or '').strip('; ')  # Удаляем только точку с запятой и пробелы, сохраняем звездочки
-            room_lower = room_raw.lower()
-            # Считаем такие значения отсутствием кабинета
-            if not room_raw or ('кабинет' in room_lower and 'не указан' in room_lower):
-                room_fmt = ''
+            subject = l.get("subject", "")
+            lesson_type = l.get("type", "")
+            # Build title with optional type
+            if lesson_type:
+                title_raw = f"{subject} ({lesson_type})"
             else:
-                room_fmt = f"{room_raw}"
-            items.append({
-                'title': title,
-                'room': room_fmt,
-                'time': l.get('time','')
-            })
-        # Добавляем оба ключа для совместимости с тестами и шаблонами: 'name' и 'title'
-        prepared.append({'name': name, 'title': name, 'firstStart': first, 'lessons': items})
+                title_raw = subject
+            # Transliterate title for non-Russian languages
+            title = transliterate(title_raw, lang)
+
+            room_raw = (l.get("room", "") or "").strip("; ")
+            room_lower = room_raw.lower()
+            if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
+                # Room not specified - leave empty (don't show anything)
+                room_fmt = ""
+            else:
+                room_fmt = transliterate(room_raw, lang)
+            teacher_raw = (l.get("teachers", "") or "").strip()
+            teacher_fmt = transliterate(teacher_raw, lang) if teacher_raw else ""
+            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": l.get("time", "")})
+
+        prepared.append({"name": localized_name, "title": localized_name, "firstStart": first, "lessons": items})
     return prepared
+
 
 async def generate_schedule_image(
     schedule_data: dict,
@@ -114,6 +174,8 @@ async def generate_schedule_image(
     output_path: str,
     viewport_size: Optional[Dict[str, int]] = None,
     user_theme: Optional[str] = None,
+    lang: str = "ru",
+    week_key: Optional[str] = None,
 ) -> bool:
     """
     Создает широкоформатное изображение расписания, рендеря HTML в headless-браузере.
@@ -142,71 +204,88 @@ async def generate_schedule_image(
         if _template_cache is None or (
             _template_mtime is not None and current_mtime is not None and current_mtime != _template_mtime
         ):
-            env = Environment(loader=FileSystemLoader(str(templates_dir)), autoescape=select_autoescape())
+            env = Environment(
+                loader=FileSystemLoader(str(templates_dir)),
+                autoescape=select_autoescape(),
+            )
             _template_cache = env.get_template("schedule_template.html")
             _template_mtime = current_mtime
 
-        week_slug = 'odd' if 'Неч' in week_type else 'even'
-        if not _bg_images_cache:
+        week_slug = resolve_week_slug(week_type, week_key)
+
+        def _get_bg_image_data(theme: Optional[str], slug: str) -> str:
             from base64 import b64encode
-            # Стандартные фоны для нечётной/чётной недели
-            try:
-                orange_path = project_root / "assets" / "orange_background.png"
-                _bg_images_cache['orange'] = f"data:image/png;base64,{b64encode(orange_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['orange'] = ""
-            try:
-                purple_path = project_root / "assets" / "purple_background.png"
-                _bg_images_cache['purple'] = f"data:image/png;base64,{b64encode(purple_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['purple'] = ""
-            # Дополнительные фоны для пользовательских тем
-            try:
-                light_path = project_root / "assets" / "light_background.png"
-                _bg_images_cache['light'] = f"data:image/png;base64,{b64encode(light_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['light'] = ""
-            try:
-                dark_path = project_root / "assets" / "dark_background.png"
-                _bg_images_cache['dark'] = f"data:image/png;base64,{b64encode(dark_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['dark'] = ""
-            try:
-                coffee_path = project_root / "assets" / "coffee_background.png"
-                _bg_images_cache['coffee'] = f"data:image/png;base64,{b64encode(coffee_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['coffee'] = ""
-            try:
-                official_path = project_root / "assets" / "official_background.png"
-                # Используем как фон для темы 'classic' (официальные цвета Военмеха)
-                _bg_images_cache['official'] = f"data:image/png;base64,{b64encode(official_path.read_bytes()).decode()}"
-            except Exception:
-                _bg_images_cache['official'] = ""
 
-        # Выбираем фон по теме пользователя
-        def _resolve_bg_key(theme: Optional[str], slug: str) -> str:
-            if theme == 'light':
-                return 'light'
-            if theme == 'dark':
-                return 'dark'
-            if theme == 'coffee':
-                return 'coffee'
-            if theme == 'classic':
-                return 'official'
-            # 'standard' или None — старое поведение: разные фоны для нечётной/чётной
-            return 'orange' if slug == 'odd' else 'purple'
+            from core.themes import get_theme_meta
 
-        bg_key = _resolve_bg_key(user_theme, week_slug)
-        bg_image_data = _bg_images_cache.get(bg_key, "")
+            meta = get_theme_meta(theme)
+            base_key = meta.bg_image_key or meta.id
+            if base_key == "standard":
+                target_key = "orange" if slug == "odd" else "purple"
+            else:
+                week_key = f"{base_key}_{slug}"
+                if (project_root / "assets" / f"{week_key}_background.png").exists():
+                    target_key = week_key
+                else:
+                    target_key = base_key
+
+            if target_key in _bg_images_cache:
+                return _bg_images_cache[target_key]
+
+            # Ищем файл в папке assets
+            candidates = [
+                project_root / "assets" / f"{target_key}_background.png",
+                project_root / "assets" / f"{target_key}.png",
+            ]
+            for p in candidates:
+                if p.exists():
+                    try:
+                        encoded = f"data:image/png;base64,{b64encode(p.read_bytes()).decode()}"
+                        _bg_images_cache[target_key] = encoded
+                        return encoded
+                    except Exception:
+                        break
+
+            _bg_images_cache[target_key] = ""
+            return ""
+
+        bg_image_data = _get_bg_image_data(user_theme, week_slug)
+
+        # Prepare I18n strings
+        # Use provided lang or default to 'ru'
+        current_lang = lang if lang else "ru"
+
+        i18n_week_type = i18n.get("week_odd" if week_slug == "odd" else "week_even", current_lang)
+        i18n_schedule_title = i18n.get("image_schedule_header", current_lang)
+        i18n_credits = i18n.get("image_credits", current_lang)
+        i18n_first_lesson = i18n.get("image_first_lesson", current_lang)
+        i18n_no_lessons = i18n.get("image_no_lessons", current_lang)
+
+        # Font selection logic
+        if current_lang == "zh":
+            # Use Noto Sans CJK SC (system installed) for Chinese
+            font_family_body = "'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif"
+            font_family_header = "'Noto Sans CJK SC', 'Source Han Sans SC', 'Microsoft YaHei', sans-serif"
+        else:
+            # Default fonts (loaded from assets)
+            font_family_body = "'Segoe UI', sans-serif"
+            font_family_header = "'Saira', sans-serif"
 
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
             group=group,
-            schedule_days=_prepare_days(schedule_data),
+            schedule_days=_prepare_days(schedule_data, lang=current_lang),
             bg_image=bg_image_data,
-            assets_base=(project_root / 'assets').as_uri(),
+            assets_base=(project_root / "assets").as_uri(),
             user_theme=user_theme,
+            i18n_week_type=i18n_week_type,
+            i18n_schedule_title=i18n_schedule_title,
+            i18n_credits=i18n_credits,
+            i18n_first_lesson=i18n_first_lesson,
+            i18n_no_lessons=i18n_no_lessons,
+            font_family_body=font_family_body,
+            font_family_header=font_family_header,
         )
 
         global async_playwright
@@ -226,63 +305,123 @@ async def generate_schedule_image(
             browser: any
             created_at: float
             pages_made: int
+            last_check_at: float = 0.0
 
         if not hasattr(loop, "__img_pool_state__"):
             setattr(loop, "__img_pool_state__", None)
 
         async def _ensure_browser() -> _PoolState:
+            page_sem = getattr(loop, "__img_page_semaphore__", None)
+            if page_sem is None:
+                page_sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+                setattr(loop, "__img_page_semaphore__", page_sem)
+
+            init_lock = getattr(loop, "__img_init_async_lock__", None)
+            if init_lock is None:
+                with _init_thread_lock:
+                    init_lock = getattr(loop, "__img_init_async_lock__", None)
+                    if init_lock is None:
+                        init_lock = asyncio.Lock()
+                        setattr(loop, "__img_init_async_lock__", init_lock)
+
             state: Optional[_PoolState] = getattr(loop, "__img_pool_state__")
+
+            # 1. Инициализация если пусто (под спец. локом текущего лупа)
             if state is None:
-                # Первичная инициализация
-                ctx = await async_playwright().__aenter__()
-                browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
-                setattr(loop, "__img_pool_state__", state)
+                async with init_lock:
+                    # Double check
+                    state = getattr(loop, "__img_pool_state__")
+                    if state is None:
+                        ctx = await async_playwright().start()
+                        try:
+                            browser = await asyncio.wait_for(ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0)
+                            state = _PoolState(
+                                lock=asyncio.Lock(),
+                                ctx=ctx,
+                                browser=browser,
+                                created_at=time.time(),
+                                pages_made=0,
+                            )
+                            setattr(loop, "__img_pool_state__", state)
+                        except Exception:
+                            await ctx.stop()
+                            raise
                 return state
-            # Health-check: браузер жив?
-            try:
-                _ = await state.browser.new_context()
-                await _.close()
-            except Exception:
-                # Перезапустим пул
+
+            # Если проверка была недавно, скипаем и отдаем браузер как есть
+            now = time.time()
+            if now - state.last_check_at < 30:  # Проверяем здоровье раз в 30 секунд
+                return state
+
+            # Используем лок для обслуживания
+            async with state.lock:
+                # Еще раз проверяем тайминг под локом (double check)
+                if now - state.last_check_at < 30:
+                    return state
+
+                state.last_check_at = now
+
+                # 1. Health-check: браузер жив? (с малым таймаутом)
+                is_healthy = True
                 try:
+                    # Тестовое создание контекста
+                    test_ctx = await asyncio.wait_for(state.browser.new_context(), timeout=5.0)
+                    await test_ctx.close()
+                except Exception:
+                    is_healthy = False
+                    logging.warning("Browser health-check failed, scheduling restart")
+
+                # 2. Ротация по возрасту/количеству страниц или если битый
+                needs_restart = (
+                    not is_healthy or (now - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES
+                )
+
+                if needs_restart:
+                    logging.info(f"Rotating browser pool (reason: healthy={is_healthy}, pages={state.pages_made})")
                     try:
-                        await state.browser.close()
+                        # Закрываем всё с таймаутом
+                        await asyncio.wait_for(state.browser.close(), timeout=5.0)
+                        await asyncio.wait_for(state.ctx.stop(), timeout=5.0)
                     except Exception:
                         pass
-                    try:
-                        await state.ctx.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                finally:
-                    ctx = await async_playwright().__aenter__()
-                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
-                    setattr(loop, "__img_pool_state__", state)
-            # Ротация по возрасту/количеству страниц
-            if (time.time() - state.created_at) > _POOL_MAX_AGE_SEC or state.pages_made >= _POOL_MAX_PAGES:
-                try:
-                    try:
-                        await state.browser.close()
-                    except Exception:
-                        pass
-                    try:
-                        await state.ctx.__aexit__(None, None, None)
-                    except Exception:
-                        pass
-                finally:
-                    ctx = await async_playwright().__aenter__()
-                    browser = await ctx.chromium.launch(args=_POOL_HEADLESS_ARGS)
-                    state = _PoolState(lock=asyncio.Lock(), ctx=ctx, browser=browser, created_at=time.time(), pages_made=0)
-                    setattr(loop, "__img_pool_state__", state)
-            return state
+                    finally:
+                        # Пересоздаем
+                        new_ctx = await async_playwright().start()
+                        try:
+                            new_browser = await asyncio.wait_for(
+                                new_ctx.chromium.launch(args=_POOL_HEADLESS_ARGS), timeout=15.0
+                            )
+                            state.ctx = new_ctx
+                            state.browser = new_browser
+                            state.created_at = time.time()
+                            state.last_check_at = time.time()
+                            state.pages_made = 0
+                            logging.info(f"Browser pool rotated successfully (loop: {id(loop)})")
+                        except Exception:
+                            await new_ctx.stop()
+                            raise
+                return state
 
         state = await _ensure_browser()
+        page_sem = getattr(loop, "__img_page_semaphore__", None)
+        if page_sem is None:
+            page_sem = asyncio.Semaphore(_MAX_CONCURRENT_PAGES)
+            setattr(loop, "__img_page_semaphore__", page_sem)
 
-        async with state.lock:
-            page = await state.browser.new_page()
-            page.set_default_timeout(120000)
-            page.set_default_navigation_timeout(120000)
+        # Используем семафор для ограничения количества открытых вкладок
+        async with page_sem:
+            # Открываем страницу БЕЗ блокировки всего браузера (state.lock)
+            # Добавляем таймаут на создание страницы
+            try:
+                page = await asyncio.wait_for(state.browser.new_page(), timeout=15.0)
+            except Exception as e:
+                logging.error(f"Failed to create new page: {e}")
+                # Если не удалось создать страницу, помечаем браузер как требующий проверки немедленно
+                state.last_check_at = 0
+                raise
+            # Уменьшаем таймауты до 60с (это и так много)
+            page.set_default_timeout(60000)
+            page.set_default_navigation_timeout(60000)
 
             attempt = 0
             last_error: Exception | None = None
@@ -293,24 +432,27 @@ async def generate_schedule_image(
                     attempt += 1
                     try:
                         # --- УСТАНАВЛИВАЕМ VIEWPORT (ширина не меняется) ---
-                        from core.render_config import VIEWPORT_WIDTH, VIEWPORT_HEIGHT
+                        from core.render_config import VIEWPORT_HEIGHT, VIEWPORT_WIDTH
+
                         default_width = VIEWPORT_WIDTH
                         default_height = VIEWPORT_HEIGHT
                         initial_width = (
-                            (viewport_size or {}).get('width', default_width)
-                            if isinstance(viewport_size, dict) else default_width
+                            (viewport_size or {}).get("width", default_width)
+                            if isinstance(viewport_size, dict)
+                            else default_width
                         )
                         initial_height = (
-                            (viewport_size or {}).get('height', default_height)
-                            if isinstance(viewport_size, dict) else default_height
+                            (viewport_size or {}).get("height", default_height)
+                            if isinstance(viewport_size, dict)
+                            else default_height
                         )
 
                         await page.set_viewport_size({"width": initial_width, "height": initial_height})
 
                         print_progress_bar(3, 5, f"Генерация {group}", "Загрузка контента")
 
-                        await page.set_content(html, timeout=120000)
-                        await page.wait_for_load_state("networkidle", timeout=120000)
+                        await page.set_content(html, timeout=30000)
+                        await page.wait_for_load_state("domcontentloaded", timeout=15000)
 
                         # --- ИЗМЕРЯЕМ РЕАЛЬНУЮ ВЫСОТУ КОНТЕНТА ---
                         content_height = await page.evaluate(
@@ -341,7 +483,11 @@ async def generate_schedule_image(
 
                         final_height = int(content_height + 100)
                         await page.set_viewport_size({"width": initial_width, "height": final_height})
-                        await asyncio.sleep(1.0)
+                        try:
+                            await page.wait_for_selector(".content-wrapper", state="attached", timeout=3000)
+                        except Exception:
+                            pass
+                        await asyncio.sleep(0.05)
 
                         # Небольшая проверка загрузки элементов
                         elements_loaded = await page.evaluate(
@@ -365,37 +511,41 @@ async def generate_schedule_image(
                             path=output_path,
                             full_page=False,
                             type="png",
-                            timeout=120000,
+                            timeout=60000,
                         )
 
                         print_progress_bar(5, 5, f"Генерация {group}", "Готово")
-                        state.pages_made += 1
+                        async with state.lock:
+                            state.pages_made += 1
                         return True
 
                     except Exception as inner_e:
                         last_error = inner_e
                         logging.warning(f"Попытка {attempt}/{max_attempts} провалилась: {inner_e}")
                         await asyncio.sleep(1)
+                        try:
+                            await page.close()
+                        except Exception:
+                            pass
                         # Если целевой краш — перезапустим пул и повторим
                         if attempt < max_attempts:
                             try:
-                                # Жёсткий перезапуск только браузера; контекст переоткроется при ensure
                                 try:
                                     await state.browser.close()
                                 except Exception:
                                     pass
                                 try:
-                                    await state.ctx.__aexit__(None, None, None)
+                                    await state.ctx.stop()
                                 except Exception:
                                     pass
                             finally:
                                 state = await _ensure_browser()
                                 page = await state.browser.new_page()
-                                page.set_default_timeout(120000)
-                                page.set_default_navigation_timeout(120000)
+                                page.set_default_timeout(60000)
+                                page.set_default_navigation_timeout(60000)
 
-                if last_error is not None:
-                    logging.error(f"Генерация для {group} не удалась: {last_error}")
+                # Сюда попадаем только после неудачи генерации.
+                logging.error(f"Генерация для {group} не удалась: {last_error}")
                 return False
             finally:
                 try:
@@ -420,7 +570,7 @@ async def shutdown_image_generator():
                 except Exception:
                     pass
                 try:
-                    await state.ctx.__aexit__(None, None, None)
+                    await state.ctx.stop()
                 except Exception:
                     pass
             finally:
