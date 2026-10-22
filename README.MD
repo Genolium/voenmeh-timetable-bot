@@ -117,17 +117,17 @@ cd voenmeh-timetable-bot
   docker compose down
   ```
 
-## 📦 Публикация образа в Docker Hub
+## 📦 Сборка образа
 
-Все секреты проекта (включая креды Docker Hub) хранятся в `.env` — он не попадает в git, а `.env.example` содержит только шаблон.
+Рабочий деплой собирает образ **локально на хосте** (`docker compose build`) — публикация в registry не требуется, все секреты остаются в `.env`.
 
-- **Публикация с хоста** (рекомендуемый путь): заполните `DOCKER_USERNAME` и `DOCKER_PASSWORD` в `.env` и выполните
+- **CI** (job `build`) только проверяет, что `Dockerfile` собирается: сборка `linux/amd64` без `push` и без каких-либо учётных данных.
+- **Локально/на сервере:**
   ```bash
-  ./scripts/publish_image.sh              # тег latest
-  TAG=2026-10-22 ./scripts/publish_image.sh   # произвольный тег
+  docker compose build      # собрать образ voenmeh-timetable-bot-app:latest
+  docker compose up -d      # поднять сервисы
   ```
-  Скрипт читает `.env`, выполняет `docker login` и публикует образ `genolium/voenmeh-timetable-bot` для `linux/amd64` и `linux/arm64`.
-- **Публикация из CI**: job `build` читает `DOCKER_*` из `.env`, если раннер его содержит (self-hosted runner), иначе — из репозиторных секретов `DOCKER_USERNAME`/`DOCKER_PASSWORD`. Если кредов нет, образ всё равно собирается (проверка Dockerfile), но не публикуется и job остаётся зелёным.
+- **Опционально** — если образ всё же нужно выложить в Docker Hub, добавьте `DOCKER_USERNAME`/`DOCKER_PASSWORD` в `.env` и выполните `./scripts/publish_image.sh` (тег задаётся через `TAG=`).
 
 ## 🔔 Алёрты и уведомления администраторов
 
