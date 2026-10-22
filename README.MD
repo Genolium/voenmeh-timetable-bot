@@ -117,6 +117,18 @@ cd voenmeh-timetable-bot
   docker compose down
   ```
 
+## 📦 Публикация образа в Docker Hub
+
+Все секреты проекта (включая креды Docker Hub) хранятся в `.env` — он не попадает в git, а `.env.example` содержит только шаблон.
+
+- **Публикация с хоста** (рекомендуемый путь): заполните `DOCKER_USERNAME` и `DOCKER_PASSWORD` в `.env` и выполните
+  ```bash
+  ./scripts/publish_image.sh              # тег latest
+  TAG=2026-10-22 ./scripts/publish_image.sh   # произвольный тег
+  ```
+  Скрипт читает `.env`, выполняет `docker login` и публикует образ `genolium/voenmeh-timetable-bot` для `linux/amd64` и `linux/arm64`.
+- **Публикация из CI**: job `build` читает `DOCKER_*` из `.env`, если раннер его содержит (self-hosted runner), иначе — из репозиторных секретов `DOCKER_USERNAME`/`DOCKER_PASSWORD`. Если кредов нет, образ всё равно собирается (проверка Dockerfile), но не публикуется и job остаётся зелёным.
+
 ## 🔔 Алёрты и уведомления администраторов
 
 Проект содержит Prometheus-правила алёртов (`prometheus/alerting_rules.yml`) и экспортирует метрики:
