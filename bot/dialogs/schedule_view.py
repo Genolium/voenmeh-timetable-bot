@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from datetime import date, datetime, timedelta
+from typing import Any
 
 from aiogram import Bot
 from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
@@ -153,7 +154,7 @@ async def get_cache_info():
             pass
 
 
-async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
+async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
@@ -257,7 +258,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_full_week_image_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_full_week_image_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     # Защита от спама: проверяем, не нажимал ли пользователь кнопку недавно
     ctx = manager.current_context()
     user_id = callback.from_user.id
@@ -304,7 +305,7 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
         pass
 
 
-async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
+async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     bot = dialog_manager.middleware_data.get("bot")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
@@ -364,7 +365,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     # Получаем данные расписания
     if ctx.dialog_data.get("user_type") == "teacher":
         # Сбор недельного расписания преподавателя по индексам
-        week_schedule = {
+        week_schedule: dict[str, list[dict[str, Any]]] = {
             "Понедельник": [],
             "Вторник": [],
             "Среда": [],
@@ -439,7 +440,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager):
+async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager: DialogManager) -> None:
     """Callback handler для кнопки 'Оригинал' без параметра button"""
     logging.info(
         f"🔔 on_send_original_file_callback TRIGGERED by user {callback.from_user.id if callback.from_user else 'unknown'}"
@@ -447,17 +448,17 @@ async def on_send_original_file_callback(callback: CallbackQuery, dialog_manager
     await on_send_original_file(callback, None, dialog_manager)
 
 
-async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager: DialogManager):
+async def on_check_subscription_callback(callback: CallbackQuery, dialog_manager: DialogManager) -> None:
     """Повторная проверка подписки и попытка отправки оригинала."""
     await on_send_original_file(callback, None, dialog_manager)
 
 
-async def on_check_subscription_button(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_check_subscription_button(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Кнопка внутри окна-гейта полного качества."""
     await on_send_original_file(callback, None, manager)
 
 
-async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Отправляет оригинал изображения недели как файл (Document), без сжатия Telegram."""
     logging.info(f"📄 on_send_original_file STARTED for user {callback.from_user.id if callback.from_user else 'unknown'}")
     ctx = manager.current_context()
@@ -580,7 +581,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             # Получаем расписание, используя week_key напрямую
             user_type = ctx.dialog_data.get("user_type", "student")
             if user_type == "teacher":
-                week_schedule = {}
+                week_schedule: dict[str, list[dict[str, Any]]] = {}
                 teacher_lessons = timetable_manager._teachers_index.get(group, [])
                 days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
                 for day in days:
@@ -646,7 +647,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             pass
 
 
-async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int):
+async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int) -> None:
     ctx = manager.current_context()
     current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
     new_date = current_date + timedelta(days=days)
@@ -661,7 +662,7 @@ async def on_date_shift(callback: CallbackQuery, button: Button, manager: Dialog
         pass
 
 
-async def on_today_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_today_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     manager.current_context().dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
     try:
         from core.analytics import track_feature_click
@@ -673,7 +674,7 @@ async def on_today_click(callback: CallbackQuery, button: Button, manager: Dialo
         pass
 
 
-async def on_text_week_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_text_week_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     ctx = manager.current_context()
     manager_obj: TimetableManager = manager.middleware_data.get("manager")
     user_data_manager = manager.middleware_data.get("user_data_manager")
@@ -702,15 +703,15 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
 
 
-async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(About.page_1, mode=StartMode.RESET_STACK)
 
 
-async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
 
 
-async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     ctx = manager.current_context()
     group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
     target_date = ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO, "")
@@ -722,19 +723,19 @@ async def on_report_error_click(callback: CallbackQuery, button: Button, manager
     )
 
 
-async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
 
 
-async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(SettingsMenu.main)
 
 
-async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(FindMenu.choice)
 
 
-async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Открывает канал с новостями разработки"""
     # Force fetch language from DB
     try:
@@ -754,7 +755,7 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
     )
 
 
-async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager):
+async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager) -> None:
     # Удаляем медиасообщение с изображением и остаёмся в текущем окне диалога
     try:
         await callback.message.delete()
@@ -766,14 +767,14 @@ async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager)
         pass
 
 
-async def auto_delete_old_messages(manager: DialogManager, user_id: int, keep_last: int = 3):
+async def auto_delete_old_messages(manager: DialogManager, user_id: int, keep_last: int = 3) -> None:
     """
     Deprecated shim. Cleanup now handled by CleanupBot and middleware.
     """
     return
 
 
-async def track_message(manager: DialogManager, user_id: int, message_id: int):
+async def track_message(manager: DialogManager, user_id: int, message_id: int) -> None:
     """
     Deprecated shim. Tracking now handled automatically.
     """

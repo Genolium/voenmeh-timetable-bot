@@ -9,7 +9,7 @@ import inspect
 import io
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 
@@ -34,7 +34,7 @@ FEATURE_NAMES: Dict[str, str] = {
 FEATURE_KEY_PREFIX = "timetable:feature_clicks"
 
 
-async def track_feature_click(redis_client, feature_name: str) -> None:
+async def track_feature_click(redis_client: Any, feature_name: str) -> None:
     """
     Фиксирует использование конкретной функции в Redis.
     Сохраняет как общий счётчик, так и посуточный.
@@ -60,7 +60,7 @@ async def track_feature_click(redis_client, feature_name: str) -> None:
 
 
 async def get_top_features(
-    redis_client,
+    redis_client: Any,
     days: int = 7,
     limit: int = 5,
 ) -> List[Tuple[str, str, int]]:

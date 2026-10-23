@@ -6,6 +6,7 @@ from datetime import datetime
 from datetime import datetime as _dt
 from datetime import time, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 from aiogram import Bot
 from aiogram.types import CallbackQuery
@@ -75,11 +76,11 @@ class TimetableManagerRef:
         self._manager = manager
 
 
-def _resolve_manager(manager_or_ref) -> TimetableManager:
+def _resolve_manager(manager_or_ref: Any) -> TimetableManager:
     """Accept either a TimetableManager or a TimetableManagerRef."""
     if isinstance(manager_or_ref, TimetableManagerRef):
         return manager_or_ref.get()
-    return manager_or_ref
+    return cast(TimetableManager, manager_or_ref)
 
 
 manager_ref: TimetableManagerRef | None = None
@@ -92,7 +93,7 @@ def print_progress_bar(
     prefix: str = "Прогресс",
     suffix: str = "",
     length: int = 50,
-):
+) -> None:
     """
     Выводит прогресс-бар в консоль.
 
@@ -111,7 +112,7 @@ def print_progress_bar(
         print()  # Новая строка в конце
 
 
-async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
+async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager) -> None:
     timetable_manager = _resolve_manager(timetable_manager)
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
     logger.info(f"Начинаю постановку задач на вечернюю рассылку для даты {tomorrow.date().isoformat()}")
@@ -199,7 +200,7 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
     logger.info(f"Вечерняя рассылка: завершено. Обработано {processed_count} пользователей")
 
 
-async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager):
+async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager) -> None:
     timetable_manager = _resolve_manager(timetable_manager)
     today = datetime.now(MOSCOW_TZ)
     logger.info(f"Начинаю постановку задач на утреннюю рассылку для даты {today.date().isoformat()}")
@@ -261,7 +262,7 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
 async def minutely_reminders_checker(
     user_data_manager: UserDataManager,
     timetable_manager: TimetableManager,
-):
+) -> None:
     """
     Проверяет каждую минуту, кому из пользователей нужно отправить напоминание.
     Вместо создания тысяч DateTrigger'ов, просто проверяем каждую минуту актуальное состояние.
@@ -361,7 +362,7 @@ async def minutely_reminders_checker(
         logger.error(f"Ошибка в minutely_reminders_checker: {e}")
 
 
-async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot):
+async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_client: Redis, bot: Bot) -> None:
     logger.info("Проверка изменений в расписании...")
 
     global global_timetable_manager_instance  # Оставляем для возможности переприсвоения
@@ -473,7 +474,7 @@ BACKUP_RETENTION_DAYS = 30  # Срок хранения резервных ко�
 BACKUP_TTL_SECONDS = BACKUP_RETENTION_DAYS * 86400
 
 
-async def backup_current_schedule(redis_client: Redis):
+async def backup_current_schedule(redis_client: Redis) -> None:
     try:
         data = await redis_client.get(REDIS_SCHEDULE_HASH_KEY)
         # Сохраняем «снапшот» ключа хеша и дамп данных кэша расписания
@@ -488,7 +489,7 @@ async def backup_current_schedule(redis_client: Redis):
         logger.error("Ошибка при создании резервной копии расписания: %s", e)
 
 
-async def collect_db_metrics(user_data_manager: UserDataManager):
+async def collect_db_metrics(user_data_manager: UserDataManager) -> None:
     try:
         total_users = await user_data_manager.get_total_users_count()
         subscribed_users = await user_data_manager.get_subscribed_users_count()
@@ -498,7 +499,7 @@ async def collect_db_metrics(user_data_manager: UserDataManager):
         logger.error(f"Ошибка при сборе метрик из БД: {e}")
 
 
-async def cleanup_image_cache(redis_client: Redis):
+async def cleanup_image_cache(redis_client: Redis) -> None:
     try:
         cache = ImageCacheManager(redis_client, cache_ttl_hours=192)
         await cache.cleanup_expired_cache()
@@ -509,7 +510,7 @@ async def cleanup_image_cache(redis_client: Redis):
 # Массовые функции генерации изображений удалены: теплый прогрев, полная генерация, pre-cache helper
 
 
-async def auto_backup(redis_client: Redis):
+async def auto_backup(redis_client: Redis) -> None:
     try:
         backup_dir = Path("/app/data/backups") if Path("/app/data").exists() else Path("data/backups")
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -593,7 +594,7 @@ async def send_schedule_diff_notifications(
     user_data_manager: UserDataManager,
     old_manager: TimetableManager,
     new_manager: TimetableManager,
-):
+) -> Any:
     """
     Отправляет пользователям уведомления только о реальных изменениях в расписании.
     """
@@ -611,7 +612,7 @@ async def send_schedule_diff_notifications(
             return set()
 
         # Группируем по (группа, язык), чтобы отправить локализованный текст.
-        groups_to_users = {}
+        groups_to_users: dict[tuple[str, str], list[int]] = {}
         for row in users_with_groups:
             user_id, group_name, *rest = row
             lang = rest[0] if rest else "ru"
@@ -720,7 +721,7 @@ async def handle_graduated_groups(
     user_data_manager: UserDataManager,
     timetable_manager: TimetableManager,
     redis_client: Redis,
-):
+) -> None:
     """
     Обрабатывает ситуации, когда группы выпустились и больше не существуют в расписании.
     Уведомляет пользователей и предлагает выбрать новую группу.

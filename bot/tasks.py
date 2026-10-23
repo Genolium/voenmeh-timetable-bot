@@ -11,6 +11,7 @@ import dramatiq
 from aiogram import Bot
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from dramatiq import Broker
 from dramatiq.errors import RateLimitExceeded
 
 # Compatibility layer for RetryAfter across aiogram versions
@@ -90,7 +91,7 @@ atexit.register(_shutdown_telemetry)
 
 
 # --- Конфигурация Redis пула ---
-def get_redis_client(decode_responses: bool = False):
+def get_redis_client(decode_responses: bool = False) -> Any:
     """Создает новый Redis-клиент для текущего event loop.
 
     Важно: не переиспользуем глобальные пулы между потоками/лупами Dramatiq,
@@ -143,7 +144,7 @@ class RobustRetries(Retries):
         super().after_process_message(broker, message, result=result, exception=exception)
 
 
-def _configure_broker_middleware(broker) -> None:
+def _configure_broker_middleware(broker: Any) -> None:
     """Навешивает middleware на брокер с защитой от дублей."""
     broker.add_middleware(RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000))
     try:
@@ -175,7 +176,7 @@ def _create_noop_broker():
     return _NoopBroker()
 
 
-def _create_broker(broker_url: str | None):
+def _create_broker(broker_url: str | None) -> "Broker":
     """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
     if broker_url:
         # Connection parameters are handled via rabbitmq.conf and retry middleware
@@ -188,7 +189,7 @@ def _create_broker(broker_url: str | None):
         except Exception:
             broker = _create_noop_broker()
     # Энкодер должен совпадать с production, иначе сообщения сериализуются по-разному.
-    broker.encoder = JSONEncoder()
+    setattr(broker, "encoder", JSONEncoder())
     _configure_broker_middleware(broker)
     return broker
 
@@ -211,7 +212,7 @@ def _harden_broker_url(broker_url: str) -> tuple[str, bool]:
     return urlunparse(parsed._replace(query=urlencode(query))), True
 
 
-def _setup_broker(broker_url: str | None):
+def _setup_broker(broker_url: str | None) -> tuple["Broker", str | None]:
     """Создаёт брокер, применяет жёсткие таймауты к URL и регистрирует его в Dramatiq."""
     broker = _create_broker(broker_url)
     dramatiq.set_broker(broker)
@@ -288,7 +289,7 @@ async def _mark_user_as_blocked(user_id: int) -> None:
                 pass
 
 
-async def _send_message(user_id: int, text: str):
+async def _send_message(user_id: int, text: str) -> None:
     """Отправка сообщения с защитой от дублирования."""
     try:
         bot = await get_worker_bot()
@@ -338,7 +339,7 @@ async def _send_message(user_id: int, text: str):
         raise
 
 
-async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
+async def _copy_message(user_id: int, from_chat_id: int, message_id: int) -> None:
     """Копирование сообщения с защитой от дублирования."""
     try:
         log.info(f"Попытка копирования сообщения (ID: {message_id}) пользователю {user_id}")
@@ -381,12 +382,12 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int):
 @dramatiq.actor(
     queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
 )  # 15 мин (достаточно для сетевых задержек)
-def send_message_task(user_id: int, text: str):
+def send_message_task(user_id: int, text: str) -> None:
     run_async(_send_message(user_id, text))
 
 
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
-def copy_message_task(user_id: int, from_chat_id: int, message_id: int):
+def copy_message_task(user_id: int, from_chat_id: int, message_id: int) -> None:
     run_async(_copy_message(user_id, from_chat_id, message_id))
 
 
@@ -400,7 +401,7 @@ def send_lesson_reminder_task(
     break_duration: int | None,
     reminder_time_minutes: int | None = None,
     lang: str = "ru",
-):
+) -> None:
     async def _inner():
         try:
             text_to_send = generate_reminder_text(lesson, reminder_type, break_duration, reminder_time_minutes, lang)
@@ -430,7 +431,7 @@ def generate_week_image_task(
     placeholder_msg_id: int | None = None,
     final_caption: str | None = None,
     lang: str = "ru",
-):
+) -> None:
     # CRITICAL: Acquire semaphore in the Dramatiq thread to avoid blocking the background loop
     with _generation_semaphore:
 
@@ -509,7 +510,7 @@ def generate_week_image_task(
     run_async(_inner())
 
 
-async def _send_error_message(user_id: int, error_text: str):
+async def _send_error_message(user_id: int, error_text: str) -> None:
     """Отправляет сообщение об ошибке пользователю."""
     try:
         kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]])
@@ -523,7 +524,7 @@ async def _send_error_message(user_id: int, error_text: str):
 @dramatiq.actor(
     queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=300000
 )  # 5 мин (для проверки подписки и отправки сообщений)
-def check_theme_subscription_task(user_id: int, callback_data: str = None):
+def check_theme_subscription_task(user_id: int, callback_data: str = None) -> None:
     """
     Проверяет подписку пользователя на канал для доступа к темам.
     Кэширует результат проверки на 6 часов для подписанных, на 1 минуту для неподписанных.
@@ -622,7 +623,7 @@ def check_theme_subscription_task(user_id: int, callback_data: str = None):
 @dramatiq.actor(
     queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=600000
 )  # 10 мин (для отправки изображения + проверка)
-def send_week_original_if_subscribed_task(user_id: int, cache_key: str):
+def send_week_original_if_subscribed_task(user_id: int, cache_key: str) -> None:
     async def _inner():
         r = None
         try:

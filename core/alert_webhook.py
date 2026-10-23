@@ -38,10 +38,10 @@ def format_alertmanager_message(payload: Dict[str, Any]) -> str:
 
 
 def create_alert_app(
-    bot,
+    bot: Any,
     admin_ids: List[int],
-    redis_client=None,
-    db_session_maker=None,
+    redis_client: Any = None,
+    db_session_maker: Any = None,
 ) -> web.Application:
     """Создаёт aiohttp приложение с health checks и webhook для алертов."""
     app = web.Application()
@@ -135,12 +135,12 @@ def create_alert_app(
 
 
 async def run_alert_webhook_server(
-    bot,
+    bot: Any,
     admin_ids: List[int],
     port: int = 8010,
-    redis_client=None,
-    db_session_maker=None,
-):
+    redis_client: Any = None,
+    db_session_maker: Any = None,
+) -> None:
     """Запускает HTTP-сервер для health checks и alertmanager webhook."""
     app = create_alert_app(
         bot,

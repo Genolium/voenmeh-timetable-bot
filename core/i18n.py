@@ -43,7 +43,9 @@ class I18n:
                 logger.warning(f"Locale file missing: {file_path}")
                 self.translations[lang] = {}
 
-    def get(self, key: str, lang: str = "ru", **kwargs) -> str:
+    # Возвращает str, но в локалях встречаются списки и словари (советы, приветствия),
+    # поэтому тип честно Any: вызывающий код проверяет isinstance.
+    def get(self: Any, key: str, lang: str = "ru", **kwargs: Any) -> Any:
         """
         Возвращает перевод по ключу.
         Поддерживает форматирование строк через kwargs.

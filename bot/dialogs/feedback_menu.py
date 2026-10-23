@@ -1,3 +1,5 @@
+from typing import Any
+
 from aiogram import Bot
 from aiogram.types import ContentType, Message
 from aiogram_dialog import Dialog, DialogManager, Window
@@ -13,7 +15,7 @@ from core.user_data import UserDataManager
 from .states import Feedback
 
 
-async def get_feedback_data(dialog_manager: DialogManager, **kwargs):
+async def get_feedback_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_id = dialog_manager.event.from_user.id
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_lang = await user_data_manager.get_user_language(user_id)
@@ -26,7 +28,7 @@ async def get_feedback_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """
     Получает фидбэк, сохраняет в БД, пересылает и завершает диалог.
     """
