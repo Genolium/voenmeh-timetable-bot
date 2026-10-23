@@ -90,3 +90,33 @@ def test_compose_has_completed_migration_gate():
     assert "migrate" in services
     assert services["bot"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
     assert services["worker"]["depends_on"]["migrate"]["condition"] == "service_completed_successfully"
+
+
+def test_revision_ids_fit_alembic_version_column():
+    """alembic_version.version_num — VARCHAR(32); длинный id не запишется в БД.
+
+    Регрессия: id ``20260912_add_subscription_filter_tables`` (39 символов)
+    ронял деплой с ``StringDataRightTruncation`` и делал ревизию несовместимой
+    с уже развёрнутыми базами после переименования.
+    """
+    import re
+
+    versions_dir = Path("migrations/versions")
+    revision_ids = {}
+    for path in versions_dir.glob("*.py"):
+        match = re.search(r'^revision:\s*str\s*=\s*"([^"]+)"', path.read_text(encoding="utf-8"), re.MULTILINE)
+        if match:
+            revision_ids[path.name] = match.group(1)
+
+    assert revision_ids, "не найдено ни одной миграции"
+    too_long = {name: rev for name, rev in revision_ids.items() if len(rev) > 32}
+    assert not too_long, f"revision id длиннее 32 символов: {too_long}"
+
+
+def test_migration_graph_has_single_head():
+    """В репозитории должна быть ровно одна голова — иначе upgrade head неоднозначен."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
+    assert len(heads) == 1, f"ожидалась одна голова, найдено: {heads}"
