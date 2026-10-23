@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 try:
     from opentelemetry.instrumentation.logging import LoggingInstrumentor
 except ImportError:  # pragma: no cover
-    LoggingInstrumentor = None  # type: ignore[assignment]
+    LoggingInstrumentor = None  # type: ignore[assignment,misc]
 
 LOG = logging.getLogger(__name__)
 

@@ -33,7 +33,7 @@ from .states import Admin
 logger = logging.getLogger(__name__)
 
 # Генерация полного расписания отключена; переменная сохраняется для совместимости тестов UI
-active_generations = {}
+active_generations: dict[Any, Any] = {}
 
 
 def _is_cancel(text: str) -> bool:
@@ -41,7 +41,7 @@ def _is_cancel(text: str) -> bool:
     return raw in {"отмена", "cancel", "отменить"}
 
 
-async def on_override_input(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_override_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Админская коррекция: group|YYYY-MM-DD|HH:MM-HH:MM|subject|room|type."""
     parts = [part.strip() for part in (message.text or "").split("|")]
     if len(parts) != 6:
@@ -88,7 +88,7 @@ async def on_override_input(message: Message, message_input: MessageInput, manag
     await manager.switch_to(Admin.menu)
 
 
-async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
     await callback.answer("🚀 Запускаю постановку задач на утреннюю рассылку...")
@@ -96,7 +96,7 @@ async def on_test_morning(callback: CallbackQuery, button: Button, manager: Dial
     await callback.message.answer("✅ Задачи для утренней рассылки поставлены в очередь.")
 
 
-async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     user_data_manager = manager.middleware_data.get("user_data_manager")
     timetable_manager = manager.middleware_data.get("manager")
     await callback.answer("🚀 Запускаю постановку задач на вечернюю рассылку...")
@@ -104,7 +104,7 @@ async def on_test_evening(callback: CallbackQuery, button: Button, manager: Dial
     await callback.message.answer("✅ Задачи для вечерней рассылки поставлены в очередь.")
 
 
-async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
@@ -149,7 +149,7 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
     await bot.send_message(admin_id, "✅ <b>Тестирование планировщика напоминаний завершено.</b>")
 
 
-async def on_test_alert(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_test_alert(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
     await callback.answer("🧪 Отправляю тестовый алёрт...")
@@ -163,7 +163,7 @@ async def on_test_alert(callback: CallbackQuery, button: Button, manager: Dialog
     await bot.send_message(admin_id, text)
 
 
-async def on_generate_full_schedule(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_generate_full_schedule(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Массовая генерация отключена."""
     await callback.answer("❌ Массовая генерация отключена")
     bot: Bot = manager.middleware_data.get("bot")
@@ -176,7 +176,7 @@ async def on_generate_full_schedule(callback: CallbackQuery, button: Button, man
         pass
 
 
-async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Запуск проверки выпустившихся групп."""
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
@@ -215,7 +215,7 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
             pass
 
 
-async def on_semester_settings(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_semester_settings(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Переход к настройкам семестров."""
     await manager.switch_to(Admin.semester_settings)
 
@@ -228,7 +228,7 @@ BASE_BACKUP_TEXT = (
 )
 
 
-async def get_backup_menu_data(dialog_manager: DialogManager, **kwargs):
+async def get_backup_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     status = dialog_manager.dialog_data.get("backup_status")
     text = BASE_BACKUP_TEXT
     if status:
@@ -236,7 +236,7 @@ async def get_backup_menu_data(dialog_manager: DialogManager, **kwargs):
     return {"backup_status": text}
 
 
-async def on_backup_create(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_backup_create(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await callback.answer("⏳ Генерирую бэкап...", show_alert=False)
     await manager.switch_to(Admin.backup_create_confirm)
 
@@ -268,7 +268,7 @@ async def on_backup_create(callback: CallbackQuery, button: Button, manager: Dia
         await manager.switch_to(Admin.backup_menu)
 
 
-async def on_backup_upload_received(message: Message, widget: MessageInput, manager: DialogManager):
+async def on_backup_upload_received(message: Message, widget: MessageInput, manager: DialogManager) -> None:
     document = message.document
     if not document:
         await message.answer("❌ Отправьте документ с расширением .sql или .sql.gz.")
@@ -301,7 +301,7 @@ async def on_backup_upload_received(message: Message, widget: MessageInput, mana
     await manager.switch_to(Admin.backup_upload_confirm)
 
 
-async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs):
+async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     status = dialog_manager.dialog_data.get(
         "backup_upload_status",
         "ℹ️ Ожидаем результат восстановления...",
@@ -309,7 +309,7 @@ async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs):
     return {"backup_upload_status": status}
 
 
-async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs):
+async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     session_factory = dialog_manager.middleware_data.get("session_factory")
     redis_client = dialog_manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
@@ -341,7 +341,7 @@ async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     session_factory = manager.middleware_data.get("session_factory")
     redis_client = manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
@@ -354,7 +354,7 @@ async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager:
     await callback.answer(f"Фильтр обязательной подписки {state_str}!", show_alert=False)
 
 
-async def on_add_channel_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_add_channel_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     raw = (message.text or "").strip()
     if _is_cancel(raw):
         await message.answer("↩️ Отменено")
@@ -417,7 +417,7 @@ async def on_add_channel_input(message: Message, widget: TextInput, manager: Dia
     await manager.switch_to(Admin.sub_filter_menu)
 
 
-async def on_delete_sub_filter_channel(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+async def on_delete_sub_filter_channel(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
     session_factory = manager.middleware_data.get("session_factory")
     redis_client = manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
@@ -426,17 +426,17 @@ async def on_delete_sub_filter_channel(callback: CallbackQuery, widget: Any, man
     await callback.answer("🗑 Канал удалён из списка обязательных", show_alert=False)
 
 
-async def on_edit_fall_semester(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_edit_fall_semester(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Переход к редактированию даты осеннего семестра."""
     await manager.switch_to(Admin.edit_fall_semester)
 
 
-async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Переход к редактированию даты весеннего семестра."""
     await manager.switch_to(Admin.edit_spring_semester)
 
 
-async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты осеннего семестра."""
     try:
         from datetime import datetime
@@ -468,7 +468,7 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
     await manager.switch_to(Admin.semester_settings)
 
 
-async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты весеннего семестра."""
     try:
         from datetime import datetime
@@ -505,7 +505,7 @@ async def build_segment_users(
     user_data_manager: UserDataManager,
     group_prefix: str | None,
     days_active: int | None,
-):
+) -> Any:
     """Строит список пользователей для сегментированной рассылки с оптимизацией."""
     group_prefix_up = (group_prefix or "").upper().strip()
     all_ids = await user_data_manager.get_all_user_ids()
@@ -535,7 +535,7 @@ async def build_segment_users(
     return selected_ids
 
 
-def render_template(template_text: str, user_info) -> str:
+def render_template(template_text: str, user_info: Any) -> str:
     placeholders = {
         "user_id": str(user_info.user_id),
         "username": user_info.username or "N/A",
@@ -548,7 +548,7 @@ def render_template(template_text: str, user_info) -> str:
     return text
 
 
-async def on_segment_criteria_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_segment_criteria_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     dialog_data = manager.dialog_data
     # ожидаем ввод в формате: PREFIX|DAYS (например: О7|7). Пусто для всех
     raw = (message.text or "").strip()
@@ -567,7 +567,7 @@ async def on_segment_criteria_input(message: Message, widget: TextInput, manager
     await manager.switch_to(Admin.template_input)
 
 
-async def on_template_input_message(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_template_input_message(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     if message.content_type == ContentType.TEXT:
         manager.dialog_data["segment_template"] = message.text or ""
         manager.dialog_data["segment_message_type"] = "text"
@@ -584,7 +584,7 @@ async def on_template_input_message(message: Message, message_input: MessageInpu
     await manager.switch_to(Admin.preview)
 
 
-async def get_preview_data(dialog_manager: DialogManager, **kwargs):
+async def get_preview_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     prefix = dialog_manager.dialog_data.get("segment_group_prefix")
     days_active = dialog_manager.dialog_data.get("segment_days_active")
@@ -606,7 +606,7 @@ async def get_preview_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
     udm: UserDataManager = manager.middleware_data.get("user_data_manager")
@@ -658,12 +658,12 @@ async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manag
     await manager.switch_to(Admin.menu)
 
 
-async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+async def on_period_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
     """Обновляет период в `dialog_data` при нажатии на кнопку."""
     manager.dialog_data["stats_period"] = int(item_id)
 
 
-async def get_stats_data(dialog_manager: DialogManager, **kwargs):
+async def get_stats_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """Собирает и форматирует все данные для дашборда статистики."""
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     period = dialog_manager.dialog_data.get("stats_period", 7)
@@ -770,14 +770,16 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Генерирует и отправляет график динамики за выбранный период."""
     await callback.answer("⏳ Генерирую график...", show_alert=False)
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     period = manager.dialog_data.get("stats_period", 7)
     period_title = {1: "1 день", 7: "7 дней", 30: "30 дней"}.get(period, f"{period} дн.")
 
-    dates, new_users, active_users = [], [], []
+    dates: list[Any] = []
+    new_users: list[int] = []
+    active_users: list[int] = []
     if user_data_manager and hasattr(user_data_manager, "get_activity_history"):
         try:
             dates, new_users, active_users = await user_data_manager.get_activity_history(days=period)
@@ -878,7 +880,7 @@ async def on_broadcast_received(*args, **kwargs):
         await manager.switch_to(Admin.menu)
 
 
-async def on_user_id_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_user_id_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     try:
         user_id = int(message.text)
     except (ValueError, TypeError):
@@ -902,7 +904,7 @@ async def on_user_id_input(message: Message, widget: TextInput, manager: DialogM
     await manager.switch_to(Admin.user_manage)
 
 
-async def on_new_group_input(message: Message, widget: TextInput, manager: DialogManager, data: str):
+async def on_new_group_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     new_group = message.text.upper()
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
@@ -920,7 +922,7 @@ async def on_new_group_input(message: Message, widget: TextInput, manager: Dialo
     await manager.switch_to(Admin.user_manage)
 
 
-async def get_user_manage_data(dialog_manager: DialogManager, **kwargs):
+async def get_user_manage_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_info = dialog_manager.dialog_data.get("found_user_info", {})
     if not user_info:
         return {}
@@ -935,7 +937,7 @@ async def get_user_manage_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def get_semester_settings_data(dialog_manager: DialogManager, **kwargs):
+async def get_semester_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """Получает данные для окна настроек семестров."""
     session_factory = dialog_manager.middleware_data.get("session_factory")
     if not session_factory:
@@ -947,7 +949,7 @@ async def get_semester_settings_data(dialog_manager: DialogManager, **kwargs):
     return {"semester_settings_text": settings_text}
 
 
-async def on_force_update_schedule(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_force_update_schedule(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Принудительное обновление расписания."""
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
@@ -983,7 +985,7 @@ async def on_force_update_schedule(callback: CallbackQuery, button: Button, mana
     asyncio.create_task(_process_force_update())
 
 
-async def on_clear_cache(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_clear_cache(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     bot: Bot = manager.middleware_data.get("bot")
     admin_id = callback.from_user.id
 
@@ -1042,7 +1044,7 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
     await bot.send_message(admin_id, message, parse_mode="HTML")
 
 
-async def on_cancel_generation(callback: CallbackQuery):
+async def on_cancel_generation(callback: CallbackQuery) -> None:
     """Отменяет генерацию изображений."""
     admin_id = callback.from_user.id
 
@@ -1067,12 +1069,12 @@ async def on_cancel_generation(callback: CallbackQuery):
 
 
 # --- Функция отправки сообщения пользователю ---
-async def on_send_message_to_user(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_send_message_to_user(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Переход к вводу сообщения для отправки пользователю."""
     await manager.switch_to(Admin.send_message_text)
 
 
-async def on_message_to_user_input(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_message_to_user_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Обработчик ввода сообщения для отправки пользователю."""
     bot: Bot = manager.middleware_data.get("bot")
     user_id = manager.dialog_data.get("found_user_info", {}).get("user_id")

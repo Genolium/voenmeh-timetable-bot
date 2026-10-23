@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -68,7 +68,7 @@ class SubscriptionFilterManager:
             try:
                 cached = await self.redis.get(KEY_FILTER_ENABLED)
                 if cached is not None:
-                    return cached == b"1" or cached == "1"
+                    return cast(bool, cached == b"1" or cached == "1")
             except Exception as e:
                 logger.warning(f"Error reading sub filter enabled from Redis: {e}")
 
@@ -119,7 +119,7 @@ class SubscriptionFilterManager:
                 cached = await self.redis.get(KEY_CHANNELS_LIST)
                 if cached:
                     data = json.loads(cached.decode() if isinstance(cached, bytes) else cached)
-                    return data
+                    return cast(list[dict[str, Any]], data)
             except Exception as e:
                 logger.warning(f"Error reading required channels from Redis: {e}")
 
@@ -202,7 +202,7 @@ class SubscriptionFilterManager:
             removed = res.rowcount > 0
 
         await self.invalidate_all_caches()
-        return removed
+        return cast(bool, removed)
 
     async def invalidate_user_cache(self, user_id: int) -> None:
         """Инвалидирует кэш статуса проверки для конкретного пользователя."""

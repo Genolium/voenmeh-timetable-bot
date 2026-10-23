@@ -190,31 +190,169 @@ jobs:
         cache-to: type=gha,mode=max
         platforms: linux/amd64
 
-  # Деплой на staging (для develop ветки)
+  # Деплой на staging (ветка dev)
+  #
+  # Вся конфигурация деплоя — в .env, как и остальные секреты проекта.
+  # На раннере без .env используются одноимённые repository secrets.
+  # Если не задано ничего — job не падает, а сообщает, что деплой не настроен;
+  # если задано частично — падает со списком недостающих переменных.
   deploy-staging:
     runs-on: ubuntu-latest
     needs: [build]
     if: github.ref == 'refs/heads/dev'
 
     steps:
-    - name: Deploy to staging
-      run: |
-        echo "Deploying to staging environment..."
-        # Здесь можно добавить команды для деплоя на staging
-        # Например, через SSH, kubectl, docker-compose и т.д.
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-  # Деплой на production (для main ветки)
+    - name: Resolve deploy configuration
+      env:
+        SECRET_DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        SECRET_DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        SECRET_DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        SECRET_DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        SECRET_DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        SECRET_DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH }}
+      run: |
+        set -euo pipefail
+        set -a
+        if [ -f .env ]; then . ./.env; set +a; fi
+
+        HOST="${DEPLOY_HOST:-$SECRET_DEPLOY_HOST}"
+        SSH_USER="${DEPLOY_USER:-$SECRET_DEPLOY_USER}"
+        PORT="${DEPLOY_PORT:-${SECRET_DEPLOY_PORT:-22}}"
+        DEPLOY_DIR="${STAGING_DEPLOY_PATH:-$SECRET_DEPLOY_PATH}"
+        SSH_KEY="${DEPLOY_SSH_KEY:-$SECRET_DEPLOY_SSH_KEY}"
+        KNOWN_HOSTS="${DEPLOY_SSH_KNOWN_HOSTS:-$SECRET_DEPLOY_KNOWN_HOSTS}"
+
+        if [ -z "$HOST$SSH_USER$DEPLOY_DIR$SSH_KEY" ]; then
+          echo "deploy_configured=none" >> "$GITHUB_ENV"
+          echo "::notice::Деплой на staging не настроен: задайте DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY/STAGING_DEPLOY_PATH в .env или в repository secrets"
+          exit 0
+        fi
+
+        MISSING=""
+        for pair in "DEPLOY_HOST=$HOST" "DEPLOY_USER=$SSH_USER" "DEPLOY_SSH_KEY=$SSH_KEY" "STAGING_DEPLOY_PATH=$DEPLOY_DIR"; do
+          name="${pair%%=*}"
+          value="${pair#*=}"
+          [ -n "$value" ] || MISSING="$MISSING $name"
+        done
+        if [ -n "$MISSING" ]; then
+          echo "::error::Не заданы переменные деплоя:$MISSING"
+          exit 1
+        fi
+
+        install -m 700 -d "$HOME/.ssh"
+        # Многострочный ключ нельзя писать в GITHUB_ENV — сразу кладём в файл.
+        printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/deploy_key"
+        chmod 600 "$HOME/.ssh/deploy_key"
+        if [ -n "$KNOWN_HOSTS" ]; then
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+        else
+          ssh-keyscan -p "$PORT" -H "$HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null || true
+          if [ ! -s "$HOME/.ssh/known_hosts" ]; then
+            echo "::error::Не удалось получить SSH host key для $HOST:$PORT — задайте DEPLOY_SSH_KNOWN_HOSTS"
+            exit 1
+          fi
+        fi
+        chmod 600 "$HOME/.ssh/known_hosts"
+
+        {
+          echo "deploy_configured=1"
+          echo "DEPLOY_HOST=$HOST"
+          echo "DEPLOY_USER=$SSH_USER"
+          echo "DEPLOY_PORT=$PORT"
+          echo "DEPLOY_DIR=$DEPLOY_DIR"
+        } >> "$GITHUB_ENV"
+        echo "Конфигурация деплоя на staging получена ($SSH_USER@$HOST:$PORT -> $DEPLOY_DIR)"
+
+    - name: Deploy to staging over SSH
+      if: env.deploy_configured == '1'
+      run: |
+        set -euo pipefail
+        ssh -i "$HOME/.ssh/deploy_key" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_DIR' && DEPLOY_GIT_PULL=1 DEPLOY_GIT_REF='$GITHUB_SHA' bash scripts/deploy.sh"
+
+  # Деплой на production (ветка main)
   deploy-production:
     runs-on: ubuntu-latest
     needs: [build]
     if: github.ref == 'refs/heads/main'
 
     steps:
-    - name: Deploy to production
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Resolve deploy configuration
+      env:
+        SECRET_DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        SECRET_DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        SECRET_DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        SECRET_DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        SECRET_DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}
+        SECRET_DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
       run: |
-        echo "Deploying to production environment..."
-        # Здесь можно добавить команды для деплоя на production
-        # Например, через SSH, kubectl, docker-compose и т.д.
+        set -euo pipefail
+        set -a
+        if [ -f .env ]; then . ./.env; set +a; fi
+
+        HOST="${DEPLOY_HOST:-$SECRET_DEPLOY_HOST}"
+        SSH_USER="${DEPLOY_USER:-$SECRET_DEPLOY_USER}"
+        PORT="${DEPLOY_PORT:-${SECRET_DEPLOY_PORT:-22}}"
+        DEPLOY_DIR="${DEPLOY_PATH:-$SECRET_DEPLOY_PATH}"
+        SSH_KEY="${DEPLOY_SSH_KEY:-$SECRET_DEPLOY_SSH_KEY}"
+        KNOWN_HOSTS="${DEPLOY_SSH_KNOWN_HOSTS:-$SECRET_DEPLOY_KNOWN_HOSTS}"
+
+        if [ -z "$HOST$SSH_USER$DEPLOY_DIR$SSH_KEY" ]; then
+          echo "deploy_configured=none" >> "$GITHUB_ENV"
+          echo "::notice::Деплой на production не настроен: задайте DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY/DEPLOY_PATH в .env или в repository secrets"
+          exit 0
+        fi
+
+        MISSING=""
+        for pair in "DEPLOY_HOST=$HOST" "DEPLOY_USER=$SSH_USER" "DEPLOY_SSH_KEY=$SSH_KEY" "DEPLOY_PATH=$DEPLOY_DIR"; do
+          name="${pair%%=*}"
+          value="${pair#*=}"
+          [ -n "$value" ] || MISSING="$MISSING $name"
+        done
+        if [ -n "$MISSING" ]; then
+          echo "::error::Не заданы переменные деплоя:$MISSING"
+          exit 1
+        fi
+
+        install -m 700 -d "$HOME/.ssh"
+        printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/deploy_key"
+        chmod 600 "$HOME/.ssh/deploy_key"
+        if [ -n "$KNOWN_HOSTS" ]; then
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+        else
+          ssh-keyscan -p "$PORT" -H "$HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null || true
+          if [ ! -s "$HOME/.ssh/known_hosts" ]; then
+            echo "::error::Не удалось получить SSH host key для $HOST:$PORT — задайте DEPLOY_SSH_KNOWN_HOSTS"
+            exit 1
+          fi
+        fi
+        chmod 600 "$HOME/.ssh/known_hosts"
+
+        {
+          echo "deploy_configured=1"
+          echo "DEPLOY_HOST=$HOST"
+          echo "DEPLOY_USER=$SSH_USER"
+          echo "DEPLOY_PORT=$PORT"
+          echo "DEPLOY_DIR=$DEPLOY_DIR"
+        } >> "$GITHUB_ENV"
+        echo "Конфигурация деплоя на production получена ($SSH_USER@$HOST:$PORT -> $DEPLOY_DIR)"
+
+    - name: Deploy to production over SSH
+      if: env.deploy_configured == '1'
+      run: |
+        set -euo pipefail
+        ssh -i "$HOME/.ssh/deploy_key" -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_DIR' && DEPLOY_GIT_PULL=1 DEPLOY_GIT_REF='$GITHUB_SHA' bash scripts/deploy.sh"
 
   # Уведомления
   notify:

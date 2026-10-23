@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime, time, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import aiohttp
 
@@ -41,7 +41,7 @@ class WeatherAPI:
             # Если кэш свежий (младше CACHE_DURATION_HOURS часов)
             if datetime.now(timezone.utc).replace(tzinfo=None) - cache_timestamp < timedelta(hours=self.CACHE_DURATION_HOURS):
                 logging.info(f"Использую кэшированный прогноз для {cache_key}.")
-                return cached_entry["data"]
+                return cast(dict[str, Any] | None, cached_entry["data"])
 
         params = {
             "id": self.city_id,
@@ -66,7 +66,7 @@ class WeatherAPI:
                                 # Send alert
                                 from core.alert_sender import AlertSender
 
-                                alert_settings = {}  # Load settings
+                                alert_settings: dict[str, Any] = {}  # Load settings
                                 async with AlertSender(alert_settings) as sender:
                                     await sender.send(
                                         {

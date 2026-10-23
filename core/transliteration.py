@@ -2,7 +2,7 @@
 # Uses cyrtranslit library for accurate transliteration
 
 import logging
-from typing import Optional
+from typing import Optional, cast
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +120,7 @@ def transliterate(text: Optional[str], lang: str = "en") -> Optional[str]:
     try:
         if CYRTRANSLIT_AVAILABLE:
             # cyrtranslit uses 'ru' as source language code
-            return to_latin(text, "ru")
+            return cast(str | None, to_latin(text, "ru"))
         else:
             return _fallback_translit(text)
     except Exception as e:

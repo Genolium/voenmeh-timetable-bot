@@ -1,5 +1,6 @@
 import random
 import re
+from typing import Any
 
 from aiogram.types import CallbackQuery, Message
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
@@ -20,7 +21,7 @@ from .constants import DialogDataKeys, WidgetIds
 from .states import About, MainMenu, Schedule
 
 
-async def get_main_menu_data(dialog_manager: DialogManager, **kwargs):
+async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """
     Выбирает случайную группу для примера в приветственном сообщении.
     """
@@ -57,7 +58,7 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_lang_selected(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_lang_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Обрабатывает выбор языка при первом запуске."""
     lang_code = button.widget_id.replace("lang_", "")
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
@@ -67,7 +68,7 @@ async def on_lang_selected(callback: CallbackQuery, button: Button, manager: Dia
     await manager.switch_to(MainMenu.choose_user_type)
 
 
-async def on_user_type_selected(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_user_type_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Обрабатывает выбор типа пользователя (студент/преподаватель)."""
     user_type = callback.data.replace("user_type_", "")  # Извлекаем тип из callback_data (student/teacher)
     manager.dialog_data["user_type"] = user_type
@@ -78,7 +79,7 @@ async def on_user_type_selected(callback: CallbackQuery, button: Button, manager
         await manager.switch_to(MainMenu.enter_teacher)
 
 
-async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_group_entered(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     # Нормализуем ввод с помощью text_utils
     raw = message.text or ""
     group_name = normalize_group_name(raw)
@@ -119,7 +120,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
-async def on_teacher_entered(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_teacher_entered(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Обрабатывает ввод ФИО преподавателя."""
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
 
@@ -158,7 +159,7 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
-async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     group_name = manager.dialog_data.get(DialogDataKeys.GROUP)
     await manager.start(
         Schedule.view,
@@ -167,7 +168,7 @@ async def on_skip_tutorial_clicked(callback: CallbackQuery, button: Button, mana
     )
 
 
-async def on_show_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_show_tutorial_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(About.page_1, mode=StartMode.RESET_STACK)
 
 

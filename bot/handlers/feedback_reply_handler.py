@@ -4,6 +4,7 @@
 
 import logging
 import re
+from typing import Any
 
 from aiogram import Bot, F, Router
 from aiogram.types import Message
@@ -27,7 +28,7 @@ if FEEDBACK_CHAT_ID_INT is not None:
         F.chat.id == FEEDBACK_CHAT_ID_INT,
         F.reply_to_message,
     )
-    async def handle_feedback_reply(message: Message, bot: Bot, session_factory):
+    async def handle_feedback_reply(message: Message, bot: Bot, session_factory: Any) -> None:
         """
         Обрабатывает ответы на фидбек в чате FEEDBACK_CHAT_ID.
 

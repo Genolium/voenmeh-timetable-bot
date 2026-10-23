@@ -2,6 +2,7 @@ import logging
 import random
 import re
 from datetime import date, datetime, timedelta
+from typing import Any, cast
 from uuid import uuid4
 
 from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
@@ -108,8 +109,8 @@ def _inline_lang(query: InlineQuery) -> str:
     return "ru"
 
 
-def _tr(lang: str, key: str, **kwargs) -> str:
-    return i18n.get(key, lang=lang, **kwargs)
+def _tr(lang: str, key: str, **kwargs: Any) -> str:
+    return cast(str, i18n.get(key, lang=lang, **kwargs))
 
 
 def _available_groups(manager: TimetableManager) -> list[str]:
@@ -117,7 +118,7 @@ def _available_groups(manager: TimetableManager) -> list[str]:
     return [group for group in manager._schedules if not group.startswith("__")]
 
 
-async def inline_query_handler(query: InlineQuery, manager: TimetableManager):
+async def inline_query_handler(query: InlineQuery, manager: TimetableManager) -> None:
     """
     Обработчик inline-запросов для быстрого получения расписания.
     Поддерживает autocomplete по группам с fuzzy-поиском.
@@ -221,7 +222,7 @@ async def _send_schedule_result(
     manager: TimetableManager,
     group_name: str,
     target_date: date,
-):
+) -> None:
     """Отправляет результат с расписанием группы."""
     # Получаем расписание
     schedule_info = await manager.get_schedule_for_day(group_name, target_date)
