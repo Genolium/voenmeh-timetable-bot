@@ -4,7 +4,7 @@ import logging
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, cast
 
 from PIL import Image
 from redis.asyncio.client import Redis
@@ -114,7 +114,7 @@ class ImageCacheManager:
             if image_bytes:
                 logger.info(f"Retrieved {cache_key} from Redis cache")
                 IMAGE_CACHE_OPERATIONS.labels(operation="redis_get").inc()
-                return image_bytes
+                return cast(bytes | None, image_bytes)
 
             # Если нет в Redis, пробуем файловую систему
             file_path = self.cache_dir / f"{cache_key}.png"
@@ -223,7 +223,7 @@ class ImageCacheManager:
                 else:
                     metadata["file_exists"] = False
 
-                return metadata
+                return cast(dict[str, Any] | None, metadata)
 
             # Если нет метаданных в Redis, но есть файл
             file_path = self.cache_dir / f"{cache_key}.png"

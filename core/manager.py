@@ -3,12 +3,13 @@ import json
 import pickle
 import time
 from datetime import date, datetime, timedelta
+from typing import Any, cast
 
 from rapidfuzz import fuzz, process
 from redis.asyncio.client import Redis
 
 from core.config import CACHE_LIFETIME, DAY_MAP, MOSCOW_TZ, REDIS_SCHEDULE_CACHE_KEY
-from core.semester_calendar import get_semester_info
+from core.semester_calendar import SemesterInfo, get_semester_info
 
 
 class TimetableManager:
@@ -43,7 +44,7 @@ class TimetableManager:
                 print("Предупреждение: не удалось разобрать дату начала семестра.")
 
     @classmethod
-    async def create(cls, redis_client: Redis):
+    async def create(cls, redis_client: Redis) -> "TimetableManager | None":
         """
         Асинхронный конструктор. Единственный правильный способ создать экземпляр.
         Загружает данные из кэша Redis или с сервера.
@@ -128,7 +129,7 @@ class TimetableManager:
                             return None
 
     @classmethod
-    async def _restore_from_backup(cls, redis_client: Redis):
+    async def _restore_from_backup(cls, redis_client: Redis) -> dict[str, Any] | None:
         """
         Восстанавливает расписание из последней резервной копии в Redis.
 
@@ -218,7 +219,7 @@ class TimetableManager:
         week_name = "Нечетная" if info.week_key == "odd" else "Четная"
         return (info.week_key, week_name)
 
-    async def get_semester_info_for(self, target_date: date):
+    async def get_semester_info_for(self, target_date: date) -> SemesterInfo:
         """Возвращает SemesterInfo для даты (для текста и картинок)."""
         settings = None
         if hasattr(self, "_semester_settings_manager"):
@@ -348,7 +349,7 @@ class TimetableManager:
         normalized_to_canonical = {_normalize(k): k for k in self._teachers_index.keys()}
         norm_key = _normalize(raw_name)
         if norm_key in normalized_to_canonical:
-            return normalized_to_canonical[norm_key]
+            return cast(str | None, normalized_to_canonical[norm_key])
 
         # 3) fuzzy fallback
         fit = self.find_teachers_fuzzy(raw_name, limit=1, score_cutoff=55)
@@ -476,7 +477,7 @@ class TimetableManager:
 
     def get_current_xml_hash(self) -> str:
         """Возвращает хеш текущей версии XML расписания."""
-        return self._current_xml_hash
+        return cast(str, self._current_xml_hash)
 
     def set_semester_settings_manager(self, settings_manager):
         """Устанавливает менеджер настроек семестров."""
@@ -498,16 +499,16 @@ class TimetableManager:
     def _decompress_data(self, compressed_data: bytes) -> dict:
         """Разжимает данные из Redis."""
         if not self._use_compression:
-            return json.loads(compressed_data.decode("utf-8"))
+            return cast(dict[Any, Any], json.loads(compressed_data.decode("utf-8")))
 
         try:
             decompressed = gzip.decompress(compressed_data)
         except gzip.BadGzipFile:
             # Обратная совместимость с несжатым JSON.
-            return json.loads(compressed_data.decode("utf-8"))
+            return cast(dict[Any, Any], json.loads(compressed_data.decode("utf-8")))
 
         try:
-            return json.loads(decompressed.decode("utf-8"))
+            return cast(dict[Any, Any], json.loads(decompressed.decode("utf-8")))
         except (json.JSONDecodeError, UnicodeDecodeError):
             # Читаем старые кэши, записанные pickle, но новые записи — только JSON.
-            return pickle.loads(decompressed)
+            return cast(dict[Any, Any], pickle.loads(decompressed))

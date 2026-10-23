@@ -1,4 +1,4 @@
-from typing import Any, Awaitable, Callable, Dict
+from typing import Any, Awaitable, Callable, Dict, cast
 
 from aiogram import BaseMiddleware
 from aiogram.types import TelegramObject
@@ -41,8 +41,8 @@ class I18nMiddleware(BaseMiddleware):
 
         # Хелпер для получения перевода с уже установленным языком
         # Пример использования в хендлере: _("welcome_title")
-        def string_getter(key: str, **kwargs) -> str:
-            return i18n.get(key, lang=lang, **kwargs)
+        def string_getter(key: str, **kwargs: Any) -> str:
+            return cast(str, i18n.get(key, lang=lang, **kwargs))
 
         data["i18n"] = i18n
         data["_"] = string_getter

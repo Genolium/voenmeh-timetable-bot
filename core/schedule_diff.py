@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from core.i18n import i18n
 
@@ -302,7 +302,7 @@ class ScheduleDiffFormatter:
         )
 
         # Группируем изменения по типам для лучшей читаемости
-        changes_by_type = {}
+        changes_by_type: dict[ChangeType, list[LessonChange]] = {}
         for change in diff.changes:
             if change.change_type not in changes_by_type:
                 changes_by_type[change.change_type] = []
@@ -328,4 +328,4 @@ class ScheduleDiffFormatter:
         message = header + "\n".join(formatted_changes)
         message += i18n.get("diff_footer", lang=lang)
 
-        return message
+        return cast(str | None, message)

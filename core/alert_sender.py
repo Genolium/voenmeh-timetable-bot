@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import aiohttp
 
@@ -102,7 +102,7 @@ class AlertSender:
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
             cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
             async with cm as r:
-                return r.status == 200
+                return cast(bool, r.status == 200)
         except Exception:
             return False
 

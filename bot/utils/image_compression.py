@@ -58,7 +58,7 @@ def compress_image_for_telegram(
                 scale = min(max_dimension / width, max_dimension / height)
                 new_width = int(width * scale)
                 new_height = int(height * scale)
-                img = img.resize((new_width, new_height), Image.LANCZOS)
+                img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 logging.info(f"Изображение уменьшено с {width}x{height} до {new_width}x{new_height}")
 
             # Сохраняем с начальным качеством
@@ -82,7 +82,7 @@ def compress_image_for_telegram(
                     while file_size > max_size_bytes and (img.width > 800 or img.height > 800):
                         new_width = int(img.width * 0.9)
                         new_height = int(img.height * 0.9)
-                        img = img.resize((new_width, new_height), Image.LANCZOS)
+                        img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                         img.save(output_path, "JPEG", quality=30, optimize=True)
                         file_size = os.path.getsize(output_path)
                         logging.info(f"Изображение уменьшено до {new_width}x{new_height}, размер: {file_size} байт")

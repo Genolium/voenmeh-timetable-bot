@@ -117,6 +117,27 @@ cd voenmeh-timetable-bot
   docker compose down
   ```
 
+## 🚢 Деплой
+
+Все параметры деплоя, как и остальные секреты, живут в `.env` (см. `.env.example`, блок `Deploy`).
+
+### На хосте
+
+```bash
+./scripts/deploy.sh                          # выкатить текущую рабочую копию
+DEPLOY_GIT_PULL=1 ./scripts/deploy.sh        # сначала обновить код (ветка из .env)
+DEPLOY_GIT_REF=<sha> DEPLOY_GIT_PULL=1 ./scripts/deploy.sh   # выкатить конкретный коммит
+```
+
+Скрипт: собирает образы (`docker compose build`), применяет миграции (`migrate` с `service_completed_successfully`), поднимает сервисы (`up -d --remove-orphans`), ждёт успешного завершения миграций и проверяет, что `voenmeh_bot` и `voenmeh_worker` запущены. При ошибке печатает логи и завершается с ненулевым кодом.
+
+### Из CI
+
+- **`dev`** → job `deploy-staging`, **`main`** → job `deploy-production` (после `test`, `lint`, `build`).
+- Конфигурация берётся из `.env` на раннере (self-hosted), иначе из одноимённых repository secrets: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`, `DEPLOY_SSH_KEY`, `DEPLOY_SSH_KNOWN_HOSTS`, `DEPLOY_PATH` (production) / `STAGING_DEPLOY_PATH` (staging).
+- Деплой идёт по SSH: на сервере выполняется `bash scripts/deploy.sh` с `DEPLOY_GIT_PULL=1` и `DEPLOY_GIT_REF=<коммит CI>`.
+- Если не задано ничего — job не падает, а пишет notice «деплой не настроен»; если задано частично — падает со списком недостающих переменных.
+
 ## 📦 Сборка образа
 
 Рабочий деплой собирает образ **локально на хосте** (`docker compose build`) — публикация в registry не требуется, все секреты остаются в `.env`.

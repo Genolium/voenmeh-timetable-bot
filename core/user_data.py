@@ -3,7 +3,7 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union, cast
 
 from redis.asyncio.client import Redis
 from sqlalchemy import case, event, func, or_, select, update
@@ -43,7 +43,7 @@ def cached(ttl: int = 3600) -> Callable:
                 cached_data = await redis_client.get(cache_key)
                 if cached_data:
                     logger.debug(f"Cache hit for {func.__name__}")
-                    return json.loads(cached_data.decode("utf-8"))
+                    return cast(T, json.loads(cached_data.decode("utf-8")))
                 else:
                     logger.debug(f"Cache miss for {func.__name__}")
             except Exception as e:
@@ -150,7 +150,7 @@ class UserDataManager:
             from core.config import get_redis_client
 
             self._redis_client = get_redis_client()
-        return self._redis_client
+        return cast(Redis, self._redis_client)
 
     def _get_cache_key(self, func_name: str, *args: Any, **kwargs: Any) -> str:
         """
