@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, cast
 
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram_dialog import Dialog, DialogManager, Window
@@ -16,16 +16,16 @@ from .states import SettingsMenu
 
 def get_status_text(status: bool, lang: str = "ru") -> str:
     key = "settings_status_enabled" if status else "settings_status_disabled"
-    return i18n.get(key, lang)
+    return cast(str, i18n.get(key, lang))
 
 
 def get_button_text(status: bool, action_key: str, lang: str = "ru") -> str:
     # action_key: "evening", "morning", "reminders"
     prefix = "settings_btn_disable" if status else "settings_btn_enable"
-    return i18n.get(f"{prefix}_{action_key}", lang)
+    return cast(str, i18n.get(f"{prefix}_{action_key}", lang))
 
 
-async def get_settings_data(dialog_manager: DialogManager, **kwargs):
+async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
     settings = await user_data_manager.get_user_settings(user_id)
@@ -111,7 +111,7 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     setting_name = button.widget_id
@@ -130,7 +130,7 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
     await manager.switch_to(SettingsMenu.main)
 
 
-async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
 
@@ -139,7 +139,7 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
     await manager.switch_to(SettingsMenu.main)
 
 
-async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
 
@@ -148,7 +148,7 @@ async def on_morning_time_selected(callback: CallbackQuery, widget: Select, mana
     await manager.switch_to(SettingsMenu.main)
 
 
-async def on_evening_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+async def on_evening_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
 
@@ -157,11 +157,11 @@ async def on_evening_time_selected(callback: CallbackQuery, widget: Select, mana
     await manager.switch_to(SettingsMenu.main)
 
 
-async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.done()
 
 
-async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.set_user_language(callback.from_user.id, item_id)
 
@@ -199,7 +199,7 @@ def _build_channel_link(channel: str) -> str:
     return channel
 
 
-async def on_theme_button_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_theme_button_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Обработчик кнопки выбора темы с проверкой подписки (fail-closed)."""
     user_id = callback.from_user.id
     from core.config import SUBSCRIPTION_CHANNEL
@@ -225,7 +225,7 @@ async def on_theme_button_click(callback: CallbackQuery, button: Button, manager
     await manager.switch_to(SettingsMenu.choose_theme)
 
 
-async def on_check_theme_subscription(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_check_theme_subscription(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Кнопка «Проверить подписку» в окне гейта."""
     user_id = callback.from_user.id
     if await _is_theme_subscribed(user_id, manager):
@@ -241,7 +241,7 @@ async def on_check_theme_subscription(callback: CallbackQuery, button: Button, m
             pass
 
 
-async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str):
+async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
     """Сохраняет выбранную тему пользователя и возвращает в меню настроек."""
     try:
         user_id = callback.from_user.id
@@ -267,7 +267,7 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
     await manager.switch_to(SettingsMenu.main)
 
 
-async def get_theme_data(dialog_manager: DialogManager, **kwargs):
+async def get_theme_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """Возвращает текущую тему и список тем с пометкой текущей."""
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
@@ -305,7 +305,7 @@ async def get_theme_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Открывает канал с новостями разработки"""
     # Force fetch language from DB to ensure correct localization even if middleware is stale
     try:

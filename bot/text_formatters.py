@@ -2,7 +2,7 @@ import html
 import logging
 import random
 from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from core.config import MOSCOW_TZ
 from core.i18n import i18n
@@ -11,12 +11,12 @@ from core.semester_settings import SemesterSettingsManager
 from core.transliteration import transliterate
 
 
-def esc(value) -> str:
+def esc(value: Any) -> str:
     """HTML-escape a value for safe interpolation into Telegram HTML messages."""
     return html.escape(str(value if value is not None else ""), quote=False)
 
 
-async def calculate_semester_week_number(target_date: date, session_factory) -> int:
+async def calculate_semester_week_number(target_date: date, session_factory: Any) -> int:
     """
     Рассчитывает номер недели с начала текущего семестра на основе настроек из БД.
 
@@ -48,11 +48,11 @@ def format_schedule_text(day_info: dict, week_number: int | None = None, lang: s
     """Форматирует расписание на день для группы."""
     if not day_info or "error" in day_info:
         error_msg = day_info.get("error", i18n.get("fmt_error_unknown", lang))
-        return i18n.get("fmt_error", lang).format(error=esc(error_msg))
+        return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     date_obj = day_info.get("date")
     if not date_obj:
-        return i18n.get("fmt_date_missing", lang)
+        return cast(str, i18n.get("fmt_date_missing", lang))
 
     date_str = date_obj.strftime("%d.%m.%Y")
     day_name_ru = day_info.get("day_name", "")
@@ -70,7 +70,7 @@ def format_schedule_text(day_info: dict, week_number: int | None = None, lang: s
 
     lessons = day_info.get("lessons")
     if not lessons:
-        return header + "\n" + i18n.get("fmt_no_lessons", lang)
+        return cast(str, header + "\n" + i18n.get("fmt_no_lessons", lang))
 
     lesson_parts = []
     for lesson in lessons:
@@ -107,9 +107,9 @@ def _week_type_suffix(week_name: str, lang: str = "ru") -> str:
     return f" <i>({esc(i18n.get(key, lang))})</i>"
 
 
-def _week_number_suffix(week_number, lang: str = "ru") -> str:
+def _week_number_suffix(week_number: Any, lang: str = "ru") -> str:
     if week_number and 0 < week_number <= 32:
-        return " " + i18n.get("fmt_week", lang).format(number=week_number)
+        return cast(str, " " + i18n.get("fmt_week", lang).format(number=week_number))
     return ""
 
 
@@ -124,7 +124,7 @@ def format_teacher_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
     """Форматирует расписание на день для преподавателя."""
     if not schedule_info or schedule_info.get("error"):
         error_msg = schedule_info.get("error", i18n.get("fmt_error_unknown", lang))
-        return i18n.get("fmt_error", lang).format(error=esc(error_msg))
+        return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     teacher_name = esc(transliterate(schedule_info.get("teacher", i18n.get("fmt_teacher_label", lang)), lang))
     date_obj = schedule_info["date"]
@@ -139,7 +139,7 @@ def format_teacher_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
 
     lessons = schedule_info.get("lessons")
     if not lessons:
-        return header + "\n" + i18n.get("fmt_no_lessons", lang)
+        return cast(str, header + "\n" + i18n.get("fmt_no_lessons", lang))
 
     lesson_parts = []
     for lesson in lessons:
@@ -181,7 +181,7 @@ def format_classroom_schedule_text(schedule_info: dict, lang: str = "ru") -> str
     """Форматирует расписание на день для аудитории."""
     if not schedule_info or schedule_info.get("error"):
         error_msg = schedule_info.get("error", i18n.get("fmt_error_unknown", lang))
-        return i18n.get("fmt_error", lang).format(error=esc(error_msg))
+        return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     classroom_number = esc(transliterate(schedule_info.get("classroom", i18n.get("fmt_classroom_label", lang)), lang))
     date_obj = schedule_info["date"]
@@ -196,7 +196,7 @@ def format_classroom_schedule_text(schedule_info: dict, lang: str = "ru") -> str
 
     lessons = schedule_info.get("lessons")
     if not lessons:
-        return header + "\n" + i18n.get("fmt_classroom_free", lang)
+        return cast(str, header + "\n" + i18n.get("fmt_classroom_free", lang))
 
     lesson_parts = []
     for lesson in lessons:
@@ -283,7 +283,7 @@ def format_full_week_text(week_schedule: dict, week_name: str, lang: str = "ru")
                     text_parts.append(" ".join(details_parts))
 
     if len(text_parts) == 1:
-        return week_header + "\n\n" + i18n.get("fmt_week_no_lessons", lang)
+        return cast(str, week_header + "\n\n" + i18n.get("fmt_week_no_lessons", lang))
 
     return "\n".join(text_parts)
 
@@ -388,8 +388,8 @@ def get_footer_with_promo(lang: str = "ru") -> str:
     footer = i18n.get("unsubscribe_footer", lang)
     if random.random() < 0.3:  # 30% вероятность показа рекламы
         promo = i18n.get("channel_promo", lang)
-        return footer + promo
-    return footer
+        return cast(str, footer + promo)
+    return cast(str, footer)
 
 
 EVENING_GREETINGS = [
@@ -486,7 +486,7 @@ def generate_evening_intro(
         greetings = [""]
 
     # context_map might be a dict or string if something went wrong, need to handle
-    day_context_list = []
+    day_context_list: list[str] = []
     if isinstance(context_map, dict):
         day_context_list = context_map.get(weekday, [""])
     if not day_context_list:
@@ -507,7 +507,7 @@ def generate_evening_intro(
                 emoji=weather_forecast.get("emoji", ""), description=description.capitalize(), temp=temp
             )
         else:
-            advice_list = []
+            advice_list: list[str] = []
             clothing_advice = i18n.get("clothing_advice", lang)
             if isinstance(clothing_advice, dict):
                 if temp <= 0:
@@ -620,7 +620,7 @@ def generate_reminder_text(
             final_phrases = ["Final!"]
 
         header_fmt = i18n.get("reminder_header_final", lang)
-        return header_fmt.format(text=random.choice(final_phrases)) + i18n.get("unsubscribe_footer", lang)
+        return cast(str | None, header_fmt.format(text=random.choice(final_phrases)) + i18n.get("unsubscribe_footer", lang))
     else:
         return None
 
@@ -662,4 +662,4 @@ def generate_reminder_text(
     if info_parts:
         text += " ".join(info_parts)
 
-    return text + i18n.get("unsubscribe_footer", lang)
+    return cast(str | None, text + i18n.get("unsubscribe_footer", lang))

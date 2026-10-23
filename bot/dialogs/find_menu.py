@@ -20,7 +20,7 @@ from .constants import DialogDataKeys, WidgetIds
 from .states import FindMenu, Schedule
 
 
-async def get_find_data(dialog_manager: DialogManager, **kwargs):
+async def get_find_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     if not dialog_manager.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
         dialog_manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
@@ -63,7 +63,7 @@ async def get_find_data(dialog_manager: DialogManager, **kwargs):
     return data
 
 
-async def get_history_data(dialog_manager: DialogManager, **kwargs):
+async def get_history_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
@@ -81,7 +81,7 @@ async def get_history_data(dialog_manager: DialogManager, **kwargs):
     }
 
 
-async def on_history_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+async def on_history_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
     item_type, value = item_id.split(":", 1)
     if item_type == "group":
         await manager.start(Schedule.view, data={DialogDataKeys.GROUP: value}, mode=StartMode.RESET_STACK)
@@ -93,7 +93,7 @@ async def on_history_selected(callback: CallbackQuery, widget: Any, manager: Dia
         await manager.switch_to(FindMenu.view_result)
 
 
-async def on_group_input(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_group_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Открывает расписание найденной группы, не меняя сохранённую группу пользователя."""
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
@@ -123,7 +123,7 @@ async def on_group_input(message: Message, message_input: MessageInput, manager:
     await manager.switch_to(FindMenu.select_item)
 
 
-async def on_teacher_input(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_teacher_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
 
@@ -164,7 +164,7 @@ async def on_teacher_input(message: Message, message_input: MessageInput, manage
         await manager.switch_to(FindMenu.select_item)
 
 
-async def on_classroom_input(message: Message, message_input: MessageInput, manager: DialogManager):
+async def on_classroom_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
@@ -200,7 +200,7 @@ async def on_classroom_input(message: Message, message_input: MessageInput, mana
         await manager.switch_to(FindMenu.select_item)
 
 
-async def on_item_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str):
+async def on_item_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
     search_type = manager.dialog_data.get(DialogDataKeys.SEARCH_TYPE)
 
     if search_type == "group":
@@ -232,16 +232,16 @@ async def on_item_selected(callback: CallbackQuery, widget: Any, manager: Dialog
     await manager.switch_to(FindMenu.view_result)
 
 
-async def on_find_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int):
+async def on_find_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int) -> None:
     current_date = date.fromisoformat(manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
     manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = (current_date + timedelta(days=days)).isoformat()
 
 
-async def on_find_today_click(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_find_today_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
 
-async def on_back_to_main_menu(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_back_to_main_menu(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.done()
 
 

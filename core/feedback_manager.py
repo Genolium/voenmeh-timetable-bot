@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, cast
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -118,7 +118,7 @@ class FeedbackManager:
         """
         async with self.session_factory() as session:
             result = await session.execute(select(Feedback).where(Feedback.id == feedback_id))
-            return result.scalar_one_or_none()
+            return cast(Feedback | None, result.scalar_one_or_none())
 
     async def answer_feedback(self, feedback_id: int, admin_id: int, response_text: str) -> bool:
         """
@@ -162,7 +162,7 @@ class FeedbackManager:
                 ).inc()
                 USER_ACTIONS.labels(action="feedback_answered", user_type="admin", source="admin_panel").inc()
 
-            return success
+            return cast(bool, success)
 
     async def delete_feedback(self, feedback_id: int) -> bool:
         """
@@ -171,7 +171,7 @@ class FeedbackManager:
         async with self.session_factory() as session:
             result = await session.execute(delete(Feedback).where(Feedback.id == feedback_id))
             await session.commit()
-            return result.rowcount > 0
+            return cast(bool, result.rowcount > 0)
 
     async def get_feedback_stats(self) -> dict:
         """

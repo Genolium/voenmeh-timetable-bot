@@ -36,7 +36,7 @@ def print_progress_bar(
     prefix: str = "Прогресс",
     suffix: str = "",
     length: int = 30,
-):
+) -> None:
     """
     Выводит прогресс-бар в консоль для генерации изображений.
 
@@ -55,7 +55,7 @@ def print_progress_bar(
         print()  # Новая строка в конце
 
 
-_bg_images_cache = {}
+_bg_images_cache: dict[str, bytes] = {}
 _template_cache = None
 _template_mtime: float | None = None
 
@@ -301,8 +301,8 @@ async def generate_schedule_image(
         @dataclass
         class _PoolState:
             lock: asyncio.Lock
-            ctx: any
-            browser: any
+            ctx: Any
+            browser: Any
             created_at: float
             pages_made: int
             last_check_at: float = 0.0

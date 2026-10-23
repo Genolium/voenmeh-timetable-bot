@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+from typing import Any
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -83,7 +84,7 @@ def setup_logging() -> TelemetryHandles | None:
     return telemetry_handles
 
 
-async def set_bot_commands(bot: Bot):
+async def set_bot_commands(bot: Bot) -> None:
     """Устанавливает меню команд для пользователей и администраторов на разных языках."""
     from core.i18n import i18n
 
@@ -127,7 +128,7 @@ async def set_bot_commands(bot: Bot):
 
 
 # --- Обработчики команд ---
-async def start_command_handler(message: Message, dialog_manager: DialogManager, command: CommandObject | None = None):
+async def start_command_handler(message: Message, dialog_manager: DialogManager, command: CommandObject | None = None) -> None:
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     if not isinstance(user_data_manager, UserDataManager):
         logging.error("UserDataManager is not available or has an invalid type in middleware data.")
@@ -167,7 +168,7 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager,
             pass
 
 
-async def about_command_handler(message: Message, dialog_manager: DialogManager):
+async def about_command_handler(message: Message, dialog_manager: DialogManager) -> None:
     try:
         await dialog_manager.start(About.page_1, mode=StartMode.RESET_STACK)
     except Exception as e:
@@ -181,11 +182,11 @@ async def about_command_handler(message: Message, dialog_manager: DialogManager)
             pass
 
 
-async def feedback_command_handler(message: Message, dialog_manager: DialogManager):
+async def feedback_command_handler(message: Message, dialog_manager: DialogManager) -> None:
     await dialog_manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
 
 
-async def override_command_handler(message: Message, command: CommandObject, dialog_manager: DialogManager):
+async def override_command_handler(message: Message, command: CommandObject, dialog_manager: DialogManager) -> None:
     """Admin-only correction: /override group|YYYY-MM-DD|HH:MM-HH:MM|subject|room|type."""
     if not message.from_user or message.from_user.id not in ADMIN_IDS:
         return
@@ -228,12 +229,12 @@ async def override_command_handler(message: Message, command: CommandObject, dia
     await message.answer(f"✅ Коррекция сохранена для <b>{group.upper()}</b> на {date_str}.", parse_mode="HTML")
 
 
-async def admin_command_handler(message: Message, dialog_manager: DialogManager):
+async def admin_command_handler(message: Message, dialog_manager: DialogManager) -> None:
     await dialog_manager.start(Admin.menu, mode=StartMode.RESET_STACK)
 
 
 # --- Функции для запуска сервисов ---
-async def run_metrics_server(port: int = 8000):
+async def run_metrics_server(port: int = 8000) -> None:
     """Запускает HTTP-сервер для Prometheus в отдельном потоке, чтобы не блокировать основную логику."""
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, start_http_server, port)
@@ -245,7 +246,7 @@ async def run_metrics_server(port: int = 8000):
 # SimpleRateLimiter удален в пользу core/middlewares/rate_limit_middleware.py
 
 
-async def error_handler(event=None, exception: Exception | None = None, *args, **kwargs):
+async def error_handler(event: Any = None, exception: Exception | None = None, *args: Any, **kwargs: Any) -> Any:
     """Глобальный обработчик ошибок. Совместим с разными сигнатурами aiogram.
     Тихо обрабатывает устаревшие колбэки диалогов (UnknownIntent)."""
     exc = exception

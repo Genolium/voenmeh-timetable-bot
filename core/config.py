@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
-settings = Settings()
+# Обязательные поля (BOT_TOKEN, REDIS_URL, DATABASE_URL) приходят из окружения/.env,
+# поэтому mypy не может проверить их наличие при вызове.
+settings = Settings()  # type: ignore[call-arg]
 
 # Интервал проверки изменений в расписании на сайте (в минутах)
 CHECK_INTERVAL_MINUTES = settings.CHECK_INTERVAL_MINUTES

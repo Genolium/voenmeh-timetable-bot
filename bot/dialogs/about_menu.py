@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
@@ -16,7 +17,7 @@ from .constants import WidgetIds
 from .states import About, Schedule
 
 
-async def get_about_data(dialog_manager: DialogManager, **kwargs):
+async def get_about_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     user_id = dialog_manager.event.from_user.id
     user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
     user_lang = await user_data_manager.get_user_language(user_id)
@@ -40,7 +41,7 @@ async def get_about_data(dialog_manager: DialogManager, **kwargs):
 TOTAL_PAGES = 5
 
 
-async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     user_group = await user_data_manager.get_user_group(callback.from_user.id)
 

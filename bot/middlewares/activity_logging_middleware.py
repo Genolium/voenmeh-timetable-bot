@@ -223,7 +223,7 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         hour_of_day: str,
         day_of_week: str,
         event_type: str,
-    ):
+    ) -> None:
         """Обновляет все связанные метрики."""
 
         # Основные метрики действий

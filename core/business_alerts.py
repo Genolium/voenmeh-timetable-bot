@@ -99,7 +99,7 @@ class BusinessMetricsMonitor:
         severity: AlertSeverity,
         metric_name: str,
         additional_data: Dict[str, Any],
-    ):
+    ) -> None:
         alert_key = f"{metric_name}_{severity.value}"
         now = datetime.now(MOSCOW_TZ)
         last = self.alert_cooldown.get(alert_key)

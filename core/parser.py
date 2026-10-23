@@ -7,6 +7,7 @@ import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import aiohttp
 
@@ -59,7 +60,7 @@ def load_fallback_schedule() -> dict | None:
             data = json.load(f)
 
         logging.info(f"Loaded fallback schedule from {FALLBACK_SCHEDULE_PATH}")
-        return data
+        return cast(dict[Any, Any] | None, data)
 
     except Exception as e:
         logging.error(f"Failed to load fallback schedule: {e}")
@@ -136,12 +137,12 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             return None
 
         all_schedules = {}
-        teachers_index = {}
-        classrooms_index = {}
+        teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
+        classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
         sem = asyncio.Semaphore(20)
 
-        async def _fetch_group(grp: str):
+        async def _fetch_group(grp: str) -> tuple[str, Any]:
             async with sem:
                 url = f"{FALLBACK_API_URL}/api/schedule/lessons?name={grp}&kind=group"
                 try:
@@ -168,7 +169,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             if not data or not isinstance(data, dict):
                 continue
             lessons_raw = data.get("lessons", [])
-            group_schedule = {"odd": {}, "even": {}}
+            group_schedule: dict[str, dict[str, list[dict[str, Any]]]] = {"odd": {}, "even": {}}
 
             for item in lessons_raw:
                 day_num = item.get("day")
@@ -382,8 +383,8 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         root = ET.fromstring(xml_data)
 
         all_schedules = {}
-        teachers_index = {}
-        classrooms_index = {}
+        teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
+        classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
         period_meta = root.find("Period").attrib if root.find("Period") is not None else {}
         weeks_meta = root.find("Weeks").attrib if root.find("Weeks") is not None else {}
@@ -411,7 +412,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
             if not group_number:
                 continue
 
-            group_schedule = {"odd": {}, "even": {}}
+            group_schedule: dict[str, dict[str, list[dict[str, Any]]]] = {"odd": {}, "even": {}}
             for day_element in group_element.findall("Days/Day"):
                 day_title = day_element.get("Title")
                 if not day_title:
@@ -559,7 +560,7 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
     return result
 
 
-async def _fetch_and_parse_all_schedules_impl(session=None, force: bool = False) -> dict | None:
+async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool = False) -> dict | None:
     # 1. Основной источник: voenmeh.su
     try:
         voenmeh_su_data = await fetch_and_parse_from_voenmeh_su(session=session, force=force)
@@ -596,12 +597,14 @@ async def _fetch_and_parse_all_schedules_impl(session=None, force: bool = False)
         try:
             from core.alert_sender import AlertSender
 
-            alert_sender = AlertSender()
-            await alert_sender.send_alert(
-                "warning",
-                "Использовано резервное расписание",
-                "Не удалось загрузить свежее расписание с серверов. Использованы резервные данные.",
-            )
+            async with AlertSender({}) as alert_sender:
+                await alert_sender.send(
+                    {
+                        "severity": "warning",
+                        "summary": "Использовано резервное расписание",
+                        "description": "Не удалось загрузить свежее расписание с серверов. Использованы резервные данные.",
+                    }
+                )
         except Exception:
             pass
         return fallback_data
