@@ -138,6 +138,18 @@ DEPLOY_GIT_REF=<sha> DEPLOY_GIT_PULL=1 ./scripts/deploy.sh   # выкатить 
 - Деплой идёт по SSH: на сервере выполняется `bash scripts/deploy.sh` с `DEPLOY_GIT_PULL=1` и `DEPLOY_GIT_REF=<коммит CI>`.
 - Если не задано ничего — job не падает, а пишет notice «деплой не настроен»; если задано частично — падает со списком недостающих переменных.
 
+### Если `migrate` упал с `Can't locate revision`
+
+`alembic_version.version_num` — это `VARCHAR(32)`, а id ревизии должен быть короче. Если база была помечена id'ом, которого нет в коде (например, после переименования ревизии), `alembic upgrade head` падает ещё до выполнения миграций. Починка — привести строку к актуальному id:
+
+```bash
+echo "UPDATE alembic_version SET version_num = '20260912_sub_filter';" \
+  | docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+./scripts/deploy.sh
+```
+
+Защита от повторения: `tests/regression/test_migrations.py` проверяет, что все revision id не длиннее 32 символов и что в графе ровно одна голова.
+
 ## 📦 Сборка образа
 
 Рабочий деплой собирает образ **локально на хосте** (`docker compose build`) — публикация в registry не требуется, все секреты остаются в `.env`.
