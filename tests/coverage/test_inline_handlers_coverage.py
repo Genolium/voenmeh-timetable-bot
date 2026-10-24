@@ -80,6 +80,22 @@ class TestParseDay:
         assert d == _today()
         assert parts == ["Группа"]
 
+    def test_weekday_branches_do_not_depend_on_today(self, monkeypatch):
+        # Wednesday keeps both days_diff < 0 and days_diff >= 0 reachable.
+        frozen = datetime(2026, 10, 21, 12, 0, tzinfo=MOSCOW_TZ)
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        monkeypatch.setattr(ih, "datetime", FrozenDateTime)
+        past, past_parts = parse_day_from_query(["monday", "Группа"])
+        future, future_parts = parse_day_from_query(["friday", "Группа"])
+        assert past == frozen.date() + timedelta(days=5)
+        assert future == frozen.date() + timedelta(days=2)
+        assert past_parts == future_parts == ["Группа"]
+
 
 class TestInlineQueryHandler:
     @pytest.mark.asyncio

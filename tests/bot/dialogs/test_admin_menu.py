@@ -538,6 +538,60 @@ class TestBackups:
             await on_backup_restore_typed(msg, MagicMock(), mgr)
         assert "Не удалось применить" in mgr.dialog_data["backup_upload_status"]
 
+    async def test_on_backup_restore_typed_generic_error(self, tmp_path):
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        backup = tmp_path / "backup.sql"
+        backup.write_text("-- sql", encoding="utf-8")
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={"backup_restore_path": str(backup)})
+        with (
+            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=backup),
+            patch(
+                "bot.dialogs.admin_menu.restore_db_backup",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+        ):
+            await on_backup_restore_typed(msg, MagicMock(), mgr)
+        assert "Не удалось применить" in mgr.dialog_data["backup_upload_status"]
+
+    async def test_on_backup_restore_typed_cleanup_oserror(self, tmp_path):
+        from pathlib import Path
+
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        backup = tmp_path / "backup.sql"
+        backup.write_text("-- sql", encoding="utf-8")
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={"backup_restore_path": str(backup)})
+        with (
+            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=backup),
+            patch("bot.dialogs.admin_menu.restore_db_backup", new=AsyncMock()),
+            patch.object(Path, "unlink", side_effect=OSError("cannot unlink")),
+        ):
+            await on_backup_restore_typed(msg, MagicMock(), mgr)
+        assert "успешно восстановлена" in mgr.dialog_data["backup_upload_status"]
+
+    async def test_on_backup_restore_typed_cleanup_skips_missing_file(self, tmp_path):
+        from pathlib import Path
+
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        backup = tmp_path / "backup.sql"
+        backup.write_text("-- sql", encoding="utf-8")
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={"backup_restore_path": str(backup)})
+        with (
+            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=backup),
+            patch("bot.dialogs.admin_menu.restore_db_backup", new=AsyncMock()),
+            patch.object(Path, "exists", return_value=False),
+        ):
+            await on_backup_restore_typed(msg, MagicMock(), mgr)
+        assert "успешно восстановлена" in mgr.dialog_data["backup_upload_status"]
+
     async def test_on_backup_upload_rejects_oversized(self):
         from bot.dialogs.admin_menu import MAX_RESTORE_BYTES
 
@@ -589,6 +643,16 @@ class TestBackups:
         with patch("bot.dialogs.admin_menu.ADMIN_IDS", [42]):
             await on_admin_dialog_start({}, mgr)
         mgr.done.assert_not_awaited()
+
+    async def test_on_admin_dialog_start_rejects_missing_user(self):
+        from bot.dialogs.admin_menu import on_admin_dialog_start
+
+        mgr = make_manager()
+        mgr.event = MagicMock()
+        mgr.event.from_user = None
+        mgr.done = AsyncMock()
+        await on_admin_dialog_start({}, mgr)
+        mgr.done.assert_awaited_once()
 
     async def test_is_sql_backup_name(self):
         from bot.dialogs.admin_menu import _is_sql_backup_name

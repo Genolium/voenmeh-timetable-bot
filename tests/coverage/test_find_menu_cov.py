@@ -164,6 +164,17 @@ class TestOnGroupInput:
         udm.add_to_history.assert_awaited_once()
         dm.start.assert_awaited()
 
+    async def test_single_match_skips_history_without_user(self):
+        tm = make_timetable_manager()
+        tm.find_groups.return_value = ["О735Б"]
+        udm = AsyncMock()
+        dm = _dm(tm=tm, udm=udm)
+        message = make_message(text="О735Б")
+        message.from_user = None
+        await fm.on_group_input(message, MagicMock(), dm)
+        udm.add_to_history.assert_not_awaited()
+        dm.start.assert_awaited()
+
 
 class TestOnItemSelected:
     async def test_teacher(self):

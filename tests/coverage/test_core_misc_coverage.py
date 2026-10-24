@@ -163,6 +163,16 @@ def test_config_admin_ids_invalid(monkeypatch):
         importlib.reload(config_module)
 
 
+def test_config_admin_ids_empty(monkeypatch):
+    monkeypatch.setenv("ADMIN_ID", "")
+    try:
+        importlib.reload(config_module)
+        assert config_module.ADMIN_IDS == []
+    finally:
+        monkeypatch.delenv("ADMIN_ID", raising=False)
+        importlib.reload(config_module)
+
+
 def test_config_admin_ids_valid_after_restore():
     # Sanity check that the module still parses the .env value after reload.
     assert all(isinstance(i, int) for i in config_module.ADMIN_IDS)
