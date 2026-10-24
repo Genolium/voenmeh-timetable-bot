@@ -23,7 +23,6 @@ from core.config import (
     MEDIA_PATH,
     MOSCOW_TZ,
     NO_LESSONS_IMAGE_PATH,
-    REDIS_LAST_UPDATE_KEY,
     SUBSCRIPTION_CHANNEL,
     news_channel_url,
 )
@@ -241,16 +240,6 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     # I18n - use lang from DB instead of middleware
     _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
 
-    # Свежесть расписания: показываем только реально сохранённое успешное обновление.
-    schedule_freshness = ""
-    try:
-        raw_updated_at = await manager.redis.get(REDIS_LAST_UPDATE_KEY)
-        if raw_updated_at:
-            updated_at = datetime.fromtimestamp(int(raw_updated_at), MOSCOW_TZ)
-            schedule_freshness = _("schedule_updated_at", date=updated_at.strftime("%d.%m"), time=updated_at.strftime("%H:%M"))
-    except Exception:
-        pass
-
     has_lessons = bool(day_info.get("lessons"))
     is_error = bool(day_info and day_info.get("error"))
     # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
@@ -288,7 +277,6 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     return {
         "dynamic_header": live_header,
         "progress_bar": live_progress,
-        "schedule_freshness": schedule_freshness,
         "schedule_text": schedule_text,
         "empty_caption": empty_caption,
         "has_lessons": has_lessons,
@@ -880,7 +868,6 @@ schedul_dialog_windows = [
         ),
         Format("{dynamic_header}", when=_when_has_lessons),
         Format("{progress_bar}", when=_when_has_lessons),
-        Format("{schedule_freshness}"),
         Format("{empty_caption}", when=_when_no_lessons),
         Format("{schedule_text}", when=_when_show_schedule_text),
         Row(

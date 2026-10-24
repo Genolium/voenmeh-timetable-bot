@@ -279,19 +279,6 @@ class TestScheduleViewBranches:
         udm.set_user_group.assert_not_awaited()
         tm.get_teacher_schedule.assert_awaited_once()
 
-    async def test_schedule_view_get_schedule_data_without_redis_update(self):
-        """224->231: в Redis нет метки последнего обновления расписания."""
-        tm = make_timetable_manager()
-        tm.redis.get.return_value = None
-        dm = _sched_dm(
-            tm=tm,
-            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
-        )
-
-        data = await schedule_view.get_schedule_data(dm)
-
-        assert data["schedule_freshness"] == ""
-
     async def test_schedule_view_get_week_image_data_without_event_user(self):
         """409->416: нет user_id — тема пользователя не запрашивается."""
         tm = make_timetable_manager()

@@ -291,16 +291,6 @@ class TestGetScheduleData:
         data = await sv.get_schedule_data(dm)
         assert data["show_my_group"] is False
 
-    async def test_redis_freshness_error_is_swallowed(self):
-        tm = make_timetable_manager()
-        tm.redis.get.side_effect = RuntimeError("redis down")
-        dm = sched_dm(
-            tm=tm,
-            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
-        )
-        data = await sv.get_schedule_data(dm)
-        assert data["schedule_freshness"] == ""
-
     async def test_error_day_info(self):
         tm = make_timetable_manager()
         tm.get_schedule_for_day.return_value = {"error": "no group"}
