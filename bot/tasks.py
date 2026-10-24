@@ -432,6 +432,61 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int) -> Non
         raise
 
 
+_MEDIA_SEND_METHODS = {
+    "photo": "send_photo",
+    "video": "send_video",
+    "animation": "send_animation",
+    "document": "send_document",
+    "audio": "send_audio",
+    "voice": "send_voice",
+    "video_note": "send_video_note",
+    "sticker": "send_sticker",
+}
+_MEDIA_NO_CAPTION_KINDS = {"sticker", "video_note"}
+
+
+async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
+    """Отправка медиа с HTML-подписью. copy_message теги не разбирает."""
+    method_name = _MEDIA_SEND_METHODS.get(kind)
+    if not method_name:
+        raise ValueError(f"Unsupported broadcast media kind: {kind}")
+    try:
+        bot = await get_worker_bot()
+        method = getattr(bot, method_name)
+        kwargs: Dict[str, Any] = {}
+        if caption and kind not in _MEDIA_NO_CAPTION_KINDS:
+            kwargs["caption"] = caption
+            kwargs["parse_mode"] = "HTML"
+        async with rate_limiter:
+            await method(user_id, file_id, **kwargs)
+        log.info(f"[SEND_OK] Медиа ({kind}) отправлено пользователю {user_id}")
+        return
+    except TelegramForbiddenError:
+        log.info(f"User {user_id} blocked the bot. Marking as blocked.")
+        await _mark_user_as_blocked(user_id)
+        return
+    except TelegramBadRequest as e:
+        if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat. Marking as blocked.")
+            await _mark_user_as_blocked(user_id)
+            return
+        log.error(f"BadRequest sending media to {user_id}: {e}")
+        raise
+    except RetryAfter as e:
+        log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
+        raise RateLimitExceeded("telegram retry after")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "connect call failed" in error_msg or "cannot connect" in error_msg:
+            log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
+            raise
+        if "timeout" in error_msg:
+            log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
+            return
+        log.error(f"[SEND_FAIL] Unknown error sending media to {user_id}: {e}")
+        raise
+
+
 @dramatiq.actor(
     queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
 )  # 15 мин (достаточно для сетевых задержек)
@@ -442,6 +497,11 @@ def send_message_task(user_id: int, text: str) -> None:
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int) -> None:
     run_async(_copy_message(user_id, from_chat_id, message_id))
+
+
+@dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)
+def send_media_task(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
+    run_async(_send_media(user_id, kind, file_id, caption))
 
 
 @dramatiq.actor(
