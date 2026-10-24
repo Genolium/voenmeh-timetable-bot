@@ -13,7 +13,6 @@ from core.manager import TimetableManager, refresh_schedule_cache_ttl
 from core.parser import NOT_MODIFIED, resolve_lesson_end
 from core.user_data import UserDataManager
 
-
 NEW_I18N_KEYS = (
     "btn_more",
     "btn_my_group",
@@ -364,7 +363,7 @@ async def test_empty_day_caption_is_not_triplicated():
 @pytest.mark.asyncio
 async def test_on_more_and_my_group_and_role_and_cancel():
     from bot.dialogs.feedback_menu import on_feedback_cancel
-    from bot.dialogs.schedule_view import on_more_click, on_my_group_click, _when_has_lessons, _when_show_my_group
+    from bot.dialogs.schedule_view import _when_has_lessons, _when_show_my_group, on_more_click, on_my_group_click
     from bot.dialogs.settings_menu import on_change_role_click
     from bot.dialogs.states import MainMenu, Schedule
 

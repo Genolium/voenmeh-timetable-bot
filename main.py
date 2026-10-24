@@ -50,10 +50,10 @@ from bot.middlewares.subscription_filter_middleware import SubscriptionFilterMid
 from bot.middlewares.user_data_middleware import UserDataMiddleware
 from bot.scheduler import setup_scheduler
 from core.alert_webhook import run_alert_webhook_server
-from core.business_alerts import start_business_monitoring
 
 # --- Импорты ядра ---
 from core.bot_identity import set_bot_username
+from core.business_alerts import start_business_monitoring
 from core.config import ADMIN_IDS, settings
 from core.image_generator import shutdown_image_generator
 from core.manager import TimetableManager

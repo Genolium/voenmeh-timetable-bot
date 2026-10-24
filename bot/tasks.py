@@ -152,9 +152,10 @@ class RobustRetries(Retries):
 def _record_failed_message_to_dlq(message, exception) -> None:
     """Persist a Dramatiq message to DLQ after retries are exhausted."""
     try:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
         from core.config import settings
         from core.dlq_manager import DLQManager
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
         args = list(getattr(message, "args", None) or [])
         user_id = args[0] if args and isinstance(args[0], int) else 0

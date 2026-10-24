@@ -92,9 +92,7 @@ class TimetableManager:
                 return cls(data, redis_client)
             else:
                 print("Кэш в Redis не найден. Загрузка с сервера...")
-                from core.parser import fetch_and_parse_all_schedules
-
-                from core.parser import NOT_MODIFIED
+                from core.parser import NOT_MODIFIED, fetch_and_parse_all_schedules
 
                 new_data = await fetch_and_parse_all_schedules()
                 if new_data is NOT_MODIFIED:
