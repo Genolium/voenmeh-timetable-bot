@@ -890,20 +890,27 @@ def extract_broadcast_payload(message: Message) -> dict[str, Any]:
         return {"kind": "text", "text": message.text or ""}
     if content_type == ContentType.PHOTO and message.photo:
         return {"kind": "photo", "file_id": message.photo[-1].file_id, "caption": caption}
-    if content_type == ContentType.VIDEO and getattr(message, "video", None):
-        return {"kind": "video", "file_id": message.video.file_id, "caption": caption}
-    if content_type == ContentType.ANIMATION and getattr(message, "animation", None):
-        return {"kind": "animation", "file_id": message.animation.file_id, "caption": caption}
-    if content_type == ContentType.DOCUMENT and getattr(message, "document", None):
-        return {"kind": "document", "file_id": message.document.file_id, "caption": caption}
-    if content_type == ContentType.AUDIO and getattr(message, "audio", None):
-        return {"kind": "audio", "file_id": message.audio.file_id, "caption": caption}
-    if content_type == ContentType.VOICE and getattr(message, "voice", None):
-        return {"kind": "voice", "file_id": message.voice.file_id, "caption": caption}
-    if content_type == ContentType.VIDEO_NOTE and getattr(message, "video_note", None):
-        return {"kind": "video_note", "file_id": message.video_note.file_id}
-    if content_type == ContentType.STICKER and getattr(message, "sticker", None):
-        return {"kind": "sticker", "file_id": message.sticker.file_id}
+    video = message.video
+    if content_type == ContentType.VIDEO and video:
+        return {"kind": "video", "file_id": video.file_id, "caption": caption}
+    animation = message.animation
+    if content_type == ContentType.ANIMATION and animation:
+        return {"kind": "animation", "file_id": animation.file_id, "caption": caption}
+    document = message.document
+    if content_type == ContentType.DOCUMENT and document:
+        return {"kind": "document", "file_id": document.file_id, "caption": caption}
+    audio = message.audio
+    if content_type == ContentType.AUDIO and audio:
+        return {"kind": "audio", "file_id": audio.file_id, "caption": caption}
+    voice = message.voice
+    if content_type == ContentType.VOICE and voice:
+        return {"kind": "voice", "file_id": voice.file_id, "caption": caption}
+    video_note = message.video_note
+    if content_type == ContentType.VIDEO_NOTE and video_note:
+        return {"kind": "video_note", "file_id": video_note.file_id}
+    sticker = message.sticker
+    if content_type == ContentType.STICKER and sticker:
+        return {"kind": "sticker", "file_id": sticker.file_id}
     return {
         "kind": "copy",
         "from_chat_id": message.chat.id,
@@ -1027,6 +1034,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
             else:
                 file_id = payload.get("file_id")
                 caption_template = payload.get("caption") or ""
+                media_kind = str(kind or "")
                 if file_id:
                     for user_id in user_ids:
                         caption = caption_template
@@ -1034,7 +1042,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
                             user_info = await udm.get_full_user_info(user_id)
                             if user_info:
                                 caption = render_template(caption, user_info)
-                        send_media_task.send(user_id, kind, file_id, caption)
+                        send_media_task.send(user_id, media_kind, str(file_id), caption)
                         TASKS_SENT_TO_QUEUE.labels(actor_name="send_media_task").inc()
                         sent_count += 1
                         if sent_count % 50 == 0:
