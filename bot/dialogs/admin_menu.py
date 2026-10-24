@@ -1150,7 +1150,7 @@ async def on_message_to_user_input(message: Message, message_input: MessageInput
         await message.answer(f"❌ Ошибка при отправке: {str(e)}")
 
 
-async def on_admin_dialog_start(start_data, manager: DialogManager):
+async def on_admin_dialog_start(start_data: object, manager: DialogManager) -> None:
     user = getattr(manager.event, "from_user", None)
     if not user or user.id not in ADMIN_IDS:
         await manager.done()

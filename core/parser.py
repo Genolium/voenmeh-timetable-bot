@@ -27,6 +27,7 @@ class _NotModifiedSentinel:
 
 
 NOT_MODIFIED = _NotModifiedSentinel()
+ParseResult = dict[str, Any] | _NotModifiedSentinel | None
 
 MIN_GROUP_SUCCESS_RATIO = 0.8
 
@@ -111,7 +112,9 @@ def save_fallback_schedule(data: dict) -> bool:
         return False
 
 
-async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None = None, force: bool = False) -> dict | None:
+async def fetch_and_parse_from_voenmeh_su(
+    session: aiohttp.ClientSession | None = None, force: bool = False
+) -> ParseResult:
     """
     Загружает и парсит актуальное расписание с официального API https://voenmeh.su.
 
@@ -341,7 +344,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
                 pass
 
 
-async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = None) -> dict | None:
+async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = None) -> ParseResult:
     """
     Загружает и парсит XML расписание с сервера университета (API_URL).
 
@@ -552,7 +555,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                 pass
 
 
-async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = None, force: bool = False) -> dict | None:
+async def fetch_and_parse_all_schedules(
+    session: aiohttp.ClientSession | None = None, force: bool = False
+) -> ParseResult:
     """
     Асинхронно загружает и парсит актуальное расписание.
 
@@ -584,7 +589,7 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
     return result
 
 
-async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool = False) -> dict | None:
+async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool = False) -> ParseResult:
     # 1. Основной источник: voenmeh.su
     try:
         voenmeh_su_data = await fetch_and_parse_from_voenmeh_su(session=session, force=force)

@@ -218,6 +218,24 @@ def test_record_failed_message_to_dlq_swallows_errors(monkeypatch):
     tasks._record_failed_message_to_dlq(SimpleNamespace(args=[], options={}), Exception("e"))
 
 
+def test_compose_hostname_outside_docker_uses_stub_for_compose_hosts():
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is True
+    assert tasks._compose_hostname_outside_docker("amqp://localhost:5672/") is False
+    assert tasks._compose_hostname_outside_docker("amqp://127.0.0.1:5672/") is False
+
+
+def test_compose_hostname_inside_docker_keeps_rabbitmq(monkeypatch):
+    class FakePath:
+        def __init__(self, _path):
+            pass
+
+        def exists(self):
+            return True
+
+    monkeypatch.setattr(tasks, "Path", FakePath)
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is False
+
+
 # --------------------------------------------------------------------------- #
 # _mark_user_as_blocked
 # --------------------------------------------------------------------------- #

@@ -1,7 +1,7 @@
 from typing import Any
 
 from aiogram import Bot
-from aiogram.types import ContentType, Message
+from aiogram.types import CallbackQuery, ContentType, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.kbd import Button
@@ -30,7 +30,7 @@ async def get_feedback_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     }
 
 
-async def on_feedback_cancel(callback, button, manager: DialogManager) -> None:
+async def on_feedback_cancel(callback: CallbackQuery, button: object, manager: DialogManager) -> None:
     await manager.done()
 
 

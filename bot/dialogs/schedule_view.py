@@ -204,7 +204,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     # Поиск чужой группы всегда идёт через групповое расписание, даже если
     # в профиле пользователь — преподаватель.
     if is_group_target:
-        day_info = await manager.get_schedule_for_day(group, target_date=current_date)
+        day_info = await manager.get_schedule_for_day(group, target_date=current_date) or {}
         render_as_teacher = False
     else:
         # Нормализуем имя преподавателя: если в индексе нет точного ключа,
@@ -219,7 +219,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
                     group = canonical
                 except Exception:
                     pass
-        day_info = await manager.get_teacher_schedule(group, target_date=current_date)
+        day_info = await manager.get_teacher_schedule(group, target_date=current_date) or {}
         render_as_teacher = True
 
     # Метрики активности и популярности
@@ -822,23 +822,23 @@ async def on_find_click(callback: CallbackQuery, button: Button, manager: Dialog
     await manager.start(FindMenu.choice)
 
 
-def _when_has_lessons(data, widget, manager) -> bool:
+def _when_has_lessons(data: dict, widget: object, manager: object) -> bool:
     return bool(data.get("has_lessons"))
 
 
-def _when_show_schedule_text(data, widget, manager) -> bool:
+def _when_show_schedule_text(data: dict, widget: object, manager: object) -> bool:
     return bool(data.get("show_schedule_text"))
 
 
-def _when_no_lessons(data, widget, manager) -> bool:
+def _when_no_lessons(data: dict, widget: object, manager: object) -> bool:
     return not data.get("has_lessons") and not data.get("show_schedule_text")
 
 
-def _when_show_my_group(data, widget, manager) -> bool:
+def _when_show_my_group(data: dict, widget: object, manager: object) -> bool:
     return bool(data.get("show_my_group"))
 
 
-async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Fallback: send the news channel URL if a URL button is unavailable."""
     await callback.answer()
     await callback.message.answer(news_channel_url())

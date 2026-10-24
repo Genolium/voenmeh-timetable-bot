@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict
 
 import aiohttp
@@ -149,7 +150,7 @@ class RobustRetries(Retries):
         super().after_process_message(broker, message, result=result, exception=exception)
 
 
-def _record_failed_message_to_dlq(message, exception) -> None:
+def _record_failed_message_to_dlq(message: object, exception: BaseException) -> None:
     """Persist a Dramatiq message to DLQ after retries are exhausted."""
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -215,9 +216,19 @@ def _create_noop_broker():
     return _NoopBroker()
 
 
+def _compose_hostname_outside_docker(broker_url: str) -> bool:
+    """True when URL points at a Compose service name but we are not in Docker."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(broker_url).hostname or "").lower()
+    if host not in {"rabbitmq", "redis", "db"}:
+        return False
+    return not Path("/.dockerenv").exists()
+
+
 def _create_broker(broker_url: str | None) -> "Broker":
     """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
-    if broker_url:
+    if broker_url and not _compose_hostname_outside_docker(broker_url):
         # Connection parameters are handled via rabbitmq.conf and retry middleware
         broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
     else:

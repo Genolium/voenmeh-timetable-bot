@@ -159,7 +159,7 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
-async def on_group_suggestion_selected(callback: CallbackQuery, widget, manager: DialogManager, item_id: str):
+async def on_group_suggestion_selected(callback: CallbackQuery, widget: object, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
     await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
@@ -169,7 +169,7 @@ async def on_group_suggestion_selected(callback: CallbackQuery, widget, manager:
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
-async def on_teacher_suggestion_selected(callback: CallbackQuery, widget, manager: DialogManager, item_id: str):
+async def on_teacher_suggestion_selected(callback: CallbackQuery, widget: object, manager: DialogManager, item_id: str) -> None:
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
     await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
