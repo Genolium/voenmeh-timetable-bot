@@ -153,6 +153,18 @@ class TestOnClassroomInput:
         dm.switch_to.assert_awaited_with(FindMenu.view_result)
 
 
+class TestOnGroupInput:
+    async def test_single_match_records_history(self):
+        tm = make_timetable_manager()
+        tm.find_groups.return_value = ["О735Б"]
+        udm = AsyncMock()
+        dm = _dm(tm=tm, udm=udm)
+        message = make_message(text="О735Б")
+        await fm.on_group_input(message, MagicMock(), dm)
+        udm.add_to_history.assert_awaited_once()
+        dm.start.assert_awaited()
+
+
 class TestOnItemSelected:
     async def test_teacher(self):
         udm = AsyncMock()

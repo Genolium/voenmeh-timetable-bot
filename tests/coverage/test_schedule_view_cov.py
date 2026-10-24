@@ -277,6 +277,20 @@ class TestGetScheduleData:
         assert data["has_lessons"] is True
         assert data["schedule_text"]
 
+    async def test_saved_group_lookup_error_is_swallowed(self):
+        tm = make_timetable_manager()
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        udm.get_user_type.return_value = "student"
+        udm.get_user_group.side_effect = RuntimeError("db down")
+        dm = sched_dm(
+            tm=tm,
+            udm=udm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        data = await sv.get_schedule_data(dm)
+        assert data["show_my_group"] is False
+
     async def test_redis_freshness_error_is_swallowed(self):
         tm = make_timetable_manager()
         tm.redis.get.side_effect = RuntimeError("redis down")

@@ -579,6 +579,17 @@ class TestBackups:
         await on_admin_dialog_start({}, mgr)
         mgr.done.assert_awaited_once()
 
+    async def test_on_admin_dialog_start_allows_admin(self):
+        from bot.dialogs.admin_menu import on_admin_dialog_start
+
+        mgr = make_manager()
+        mgr.event = MagicMock()
+        mgr.event.from_user = MagicMock(id=42)
+        mgr.done = AsyncMock()
+        with patch("bot.dialogs.admin_menu.ADMIN_IDS", [42]):
+            await on_admin_dialog_start({}, mgr)
+        mgr.done.assert_not_awaited()
+
     async def test_is_sql_backup_name(self):
         from bot.dialogs.admin_menu import _is_sql_backup_name
 

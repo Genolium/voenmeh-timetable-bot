@@ -750,7 +750,8 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     if isinstance(raw_schedules, dict):
         is_group_target = str(group).upper() in raw_schedules
     else:
-        is_group_target = ctx.dialog_data.get("user_type") != "teacher"
+        role = ctx.dialog_data.get("user_type")
+        is_group_target = role != "teacher"
     for offset in range(6):
         target = week_start + timedelta(days=offset)
         if is_group_target:

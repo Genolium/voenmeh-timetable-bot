@@ -116,6 +116,15 @@ async def test_refresh_schedule_cache_ttl_swallows_redis_errors():
     await refresh_schedule_cache_ttl(redis)
 
 
+@pytest.mark.asyncio
+async def test_refresh_schedule_cache_ttl_skips_missing_keys():
+    redis = AsyncMock()
+    redis.exists = AsyncMock(return_value=0)
+    redis.expire = AsyncMock()
+    await refresh_schedule_cache_ttl(redis)
+    redis.expire.assert_not_awaited()
+
+
 def test_decompress_rejects_pickle():
     import gzip
     import pickle
@@ -192,6 +201,25 @@ async def test_unchanged_refresh_ttl_and_last_update(monkeypatch):
     await monitor_schedule_changes(AsyncMock(), redis, MagicMock())
     sched.refresh_schedule_cache_ttl.assert_awaited()
     assert redis.set.await_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_unchanged_last_update_set_error_is_swallowed(monkeypatch):
+    from bot.scheduler import monitor_schedule_changes
+
+    redis = AsyncMock()
+    redis.get.return_value = b"hash"
+    mock_lock = AsyncMock()
+    mock_lock.__aenter__ = AsyncMock()
+    mock_lock.__aexit__ = AsyncMock()
+    redis.lock = MagicMock(return_value=mock_lock)
+    redis.set = AsyncMock(side_effect=RuntimeError("redis down"))
+
+    monkeypatch.setattr("bot.scheduler.fetch_and_parse_all_schedules", AsyncMock(return_value=NOT_MODIFIED))
+    monkeypatch.setattr("bot.scheduler.LAST_SCHEDULE_UPDATE_TS", MagicMock())
+    monkeypatch.setattr("bot.scheduler.refresh_schedule_cache_ttl", AsyncMock())
+
+    await monitor_schedule_changes(AsyncMock(), redis, MagicMock())
 
 
 @pytest.mark.asyncio
