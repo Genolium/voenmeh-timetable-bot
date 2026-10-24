@@ -220,7 +220,10 @@ def _compose_hostname_outside_docker(broker_url: str) -> bool:
     """True when URL points at a Compose service name but we are not in Docker."""
     from urllib.parse import urlparse
 
-    host = (urlparse(broker_url).hostname or "").lower()
+    try:
+        host = (urlparse(broker_url).hostname or "").lower()
+    except Exception:
+        return False
     if host not in {"rabbitmq", "redis", "db"}:
         return False
     return not Path("/.dockerenv").exists()

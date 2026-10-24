@@ -343,7 +343,7 @@ class TestScheduleViewBranches:
 
         with (
             patch("pathlib.Path.exists", return_value=True),
-            patch.object(schedule_view, "send_week_original_if_subscribed_task"),
+            patch("bot.tasks.send_week_original_if_subscribed_task"),
         ):
             await schedule_view.on_send_original_file(callback, None, dm)
 
@@ -442,7 +442,7 @@ class TestScheduleViewBranches:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=service),
-            patch.object(schedule_view, "send_week_original_if_subscribed_task"),
+            patch("bot.tasks.send_week_original_if_subscribed_task"),
         ):
             await schedule_view.on_send_original_file(callback, None, dm)
 

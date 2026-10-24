@@ -224,6 +224,14 @@ def test_compose_hostname_outside_docker_uses_stub_for_compose_hosts():
     assert tasks._compose_hostname_outside_docker("amqp://127.0.0.1:5672/") is False
 
 
+def test_compose_hostname_swallows_urlparse_errors(monkeypatch):
+    def _boom(_url):
+        raise RuntimeError("bad url")
+
+    monkeypatch.setattr("urllib.parse.urlparse", _boom)
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is False
+
+
 def test_compose_hostname_inside_docker_keeps_rabbitmq(monkeypatch):
     class FakePath:
         def __init__(self, _path):

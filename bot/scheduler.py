@@ -551,9 +551,13 @@ async def auto_backup(redis_client: Redis) -> None:
                     decompressed = gzip.decompress(schedules)
                     schedule_data = json.loads(decompressed.decode("utf-8"))
                     logger.info("Successfully decompressed schedule data using gzip+json")
-                except (gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError):
-                    schedule_data = json.loads(schedules.decode("utf-8"))
-                    logger.info("Successfully parsed schedule data as plain JSON")
+                except (OSError, gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError):
+                    try:
+                        schedule_data = json.loads(schedules.decode("utf-8"))
+                        logger.info("Successfully parsed schedule data as plain JSON")
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        schedule_data = json.loads(schedules.decode("utf-8", errors="replace"))
+                        logger.info("Successfully parsed schedule data as JSON with replacement")
 
                 # Write the decompressed data as readable JSON in backup_dir
                 ts = _dt.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")

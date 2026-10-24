@@ -277,6 +277,16 @@ class TestGetScheduleData:
         assert data["has_lessons"] is True
         assert data["schedule_text"]
 
+    async def test_redis_freshness_error_is_swallowed(self):
+        tm = make_timetable_manager()
+        tm.redis.get.side_effect = RuntimeError("redis down")
+        dm = sched_dm(
+            tm=tm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        data = await sv.get_schedule_data(dm)
+        assert data["schedule_freshness"] == ""
+
     async def test_error_day_info(self):
         tm = make_timetable_manager()
         tm.get_schedule_for_day.return_value = {"error": "no group"}
@@ -585,7 +595,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -603,7 +613,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -617,7 +627,7 @@ class TestOnSendOriginalFile:
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
             patch("pathlib.Path.exists", return_value=True),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -635,7 +645,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             send_task.send.side_effect = RuntimeError("queue down")
             await sv.on_send_original_file(callback, None, dm)
@@ -901,6 +911,60 @@ class TestMoreMenuAndOwnGroup:
         assert sv._when_no_lessons(data, None, None)
         assert not sv._when_has_lessons(data, None, None)
         assert not sv._when_show_schedule_text(data, None, None)
+
+    async def test_non_dict_schedules_falls_back_to_role(self):
+        tm = make_timetable_manager()
+        tm._schedules = object()
+        dm = sched_dm(
+            tm=tm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        await sv.get_schedule_data(dm)
+        tm.get_schedule_for_day.assert_awaited_once()
+
+    async def test_text_week_non_dict_schedules_uses_teacher_lookup(self):
+        tm = make_timetable_manager()
+        tm._schedules = object()
+        tm.get_teacher_schedule.return_value = None
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(
+            tm=tm,
+            udm=udm,
+            dialog_data={
+                DialogDataKeys.GROUP: "Иванов И.И.",
+                DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01",
+                "user_type": "teacher",
+            },
+        )
+        await sv.on_text_week_click(make_callback(), MagicMock(), dm)
+        assert tm.get_teacher_schedule.await_count == 6
+
+    async def test_help_feedback_and_report_error(self):
+        dm = sched_dm(dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"})
+        await sv.on_help_click(make_callback(), MagicMock(), dm)
+        await sv.on_feedback_click(make_callback(), MagicMock(), dm)
+        await sv.on_report_error_click(make_callback(), MagicMock(), dm)
+        assert dm.start.await_count == 3
+
+    async def test_check_subscription_button_delegates(self):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = MagicMock(status="member")
+        dm = sched_dm(
+            bot=bot,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        with patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"), patch("pathlib.Path.exists", return_value=True):
+            await sv.on_check_subscription_button(make_callback(), MagicMock(), dm)
+        bot.send_document.assert_awaited_once()
+
+    async def test_my_group_answer_error_is_swallowed(self):
+        udm = AsyncMock()
+        udm.get_user_group.return_value = None
+        dm = sched_dm(udm=udm)
+        callback = make_callback()
+        callback.answer.side_effect = RuntimeError("toast failed")
+        await sv.on_my_group_click(callback, MagicMock(), dm)
 
 
 class TestDeadShims:

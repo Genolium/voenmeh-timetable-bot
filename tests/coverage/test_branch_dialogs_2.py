@@ -220,8 +220,9 @@ class TestMainMenuExtraBranches:
 
         await main_menu.on_group_entered(message, MagicMock(), dm)
 
-        message.answer.assert_awaited_once()
-        dm.switch_to.assert_not_awaited()
+        assert dm.dialog_data["group_suggestions"]
+        dm.switch_to.assert_awaited_with(MainMenu.enter_group)
+        message.answer.assert_not_awaited()
 
     async def test_branch_dialogs_2_main_menu_group_entered_without_suggestion(self):
         """Совпадений нет — сообщение о ненайденной группе."""

@@ -112,9 +112,7 @@ def save_fallback_schedule(data: dict) -> bool:
         return False
 
 
-async def fetch_and_parse_from_voenmeh_su(
-    session: aiohttp.ClientSession | None = None, force: bool = False
-) -> ParseResult:
+async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None = None, force: bool = False) -> ParseResult:
     """
     Загружает и парсит актуальное расписание с официального API https://voenmeh.su.
 
@@ -555,9 +553,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                 pass
 
 
-async def fetch_and_parse_all_schedules(
-    session: aiohttp.ClientSession | None = None, force: bool = False
-) -> ParseResult:
+async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = None, force: bool = False) -> ParseResult:
     """
     Асинхронно загружает и парсит актуальное расписание.
 
