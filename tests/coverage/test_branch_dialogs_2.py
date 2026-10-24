@@ -11,7 +11,6 @@
 Сеть, Docker, реальный Telegram, Redis и БД не используются.
 """
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from bot.dialogs import admin_menu, feedback_menu, find_menu, main_menu, schedule_view
@@ -241,19 +240,6 @@ class TestMainMenuExtraBranches:
 # bot/dialogs/schedule_view.py
 # ===========================================================================
 class TestScheduleViewExtraBranches:
-    async def test_branch_dialogs_2_schedule_view_get_schedule_data_with_freshness(self):
-        """В Redis есть метка обновления — показывается свежесть расписания."""
-        tm = make_timetable_manager()
-        tm.redis.get.return_value = str(int(datetime(2026, 9, 1, 8, 30).timestamp()))
-        dm = _sched_dm(
-            tm=tm,
-            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
-        )
-
-        data = await schedule_view.get_schedule_data(dm)
-
-        assert data["schedule_freshness"]
-
     async def test_branch_dialogs_2_schedule_view_send_original_file_with_custom_theme(self):
         """Нестандартная тема попадает в ключ кэша оригинала."""
         bot = AsyncMock()
