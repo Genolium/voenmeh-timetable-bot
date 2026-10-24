@@ -53,11 +53,18 @@ def test_postgres_migrations_apply_to_head():
         assert result.returncode == 0, result.stderr
 
         import psycopg2
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        cfg = Config(str(REPO_ROOT / "alembic.ini"))
+        cfg.set_main_option("script_location", str(REPO_ROOT / "migrations"))
+        expected_heads = set(ScriptDirectory.from_config(cfg).get_heads())
 
         with psycopg2.connect(database_url.replace("postgresql+psycopg2://", "postgresql://")) as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT version_num FROM alembic_version")
-                assert cur.fetchone()[0] == "20261021_reminder_20"
+                applied = {row[0] for row in cur.fetchall()}
+                assert applied == expected_heads
 
 
 @pytest.mark.asyncio
