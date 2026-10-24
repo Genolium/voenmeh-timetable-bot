@@ -16,6 +16,7 @@ from bot.tasks import (
     log,
     rate_limiter,
     send_lesson_reminder_task,
+    send_media_task,
     send_message_task,
     send_week_original_if_subscribed_task,
 )
@@ -60,6 +61,11 @@ class TestTasks:
         """Тест успешного копирования сообщения через задачу."""
         with patch("bot.tasks.run_async") as mock_run:
             copy_message_task(123456789, 987654321, 1)
+            mock_run.assert_called_once()
+
+    def test_send_media_task_success(self, mock_bot):
+        with patch("bot.tasks.run_async") as mock_run:
+            send_media_task(123456789, "photo", "file-id", "<b>hi</b>")
             mock_run.assert_called_once()
 
     def test_send_lesson_reminder_task_success(self):
@@ -331,6 +337,7 @@ class TestTasks:
         """Тест что функции правильно декорированы как dramatiq actors."""
         assert hasattr(send_message_task, "send")
         assert hasattr(copy_message_task, "send")
+        assert hasattr(send_media_task, "send")
         assert hasattr(send_lesson_reminder_task, "send")
         assert hasattr(generate_week_image_task, "send")
         assert hasattr(send_week_original_if_subscribed_task, "send")

@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import ContentType
 
 import bot.dialogs.admin_menu as admin_menu
@@ -17,8 +18,10 @@ from bot.dialogs.admin_menu import (
     active_generations,
     admin_dialog,
     build_segment_users,
+    extract_broadcast_payload,
     get_backup_menu_data,
     get_backup_upload_data,
+    get_broadcast_confirm_data,
     get_preview_data,
     get_semester_settings_data,
     get_stats_data,
@@ -31,6 +34,7 @@ from bot.dialogs.admin_menu import (
     on_cancel_generation,
     on_check_graduated_groups,
     on_clear_cache,
+    on_confirm_broadcast_send,
     on_confirm_segment_send,
     on_delete_sub_filter_channel,
     on_edit_fall_semester,
@@ -54,6 +58,7 @@ from bot.dialogs.admin_menu import (
     on_toggle_sub_filter,
     on_user_id_input,
     render_template,
+    send_broadcast_preview,
 )
 from bot.dialogs.states import Admin
 
@@ -88,6 +93,14 @@ def make_message(text="hello", content_type=ContentType.TEXT, user_id=1):
     m.content_type = content_type
     m.answer = AsyncMock()
     m.reply = AsyncMock()
+    m.answer_photo = AsyncMock()
+    m.answer_video = AsyncMock()
+    m.answer_animation = AsyncMock()
+    m.answer_document = AsyncMock()
+    m.answer_audio = AsyncMock()
+    m.answer_voice = AsyncMock()
+    m.answer_video_note = AsyncMock()
+    m.answer_sticker = AsyncMock()
     m.from_user = MagicMock()
     m.from_user.id = user_id
     m.chat = MagicMock()
@@ -96,6 +109,14 @@ def make_message(text="hello", content_type=ContentType.TEXT, user_id=1):
     m.bot = MagicMock()
     m.bot.download = AsyncMock()
     m.document = None
+    m.photo = None
+    m.video = None
+    m.animation = None
+    m.audio = None
+    m.voice = None
+    m.video_note = None
+    m.sticker = None
+    m.caption = None
     return m
 
 
@@ -1174,82 +1195,359 @@ class TestStats:
 # broadcast
 # ---------------------------------------------------------------------------
 class TestBroadcast:
-    async def test_on_broadcast_received_text_two_args(self):
+    def test_extract_payload_text(self):
+        msg = make_message(text="<b>Hi</b>", content_type=ContentType.TEXT)
+        assert extract_broadcast_payload(msg) == {"kind": "text", "text": "<b>Hi</b>"}
+
+    def test_extract_payload_photo(self):
+        msg = make_message(content_type=ContentType.PHOTO)
+        msg.photo = [MagicMock(file_id="small"), MagicMock(file_id="big")]
+        msg.caption = "<b>promo</b>"
+        assert extract_broadcast_payload(msg) == {
+            "kind": "photo",
+            "file_id": "big",
+            "caption": "<b>promo</b>",
+        }
+
+    @pytest.mark.parametrize(
+        "content_type,attr,kind",
+        [
+            (ContentType.VIDEO, "video", "video"),
+            (ContentType.ANIMATION, "animation", "animation"),
+            (ContentType.DOCUMENT, "document", "document"),
+            (ContentType.AUDIO, "audio", "audio"),
+            (ContentType.VOICE, "voice", "voice"),
+        ],
+    )
+    def test_extract_payload_caption_media(self, content_type, attr, kind):
+        msg = make_message(content_type=content_type)
+        setattr(msg, attr, MagicMock(file_id="fid"))
+        msg.caption = "<i>cap</i>"
+        assert extract_broadcast_payload(msg) == {"kind": kind, "file_id": "fid", "caption": "<i>cap</i>"}
+
+    def test_extract_payload_video_note(self):
+        msg = make_message(content_type=ContentType.VIDEO_NOTE)
+        msg.video_note = MagicMock(file_id="vn")
+        assert extract_broadcast_payload(msg) == {"kind": "video_note", "file_id": "vn"}
+
+    def test_extract_payload_sticker(self):
+        msg = make_message(content_type=ContentType.STICKER)
+        msg.sticker = MagicMock(file_id="st")
+        assert extract_broadcast_payload(msg) == {"kind": "sticker", "file_id": "st"}
+
+    def test_extract_payload_copy_fallback(self):
+        msg = make_message(content_type=ContentType.PHOTO)
+        assert extract_broadcast_payload(msg) == {
+            "kind": "copy",
+            "from_chat_id": 555,
+            "message_id": 777,
+        }
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            ContentType.VIDEO,
+            ContentType.ANIMATION,
+            ContentType.DOCUMENT,
+            ContentType.AUDIO,
+            ContentType.VOICE,
+            ContentType.VIDEO_NOTE,
+            ContentType.STICKER,
+        ],
+    )
+    def test_extract_payload_missing_file_falls_back(self, content_type):
+        msg = make_message(content_type=content_type)
+        assert extract_broadcast_payload(msg)["kind"] == "copy"
+
+    async def test_send_broadcast_preview_text(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "text", "text": "<b>Hi</b>"})
+        msg.reply.assert_awaited_once_with("<b>Hi</b>", parse_mode="HTML")
+
+    async def test_send_broadcast_preview_empty_text(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "text", "text": ""})
+        msg.reply.assert_awaited_once_with("(пусто)", parse_mode="HTML")
+
+    async def test_send_broadcast_preview_copy(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "copy"})
+        assert "скопировано как есть" in msg.reply.await_args[0][0]
+
+    async def test_send_broadcast_preview_unknown(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "weird"})
+        assert "Неизвестный тип" in msg.reply.await_args[0][0]
+
+    async def test_send_broadcast_preview_missing_kind(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {})
+        assert "Неизвестный тип" in msg.reply.await_args[0][0]
+
+    async def test_send_broadcast_preview_photo_with_caption(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "photo", "file_id": "p1", "caption": "<b>x</b>"})
+        msg.answer_photo.assert_awaited_once_with("p1", parse_mode="HTML", caption="<b>x</b>")
+
+    async def test_send_broadcast_preview_photo_without_caption(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "photo", "file_id": "p1", "caption": ""})
+        msg.answer_photo.assert_awaited_once_with("p1", parse_mode="HTML")
+
+    async def test_send_broadcast_preview_sticker(self):
+        msg = make_message()
+        await send_broadcast_preview(msg, {"kind": "sticker", "file_id": "st"})
+        msg.answer_sticker.assert_awaited_once_with("st")
+
+    async def test_get_broadcast_confirm_data(self):
+        mgr = make_manager(
+            dialog_data={
+                "broadcast_payload": {"kind": "photo"},
+                "broadcast_user_ids": [1, 2, 3],
+            }
+        )
+        data = await get_broadcast_confirm_data(mgr)
+        assert data["recipient_count"] == 3
+        assert "фото" in data["kind_label"]
+
+    async def test_get_broadcast_confirm_data_defaults(self):
+        mgr = make_manager(dialog_data={})
+        data = await get_broadcast_confirm_data(mgr)
+        assert data["recipient_count"] == 0
+        assert data["kind_label"] == "текст (HTML)"
+
+    async def test_get_broadcast_confirm_data_unknown_kind(self):
+        mgr = make_manager(dialog_data={"broadcast_payload": {"kind": "weird"}})
+        data = await get_broadcast_confirm_data(mgr)
+        assert data["kind_label"] == "weird"
+
+    async def test_on_broadcast_received_text_two_args_does_not_send(self):
         msg = make_message(text="Hi {user_id}", content_type=ContentType.TEXT)
-        bot = MagicMock()
-        bot.send_message = AsyncMock()
-        udm = make_udm(
-            get_all_user_ids=AsyncMock(return_value=list(range(51))),
-            get_full_user_info=AsyncMock(return_value=make_user_info()),
-        )
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
-        with patch("bot.dialogs.admin_menu.send_message_task") as task:
-            await on_broadcast_received(msg, mgr)
-            await drain_background_tasks()
-        assert task.send.call_count == 51
-        assert "завершена" in bot.send_message.await_args[0][1]
-        mgr.switch_to.assert_awaited_once_with(Admin.menu)
-
-    async def test_on_broadcast_received_text_three_args(self):
-        msg = make_message(text="Hi", content_type=ContentType.TEXT)
-        bot = MagicMock()
-        bot.send_message = AsyncMock()
-        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
-        with patch("bot.dialogs.admin_menu.send_message_task"):
-            await on_broadcast_received(msg, MagicMock(), mgr)
-            await drain_background_tasks()
-        msg.reply.assert_awaited_once()
-
-    async def test_on_broadcast_received_kwargs_fallback(self):
-        msg = make_message(text="Hi", content_type=ContentType.TEXT)
-        bot = MagicMock()
-        bot.send_message = AsyncMock()
-        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
-        with patch("bot.dialogs.admin_menu.send_message_task"):
-            await on_broadcast_received(message=msg, manager=mgr)
-            await drain_background_tasks()
-        msg.reply.assert_awaited_once()
-
-    async def test_on_broadcast_received_text_skips_missing_info(self):
-        msg = make_message(text="Hi", content_type=ContentType.TEXT)
-        bot = MagicMock()
-        bot.send_message = AsyncMock()
-        udm = make_udm(
-            get_all_user_ids=AsyncMock(return_value=[1, 2]),
-            get_full_user_info=AsyncMock(return_value=None),
-        )
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=list(range(51))))
+        mgr = make_manager({"user_data_manager": udm})
         with patch("bot.dialogs.admin_menu.send_message_task") as task:
             await on_broadcast_received(msg, mgr)
             await drain_background_tasks()
         task.send.assert_not_called()
-        assert "Поставлено задач: 0" in bot.send_message.await_args[0][1]
+        msg.reply.assert_awaited_once()
+        assert mgr.dialog_data["broadcast_payload"]["text"] == "Hi {user_id}"
+        assert mgr.dialog_data["broadcast_user_ids"] == list(range(51))
+        mgr.switch_to.assert_awaited_once_with(Admin.confirm_send)
 
-    async def test_on_broadcast_received_media(self):
+    async def test_on_broadcast_received_text_three_args(self):
+        msg = make_message(text="Hi", content_type=ContentType.TEXT)
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
+        mgr = make_manager({"user_data_manager": udm})
+        await on_broadcast_received(msg, MagicMock(), mgr)
+        msg.reply.assert_awaited_once()
+        mgr.switch_to.assert_awaited_once_with(Admin.confirm_send)
+
+    async def test_on_broadcast_received_kwargs_fallback(self):
+        msg = make_message(text="Hi", content_type=ContentType.TEXT)
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
+        mgr = make_manager({"user_data_manager": udm})
+        await on_broadcast_received(message=msg, manager=mgr)
+        msg.reply.assert_awaited_once()
+        mgr.switch_to.assert_awaited_once_with(Admin.confirm_send)
+
+    async def test_on_broadcast_received_photo_preview(self):
         msg = make_message(content_type=ContentType.PHOTO)
+        msg.photo = [MagicMock(file_id="photo-id")]
+        msg.caption = "<b>SPARK</b>"
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1, 2]))
+        mgr = make_manager({"user_data_manager": udm})
+        with patch("bot.dialogs.admin_menu.copy_message_task") as copy_task:
+            await on_broadcast_received(msg, mgr)
+        copy_task.send.assert_not_called()
+        msg.answer_photo.assert_awaited_once_with("photo-id", parse_mode="HTML", caption="<b>SPARK</b>")
+        mgr.switch_to.assert_awaited_once_with(Admin.confirm_send)
+
+    async def test_on_broadcast_received_copy_fallback_preview(self):
+        msg = make_message(content_type=ContentType.PHOTO)
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
+        mgr = make_manager({"user_data_manager": udm})
+        await on_broadcast_received(msg, mgr)
+        assert "скопировано как есть" in msg.reply.await_args[0][0]
+        mgr.switch_to.assert_awaited_once_with(Admin.confirm_send)
+
+    async def test_on_broadcast_received_html_error(self):
+        msg = make_message(text="<b>broken", content_type=ContentType.TEXT)
+        msg.reply = AsyncMock(side_effect=[TelegramBadRequest(method=MagicMock(), message="can't parse"), None])
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
+        mgr = make_manager({"user_data_manager": udm})
+        await on_broadcast_received(msg, mgr)
+        mgr.switch_to.assert_not_awaited()
+        assert msg.reply.await_count == 2
+        assert "не разобрал HTML" in msg.reply.await_args_list[1][0][0]
+
+    async def test_on_broadcast_received_preview_generic_error(self):
+        msg = make_message(text="Hi", content_type=ContentType.TEXT)
+        msg.reply = AsyncMock(side_effect=[RuntimeError("down"), None])
+        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1]))
+        mgr = make_manager({"user_data_manager": udm})
+        await on_broadcast_received(msg, mgr)
+        mgr.switch_to.assert_not_awaited()
+        assert "Не удалось показать превью" in msg.reply.await_args_list[1][0][0]
+
+    async def test_on_confirm_broadcast_send_no_payload(self):
+        cb = make_callback(user_id=99)
+        mgr = make_manager({"bot": MagicMock()}, dialog_data={})
+        await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+        cb.answer.assert_awaited_once()
+        assert cb.answer.await_args.kwargs.get("show_alert") is True
+        mgr.switch_to.assert_awaited_once_with(Admin.menu)
+
+    async def test_on_confirm_broadcast_send_text(self):
+        cb = make_callback(user_id=99)
         bot = MagicMock()
         bot.send_message = AsyncMock()
-        udm = make_udm(get_all_user_ids=AsyncMock(return_value=list(range(51))))
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
-        with patch("bot.dialogs.admin_menu.copy_message_task") as task:
-            await on_broadcast_received(msg, mgr)
+        udm = make_udm(get_full_user_info=AsyncMock(return_value=make_user_info()))
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": udm},
+            dialog_data={
+                "broadcast_payload": {"kind": "text", "text": "Hi {user_id}"},
+                "broadcast_user_ids": list(range(51)),
+            },
+        )
+        with patch("bot.dialogs.admin_menu.send_message_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
             await drain_background_tasks()
         assert task.send.call_count == 51
-        assert "Медиа-рассылка завершена" in bot.send_message.await_args[0][1]
+        assert "Поставлено задач: 51" in bot.send_message.await_args[0][1]
+        mgr.switch_to.assert_awaited_once_with(Admin.menu)
 
-    async def test_on_broadcast_received_media_error(self):
-        msg = make_message(content_type=ContentType.PHOTO)
+    async def test_on_confirm_broadcast_send_text_skips_missing_info(self):
+        cb = make_callback(user_id=99)
         bot = MagicMock()
         bot.send_message = AsyncMock()
-        udm = make_udm(get_all_user_ids=AsyncMock(return_value=[1, 2]))
-        mgr = make_manager({"bot": bot, "user_data_manager": udm})
+        udm = make_udm(get_full_user_info=AsyncMock(return_value=None))
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": udm},
+            dialog_data={
+                "broadcast_payload": {"kind": "text", "text": "Hi"},
+                "broadcast_user_ids": [1, 2],
+            },
+        )
+        with patch("bot.dialogs.admin_menu.send_message_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        task.send.assert_not_called()
+        assert "Поставлено задач: 0" in bot.send_message.await_args[0][1]
+
+    async def test_on_confirm_broadcast_send_photo(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        udm = make_udm(get_full_user_info=AsyncMock(return_value=make_user_info()))
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": udm},
+            dialog_data={
+                "broadcast_payload": {
+                    "kind": "photo",
+                    "file_id": "p1",
+                    "caption": "<b>Hi {group}</b>",
+                },
+                "broadcast_user_ids": list(range(51)),
+            },
+        )
+        with patch("bot.dialogs.admin_menu.send_media_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        assert task.send.call_count == 51
+        task.send.assert_any_call(0, "photo", "p1", "<b>Hi О7</b>")
+        assert "Поставлено задач: 51" in bot.send_message.await_args[0][1]
+
+    async def test_on_confirm_broadcast_send_photo_no_caption(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": make_udm()},
+            dialog_data={
+                "broadcast_payload": {"kind": "photo", "file_id": "p1", "caption": ""},
+                "broadcast_user_ids": [7],
+            },
+        )
+        with patch("bot.dialogs.admin_menu.send_media_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        task.send.assert_called_once_with(7, "photo", "p1", "")
+
+    async def test_on_confirm_broadcast_send_photo_keeps_caption_without_info(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        udm = make_udm(get_full_user_info=AsyncMock(return_value=None))
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": udm},
+            dialog_data={
+                "broadcast_payload": {"kind": "photo", "file_id": "p1", "caption": "<b>Hi {group}</b>"},
+                "broadcast_user_ids": [7],
+            },
+        )
+        with patch("bot.dialogs.admin_menu.send_media_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        task.send.assert_called_once_with(7, "photo", "p1", "<b>Hi {group}</b>")
+
+    async def test_on_confirm_broadcast_send_photo_missing_file(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": make_udm()},
+            dialog_data={"broadcast_payload": {"kind": "photo"}, "broadcast_user_ids": [1]},
+        )
+        with patch("bot.dialogs.admin_menu.send_media_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        task.send.assert_not_called()
+
+    async def test_on_confirm_broadcast_send_copy(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": make_udm()},
+            dialog_data={
+                "broadcast_payload": {"kind": "copy", "from_chat_id": 5, "message_id": 6},
+                "broadcast_user_ids": list(range(51)),
+            },
+        )
+        with patch("bot.dialogs.admin_menu.copy_message_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        assert task.send.call_count == 51
+
+    async def test_on_confirm_broadcast_send_copy_missing_ids(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": make_udm()},
+            dialog_data={"broadcast_payload": {"kind": "copy"}, "broadcast_user_ids": [1]},
+        )
+        with patch("bot.dialogs.admin_menu.copy_message_task") as task:
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
+            await drain_background_tasks()
+        task.send.assert_not_called()
+
+    async def test_on_confirm_broadcast_send_error(self):
+        cb = make_callback(user_id=99)
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        mgr = make_manager(
+            {"bot": bot, "user_data_manager": make_udm()},
+            dialog_data={
+                "broadcast_payload": {"kind": "copy", "from_chat_id": 5, "message_id": 6},
+                "broadcast_user_ids": [1, 2],
+            },
+        )
         with patch("bot.dialogs.admin_menu.copy_message_task") as task:
             task.send.side_effect = RuntimeError("queue down")
-            await on_broadcast_received(msg, mgr)
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr)
             await drain_background_tasks()
-        assert "Ошибка при медиа-рассылке" in bot.send_message.await_args[0][1]
+        assert "Ошибка при рассылке" in bot.send_message.await_args[0][1]
 
 
 # ---------------------------------------------------------------------------

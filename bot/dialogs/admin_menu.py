@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
@@ -17,7 +18,7 @@ from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 from bot.scheduler import evening_broadcast, morning_summary_broadcast
-from bot.tasks import copy_message_task, send_message_task
+from bot.tasks import copy_message_task, send_media_task, send_message_task
 from bot.text_formatters import generate_reminder_text
 from core.config import ADMIN_IDS, MOSCOW_TZ
 from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
@@ -854,78 +855,197 @@ async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: 
         await callback.message.answer("❌ Не удалось сгенерировать график. Проверьте логи.")
 
 
+_BROADCAST_KIND_LABELS = {
+    "text": "текст (HTML)",
+    "photo": "фото с HTML-подписью",
+    "video": "видео с HTML-подписью",
+    "animation": "GIF с HTML-подписью",
+    "document": "документ с HTML-подписью",
+    "audio": "аудио с HTML-подписью",
+    "voice": "голосовое",
+    "video_note": "кружок",
+    "sticker": "стикер",
+    "copy": "медиа как есть (HTML не разбирается)",
+}
+
+_BROADCAST_PREVIEW_METHODS = {
+    "photo": "answer_photo",
+    "video": "answer_video",
+    "animation": "answer_animation",
+    "document": "answer_document",
+    "audio": "answer_audio",
+    "voice": "answer_voice",
+    "video_note": "answer_video_note",
+    "sticker": "answer_sticker",
+}
+
+_BROADCAST_NO_CAPTION_KINDS = {"sticker", "video_note"}
+
+
+def extract_broadcast_payload(message: Message) -> dict[str, Any]:
+    """Сериализует сообщение админа для повторной HTML-отправки, а не copy_message."""
+    caption = message.caption or ""
+    content_type = message.content_type
+    if content_type == ContentType.TEXT:
+        return {"kind": "text", "text": message.text or ""}
+    if content_type == ContentType.PHOTO and message.photo:
+        return {"kind": "photo", "file_id": message.photo[-1].file_id, "caption": caption}
+    if content_type == ContentType.VIDEO and getattr(message, "video", None):
+        return {"kind": "video", "file_id": message.video.file_id, "caption": caption}
+    if content_type == ContentType.ANIMATION and getattr(message, "animation", None):
+        return {"kind": "animation", "file_id": message.animation.file_id, "caption": caption}
+    if content_type == ContentType.DOCUMENT and getattr(message, "document", None):
+        return {"kind": "document", "file_id": message.document.file_id, "caption": caption}
+    if content_type == ContentType.AUDIO and getattr(message, "audio", None):
+        return {"kind": "audio", "file_id": message.audio.file_id, "caption": caption}
+    if content_type == ContentType.VOICE and getattr(message, "voice", None):
+        return {"kind": "voice", "file_id": message.voice.file_id, "caption": caption}
+    if content_type == ContentType.VIDEO_NOTE and getattr(message, "video_note", None):
+        return {"kind": "video_note", "file_id": message.video_note.file_id}
+    if content_type == ContentType.STICKER and getattr(message, "sticker", None):
+        return {"kind": "sticker", "file_id": message.sticker.file_id}
+    return {
+        "kind": "copy",
+        "from_chat_id": message.chat.id,
+        "message_id": message.message_id,
+    }
+
+
+async def send_broadcast_preview(message: Message, payload: dict[str, Any]) -> None:
+    """Показывает админу, как Telegram разберёт HTML, до подтверждения."""
+    kind = payload.get("kind")
+    if kind == "text":
+        await message.reply(payload.get("text") or "(пусто)", parse_mode="HTML")
+        return
+    if kind == "copy":
+        await message.reply("📎 Это сообщение будет скопировано как есть. HTML-теги в нём не разберутся.")
+        return
+    method_name = _BROADCAST_PREVIEW_METHODS.get(kind or "")
+    if not method_name:
+        await message.reply("📎 Неизвестный тип медиа — будет скопировано как есть.")
+        return
+    method = getattr(message, method_name)
+    file_id = payload["file_id"]
+    if kind in _BROADCAST_NO_CAPTION_KINDS:
+        await method(file_id)
+        return
+    caption = payload.get("caption") or ""
+    kwargs: dict[str, Any] = {"parse_mode": "HTML"}
+    if caption:
+        kwargs["caption"] = caption
+    await method(file_id, **kwargs)
+
+
+def _parse_broadcast_handler_args(*args, **kwargs):
+    if len(args) == 2:
+        return args[0], args[1]
+    if len(args) == 3:
+        return args[0], args[2]
+    return kwargs.get("message"), kwargs.get("manager")
+
+
 async def on_broadcast_received(*args, **kwargs):
     # Support both aiogram-dialog callback signature (message, message_input, manager)
     # and test signature (message, manager)
-    if len(args) == 2:
-        message, manager = args
-    elif len(args) == 3:
-        message, _message_input, manager = args
-    else:
-        # Fallback for unexpected signature
-        message = kwargs.get("message")
-        manager = kwargs.get("manager")
-
-    bot: Bot = manager.middleware_data.get("bot")
-    admin_id = message.from_user.id
+    message, manager = _parse_broadcast_handler_args(*args, **kwargs)
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    payload = extract_broadcast_payload(message)
+    all_users = await user_data_manager.get_all_user_ids()
+    manager.dialog_data["broadcast_payload"] = payload
+    manager.dialog_data["broadcast_user_ids"] = all_users
 
-    if message.content_type == ContentType.TEXT:
-        template = message.text
-        # Получаем всех пользователей
-        all_users = await user_data_manager.get_all_user_ids()
-        await message.reply("🚀 Рассылка поставлена в очередь...")
+    try:
+        await send_broadcast_preview(message, payload)
+    except TelegramBadRequest as e:
+        await message.reply(
+            "❌ Telegram не разобрал HTML. Сообщение никому не отправлено.\n"
+            f"<code>{html.escape(str(e))}</code>\n\n"
+            "Допустимы теги: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
+            "<code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, "
+            '<code>&lt;pre&gt;</code>, <code>&lt;a href="https://..."&gt;</code>.',
+            parse_mode="HTML",
+        )
+        return
+    except Exception as e:
+        logger.error("Broadcast preview failed: %s", e)
+        await message.reply(f"❌ Не удалось показать превью: {e}\nРассылка не запущена.")
+        return
 
-        # Запускаем постановку задач в фоне, чтобы не блокировать event loop
-        async def _process_broadcast():
-            sent_count = 0
-            for user_id in all_users:
-                user_info = await user_data_manager.get_full_user_info(user_id)
-                if not user_info:
-                    continue
-                text = render_template(template, user_info)
-                send_message_task.send(user_id, text)
-                TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
-                sent_count += 1
+    await manager.switch_to(Admin.confirm_send)
 
-                # Периодически уступаем управление event loop
-                if sent_count % 50 == 0:
-                    await asyncio.sleep(0)
 
-            await bot.send_message(admin_id, f"✅ Рассылка завершена. Поставлено задач: {sent_count}")
+async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
+    payload = dialog_manager.dialog_data.get("broadcast_payload") or {}
+    user_ids = dialog_manager.dialog_data.get("broadcast_user_ids") or []
+    kind = payload.get("kind") or "text"
+    return {
+        "recipient_count": len(user_ids),
+        "kind_label": _BROADCAST_KIND_LABELS.get(kind, kind),
+    }
 
-        # Запускаем в фоне
-        asyncio.create_task(_process_broadcast())
 
-        # Сразу возвращаемся в меню
+async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    bot: Bot = manager.middleware_data.get("bot")
+    admin_id = callback.from_user.id
+    udm: UserDataManager = manager.middleware_data.get("user_data_manager")
+    payload = manager.dialog_data.get("broadcast_payload") or {}
+    user_ids = manager.dialog_data.get("broadcast_user_ids") or []
+
+    if not payload:
+        await callback.answer("Нет данных рассылки", show_alert=True)
         await manager.switch_to(Admin.menu)
-    else:
-        # Обработка медиа: Ставим задачи на копирование сообщения всем пользователям
-        all_users = await user_data_manager.get_all_user_ids()
-        await message.reply(f"🚀 Начинаю постановку задач на медиа-рассылку для {len(all_users)} пользователей...")
+        return
 
-        # Запускаем постановку задач в фоне, чтобы не блокировать event loop
-        async def _process_media_broadcast():
-            try:
-                count = 0
-                for user_id in all_users:
-                    copy_message_task.send(user_id, message.chat.id, message.message_id)
-                    TASKS_SENT_TO_QUEUE.labels(actor_name="copy_message_task").inc()
-                    count += 1
+    await callback.answer("🚀 Рассылка поставлена в очередь...")
 
-                    # Периодически уступаем управление event loop
-                    if count % 50 == 0:
+    async def _process_broadcast():
+        sent_count = 0
+        kind = payload.get("kind")
+        try:
+            if kind == "text":
+                template = payload.get("text") or ""
+                for user_id in user_ids:
+                    user_info = await udm.get_full_user_info(user_id)
+                    if not user_info:
+                        continue
+                    text = render_template(template, user_info)
+                    send_message_task.send(user_id, text)
+                    TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
+                    sent_count += 1
+                    if sent_count % 50 == 0:
                         await asyncio.sleep(0)
+            elif kind == "copy":
+                from_chat_id = payload.get("from_chat_id")
+                message_id = payload.get("message_id")
+                if from_chat_id and message_id:
+                    for user_id in user_ids:
+                        copy_message_task.send(user_id, from_chat_id, message_id)
+                        TASKS_SENT_TO_QUEUE.labels(actor_name="copy_message_task").inc()
+                        sent_count += 1
+                        if sent_count % 50 == 0:
+                            await asyncio.sleep(0)
+            else:
+                file_id = payload.get("file_id")
+                caption_template = payload.get("caption") or ""
+                if file_id:
+                    for user_id in user_ids:
+                        caption = caption_template
+                        if caption:
+                            user_info = await udm.get_full_user_info(user_id)
+                            if user_info:
+                                caption = render_template(caption, user_info)
+                        send_media_task.send(user_id, kind, file_id, caption)
+                        TASKS_SENT_TO_QUEUE.labels(actor_name="send_media_task").inc()
+                        sent_count += 1
+                        if sent_count % 50 == 0:
+                            await asyncio.sleep(0)
 
-                await bot.send_message(admin_id, f"✅ Медиа-рассылка завершена! Поставлено задач: {count}")
-            except Exception as e:
-                await bot.send_message(admin_id, f"❌ Ошибка при медиа-рассылке: {e}")
+            await bot.send_message(admin_id, f"✅ Рассылка запущена. Поставлено задач: {sent_count}")
+        except Exception as e:
+            await bot.send_message(admin_id, f"❌ Ошибка при рассылке: {e}")
 
-        # Запускаем в фоне
-        asyncio.create_task(_process_media_broadcast())
-
-        # Сразу возвращаемся в меню
-        await manager.switch_to(Admin.menu)
+    asyncio.create_task(_process_broadcast())
+    await manager.switch_to(Admin.menu)
 
 
 async def on_user_id_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
@@ -1311,11 +1431,35 @@ admin_dialog = Dialog(
     ),
     Window(
         Const(
-            "Введите сообщение для рассылки. Можно отправить текст, фото, видео или стикер. Для текста поддерживаются плейсхолдеры: {user_id}, {username}, {group}"
+            "Введите сообщение для рассылки: текст, фото, видео или документ.\n\n"
+            "Текст и подписи уходят как Telegram HTML: "
+            "<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, "
+            '<code>&lt;a href="https://..."&gt;</code>.\n'
+            "Плейсхолдеры: {user_id}, {username}, {group}.\n\n"
+            "Перед отправкой будет превью и подтверждение."
         ),
         MessageInput(on_broadcast_received, content_types=[ContentType.ANY]),
         SwitchTo(Const("◀️ В админ-панель"), id="broadcast_back", state=Admin.menu),
         state=Admin.broadcast,
+        parse_mode="HTML",
+    ),
+    Window(
+        Format(
+            "⚠️ <b>Подтверждение рассылки</b>\n\n"
+            "Тип: {kind_label}\n"
+            "Получателей: <b>{recipient_count}</b>\n\n"
+            "Превью уже отправлено сообщением выше — так это увидят пользователи.\n"
+            "Если HTML выглядит правильно, нажмите «Отправить всем»."
+        ),
+        Button(
+            Const("✅ Отправить всем"),
+            id="confirm_broadcast_send",
+            on_click=on_confirm_broadcast_send,
+        ),
+        SwitchTo(Const("❌ Отмена"), id="cancel_broadcast_send", state=Admin.broadcast_menu),
+        getter=get_broadcast_confirm_data,
+        state=Admin.confirm_send,
+        parse_mode="HTML",
     ),
     Window(
         Const("✏️ Коррекция расписания\n\n" "Введите: группа|YYYY-MM-DD|HH:MM-HH:MM|предмет|аудитория|тип"),
