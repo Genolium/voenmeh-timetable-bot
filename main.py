@@ -1,11 +1,12 @@
 import asyncio
+import html
 import logging
 import os
 import sys
 import time
 from typing import Any
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandObject, CommandStart
@@ -52,6 +53,7 @@ from core.alert_webhook import run_alert_webhook_server
 from core.business_alerts import start_business_monitoring
 
 # --- Импорты ядра ---
+from core.bot_identity import set_bot_username
 from core.config import ADMIN_IDS, settings
 from core.image_generator import shutdown_image_generator
 from core.manager import TimetableManager
@@ -84,9 +86,57 @@ def setup_logging() -> TelemetryHandles | None:
     return telemetry_handles
 
 
+async def configure_bot_profile(bot: Bot) -> None:
+    """Cache live @username and set Telegram profile descriptions."""
+    try:
+        me = await bot.get_me()
+        set_bot_username(getattr(me, "username", None))
+    except Exception:
+        logging.exception("Failed to fetch bot username via get_me()")
+    ru_description = "Расписание Военмеха в Telegram: пары на сегодня, напоминания и поиск группы."
+    ru_short = "Расписание Военмеха в Telegram"
+    try:
+        await bot.set_my_description(description=ru_description, language_code="ru")
+        await bot.set_my_description(description=ru_description)
+        await bot.set_my_short_description(short_description=ru_short, language_code="ru")
+        await bot.set_my_short_description(short_description=ru_short)
+    except Exception:
+        logging.exception("Failed to set bot description")
+
+
+class AdminDialogGuardMiddleware(BaseMiddleware):
+    """Block Admin dialog callbacks/messages for anyone outside ADMIN_IDS."""
+
+    async def __call__(self, handler, event, data):
+        from bot.dialogs.states import Admin as AdminSG
+
+        user = getattr(event, "from_user", None)
+        if user and ADMIN_IDS and user.id in ADMIN_IDS:
+            return await handler(event, data)
+        dialog_manager = data.get("dialog_manager")
+        if dialog_manager is None:
+            return await handler(event, data)
+        try:
+            ctx = dialog_manager.current_context()
+        except Exception:
+            return await handler(event, data)
+        state = getattr(ctx, "state", None) if ctx is not None else None
+        group = getattr(state, "group", None)
+        if group is AdminSG or (state is not None and str(getattr(state, "state", "")).startswith("Admin")):
+            if hasattr(event, "answer"):
+                try:
+                    await event.answer()
+                except Exception:
+                    pass
+            return None
+        return await handler(event, data)
+
+
 async def set_bot_commands(bot: Bot) -> None:
     """Устанавливает меню команд для пользователей и администраторов на разных языках."""
     from core.i18n import i18n
+
+    await configure_bot_profile(bot)
 
     # Supported languages
     languages = ["ru", "en", "zh"]
@@ -155,7 +205,19 @@ async def start_command_handler(message: Message, dialog_manager: DialogManager,
         if saved_group:
             await dialog_manager.start(Schedule.view, data={"group": saved_group}, mode=StartMode.RESET_STACK)
         else:
-            await dialog_manager.start(MainMenu.select_language, mode=StartMode.RESET_STACK)
+            lang_code = str(getattr(message.from_user, "language_code", "") or "").lower()
+            if lang_code.startswith("ru"):
+                try:
+                    await user_data_manager.register_user(
+                        user_id=message.from_user.id,
+                        username=getattr(message.from_user, "username", None),
+                    )
+                    await user_data_manager.set_user_language(message.from_user.id, "ru")
+                except Exception:
+                    logging.exception("Failed to persist ru language during onboarding skip")
+                await dialog_manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
+            else:
+                await dialog_manager.start(MainMenu.select_language, mode=StartMode.RESET_STACK)
     except Exception as e:
         logging.error(f"Ошибка при запуске команды /start: {e}", exc_info=True)
         try:
@@ -199,6 +261,9 @@ async def override_command_handler(message: Message, command: CommandObject, dia
         )
         return
     group, date_str, time_str, subject, room, lesson_type = parts
+    subject = html.escape(subject, quote=False)
+    room = html.escape(room, quote=False)
+    lesson_type = html.escape(lesson_type, quote=False)
     try:
         from datetime import datetime as _datetime
 
@@ -226,7 +291,10 @@ async def override_command_handler(message: Message, command: CommandObject, dia
     from core.schedule_overrides import set_group_override
 
     await set_group_override(redis_client, group, target_date, [lesson])
-    await message.answer(f"✅ Коррекция сохранена для <b>{group.upper()}</b> на {date_str}.", parse_mode="HTML")
+    await message.answer(
+        f"✅ Коррекция сохранена для <b>{html.escape(group.upper(), quote=False)}</b> на {html.escape(date_str, quote=False)}.",
+        parse_mode="HTML",
+    )
 
 
 async def admin_command_handler(message: Message, dialog_manager: DialogManager) -> None:
@@ -391,31 +459,7 @@ async def main():
     for dialog in all_dialogs:
         dp.include_router(dialog)
     setup_dialogs(dp)
-
-    # DEBUG: Print registered dialogs and windows
-    from aiogram_dialog import Dialog
-
-    print("--- DEBUG DIALOGS ---")
-    # Access routers through the dispatcher's sub_routers attribute
-    if hasattr(dp, "sub_routers"):
-        for router in dp.sub_routers:
-            if isinstance(router, Dialog):
-                print(f"Registered Dialog: {router.states_group_name}")
-                for state in router.windows:
-                    print(f"  -> Window for state: {state!r}")
-    else:
-        # Fallback: try to access through different methods
-        try:
-            # In newer aiogram versions, routers might be stored differently
-            routers = getattr(dp, "_sub_routers", []) or getattr(dp, "routers", [])
-            for router in routers:
-                if isinstance(router, Dialog):
-                    print(f"Registered Dialog: {router.states_group_name}")
-                    for state in router.windows:
-                        print(f"  -> Window for state: {state!r}")
-        except Exception as e:
-            print(f"Could not access routers for debugging: {e}")
-    print("--- END DEBUG DIALOGS ---")
+    dp.update.middleware(AdminDialogGuardMiddleware())
 
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))

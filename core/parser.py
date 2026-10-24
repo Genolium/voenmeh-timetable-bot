@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
+from urllib.parse import quote
 
 import aiohttp
 
@@ -28,6 +29,23 @@ class _NotModifiedSentinel:
 NOT_MODIFIED = _NotModifiedSentinel()
 
 MIN_GROUP_SUCCESS_RATIO = 0.8
+
+
+def resolve_lesson_end(start_dt: datetime, item: dict | None = None) -> str:
+    """Prefer API `end` when present; otherwise start + 90 minutes."""
+    if item:
+        raw_end = item.get("end") or item.get("end_time")
+        if raw_end:
+            token = str(raw_end).split()[0]
+            try:
+                return datetime.strptime(token, "%H:%M").strftime("%H:%M")
+            except ValueError:
+                pass
+    return (start_dt + timedelta(minutes=90)).strftime("%H:%M")
+
+
+def is_unchanged_result(result: object) -> bool:
+    return result is NOT_MODIFIED
 
 
 def has_enough_groups(parsed_count: int, requested_count: int, ratio: float = MIN_GROUP_SUCCESS_RATIO) -> bool:
@@ -108,7 +126,8 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
     Returns:
         Словарь с расписанием в формате бота (группы, __teachers_index__,
         __classrooms_index__, __metadata__, __current_xml_hash__),
-        None если данные не изменились (conditional 304) или при ошибке.
+        dict при обновлении, NOT_MODIFIED если данные не изменились (304),
+        None при ошибке.
     """
     global _LAST_VOENMEH_SU_UPDATED_AT
     logging.info("Попытка загрузки расписания с основного источника voenmeh.su (force=%s)...", force)
@@ -144,7 +163,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
         async def _fetch_group(grp: str) -> tuple[str, Any]:
             async with sem:
-                url = f"{FALLBACK_API_URL}/api/schedule/lessons?name={grp}&kind=group"
+                url = f"{FALLBACK_API_URL}/api/schedule/lessons?name={quote(str(grp), safe='')}&kind=group"
                 try:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as r:
                         if r.status == 200:
@@ -183,7 +202,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
                 try:
                     start_dt = datetime.strptime(start_time_token, "%H:%M")
                     start_time_str = start_dt.strftime("%H:%M")
-                    end_time_str = (start_dt + timedelta(minutes=90)).strftime("%H:%M")
+                    end_time_str = resolve_lesson_end(start_dt, item)
                 except ValueError:
                     start_time_str = start_time_token
                     end_time_str = "N/A"
@@ -446,8 +465,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     try:
                         start_dt_obj = datetime.strptime(start_time_token, "%H:%M")
                         start_time_str = start_dt_obj.strftime("%H:%M")
-                        end_dt_obj = start_dt_obj + timedelta(minutes=90)
-                        end_time_str = end_dt_obj.strftime("%H:%M")
+                        end_time_str = resolve_lesson_end(start_dt_obj)
                     except ValueError:
                         start_time_str = start_time_token
                         end_time_str = "N/A"
@@ -542,6 +560,10 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
       1. Основной официальный API https://voenmeh.su (с быстрым conditional check по updated_at)
       2. Резервный XML с voenmeh.ru (с валидацией актуальности учебного года)
       3. Локальный fallback (fallback_schedule.json)
+
+    Returns:
+        dict при успешном обновлении, NOT_MODIFIED если источник не изменился,
+        None если ни один источник не дал данные.
     """
     logging.info("Загрузка полного расписания (основной источник: API voenmeh.su)...")
 
@@ -553,7 +575,9 @@ async def fetch_and_parse_all_schedules(session: aiohttp.ClientSession | None = 
             PARSER_DURATION.labels(operation_type="full").observe((datetime.now() - _started).total_seconds())
         except Exception:
             pass
-    if result is not None:
+    if result is NOT_MODIFIED:
+        PARSER_STATS.labels(operation="parse_schedule", status="unchanged").inc()
+    elif isinstance(result, dict):
         PARSER_STATS.labels(operation="parse_schedule", status="success").inc()
     else:
         PARSER_STATS.labels(operation="parse_schedule", status="failed").inc()
@@ -566,7 +590,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
         voenmeh_su_data = await fetch_and_parse_from_voenmeh_su(session=session, force=force)
         if voenmeh_su_data is NOT_MODIFIED:
             logging.info("Расписание на voenmeh.su не изменилось (условный запрос 304).")
-            return None
+            return NOT_MODIFIED
         if voenmeh_su_data:
             logging.info("Расписание успешно получено с основного API voenmeh.su.")
             save_fallback_schedule(voenmeh_su_data)
@@ -581,7 +605,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
         xml_data = await _fetch_and_parse_legacy_xml(session=session)
         if xml_data is NOT_MODIFIED:
             logging.info("XML расписание на voenmeh.ru не изменилось (304).")
-            return None
+            return NOT_MODIFIED
         if xml_data:
             logging.info("Расписание успешно получено с резервного XML источника.")
             save_fallback_schedule(xml_data)

@@ -295,6 +295,7 @@ class UserDataManager:
                     "evening_notify": user.evening_notify,
                     "morning_summary": user.morning_summary,
                     "lesson_reminders": user.lesson_reminders,
+                    "schedule_diff_notify": getattr(user, "schedule_diff_notify", True),
                     "reminder_time_minutes": user.reminder_time_minutes,
                     "theme": user.theme,
                     "morning_time": user.morning_time,
@@ -304,6 +305,7 @@ class UserDataManager:
                 "evening_notify": False,
                 "morning_summary": False,
                 "lesson_reminders": False,
+                "schedule_diff_notify": False,
                 "reminder_time_minutes": 20,
                 "theme": "standard",
                 "morning_time": "08:00",
@@ -316,6 +318,7 @@ class UserDataManager:
             "evening_notify",
             "morning_summary",
             "lesson_reminders",
+            "schedule_diff_notify",
         ]:
             logging.warning(f"Attempt to update invalid setting: {setting_name}")
             return
@@ -571,7 +574,8 @@ class UserDataManager:
         """Студенты с группами и языком — для локализованных diff-уведомлений."""
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language).where(
-                or_(User.user_type != "teacher", User.user_type.is_(None))
+                or_(User.user_type != "teacher", User.user_type.is_(None)),
+                User.schedule_diff_notify == True,
             )
             result = await session.execute(stmt)
             return [(row.user_id, row.group, row.language or "ru") for row in result.fetchall()]
@@ -652,12 +656,17 @@ class UserDataManager:
 
     # --- Методы для рассылок ---
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_evening_notify(self, target_hour: int = 20) -> List[Tuple[int, str, str, str]]:
+    async def get_users_for_evening_notify(
+        self, target_hour: int | None = None, target_time: str | None = None
+    ) -> List[Tuple[int, str, str, str]]:
         """
         Получает пользователей для вечерних уведомлений с кэшированием.
         Возвращает (user_id, group, language, user_type).
+        Сравнивает полное `evening_time` (HH:MM), не только `{hour}:00`.
         """
-        target_time = f"{target_hour:02d}:00"
+        if target_time is None:
+            hour = 20 if target_hour is None else target_hour
+            target_time = f"{hour:02d}:00"
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
                 User.evening_notify == True,
@@ -669,12 +678,17 @@ class UserDataManager:
             return [tuple(row) for row in result.all()]
 
     @cached(ttl=3600)  # Кэшируем на 1 час
-    async def get_users_for_morning_summary(self, target_hour: int = 8) -> List[Tuple[int, str, str, str]]:
+    async def get_users_for_morning_summary(
+        self, target_hour: int | None = None, target_time: str | None = None
+    ) -> List[Tuple[int, str, str, str]]:
         """
         Получает пользователей для утренних уведомлений с кэшированием.
         Возвращает (user_id, group, language, user_type).
+        Сравнивает полное `morning_time` (HH:MM), не только `{hour}:00`.
         """
-        target_time = f"{target_hour:02d}:00"
+        if target_time is None:
+            hour = 8 if target_hour is None else target_hour
+            target_time = f"{hour:02d}:00"
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
                 User.morning_summary == True,

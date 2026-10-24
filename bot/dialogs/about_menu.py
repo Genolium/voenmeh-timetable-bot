@@ -9,6 +9,7 @@ from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 
+from core.bot_identity import bot_mention
 from core.config import ABOUT_INLINE_IMG, ABOUT_MAIN_SCREEN_IMG, ABOUT_NOTIFICATIONS_IMG, ABOUT_SEARCH_IMG, ABOUT_WELCOME_IMG
 from core.i18n import i18n
 from core.user_data import UserDataManager
@@ -30,7 +31,7 @@ async def get_about_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[s
         "about_page_2": _("about_page_2"),
         "about_page_3": _("about_page_3"),
         "about_page_4": _("about_page_4"),
-        "about_page_5": _("about_page_5"),
+        "about_page_5": _("about_page_5", bot_username=bot_mention()),
         "about_next": _("about_next"),
         "about_back": _("about_back"),
         "about_finish": _("about_finish"),

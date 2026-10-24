@@ -103,6 +103,19 @@ FEEDBACK_CHAT_ID = settings.FEEDBACK_CHAT_ID
 # --- Подписка для полного качества изображения ---
 # Может быть ID канала (например, -1001234567890) или @username
 SUBSCRIPTION_CHANNEL = settings.SUBSCRIPTION_CHANNEL
+DEFAULT_NEWS_CHANNEL = "voenmeh404"
+
+
+def news_channel_url() -> str:
+    """Public URL of the campus news channel for Telegram URL buttons."""
+    channel = SUBSCRIPTION_CHANNEL or DEFAULT_NEWS_CHANNEL
+    if channel.startswith("http://") or channel.startswith("https://"):
+        return channel
+    if channel.startswith("@"):
+        return f"https://t.me/{channel[1:]}"
+    if channel.startswith("-"):
+        return f"https://t.me/{DEFAULT_NEWS_CHANNEL}"
+    return f"https://t.me/{channel}"
 
 
 # --- Redis клиент ---

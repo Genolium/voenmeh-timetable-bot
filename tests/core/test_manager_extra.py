@@ -1,6 +1,5 @@
 import gzip
 import json
-import pickle
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,7 +36,7 @@ async def test_restore_from_backup_real_logic():
     # Setup get
     # It gets latest key: 2024-01-02
     data = {"__metadata__": {}, "G_BACKUP": {}}
-    compressed = gzip.compress(pickle.dumps(data))
+    compressed = gzip.compress(json.dumps(data).encode("utf-8"))
     redis.get.return_value = compressed
 
     restored = await TimetableManager._restore_from_backup(redis)
@@ -50,7 +49,7 @@ async def test_restore_from_backup_date_sort():
     redis = AsyncMock()
     redis.keys.return_value = ["timetable:backup:2024-01-01", "timetable:backup:2024-01-10", "timetable:backup:2024-01-05"]
 
-    redis.get.return_value = gzip.compress(pickle.dumps({"target": "latest"}))
+    redis.get.return_value = gzip.compress(json.dumps({"target": "latest"}).encode("utf-8"))
 
     await TimetableManager._restore_from_backup(redis)
 

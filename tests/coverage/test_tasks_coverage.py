@@ -164,6 +164,59 @@ class TestRobustRetries:
         retries.after_process_message(broker, message, exception=ValueError("boom"))
         broker.enqueue.assert_called_once()
 
+    def test_exhausted_retries_go_to_dlq(self, monkeypatch):
+        record = MagicMock()
+        monkeypatch.setattr(tasks, "_record_failed_message_to_dlq", record)
+        retries = RobustRetries(max_retries=2, min_backoff=1, max_backoff=2)
+        broker = MagicMock()
+        actor = MagicMock()
+        actor.options = {}
+        broker.get_actor.return_value = actor
+        message = MagicMock()
+        message.options = {"retries": 2}
+        message.actor_name = "send_message_task"
+        message.message_id = "m"
+        retries.after_process_message(broker, message, exception=ValueError("boom"))
+        record.assert_called_once()
+
+
+def test_record_failed_message_to_dlq_helper(monkeypatch):
+    recorded = {}
+
+    class FakeEngine:
+        async def dispose(self):
+            recorded["disposed"] = True
+
+    class FakeDLQ:
+        def __init__(self, session_factory=None):
+            recorded["factory"] = session_factory
+
+        async def record_failed_message(self, **kwargs):
+            recorded["kwargs"] = kwargs
+            return 1
+
+    monkeypatch.setattr("core.dlq_manager.DLQManager", FakeDLQ)
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", lambda *a, **k: FakeEngine())
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.async_sessionmaker", lambda *a, **k: object())
+
+    def fake_run(coro):
+        asyncio.run(coro)
+
+    monkeypatch.setattr(tasks, "run_async", fake_run)
+    message = SimpleNamespace(args=[7, "payload"], options={"retries": 5}, actor_name="send_message_task")
+    tasks._record_failed_message_to_dlq(message, ValueError("boom"))
+    assert recorded["kwargs"]["user_id"] == 7
+    assert recorded["disposed"] is True
+
+
+def test_record_failed_message_to_dlq_swallows_errors(monkeypatch):
+    def fake_run(coro):
+        coro.close()
+        raise RuntimeError("persist failed")
+
+    monkeypatch.setattr(tasks, "run_async", fake_run)
+    tasks._record_failed_message_to_dlq(SimpleNamespace(args=[], options={}), Exception("e"))
+
 
 # --------------------------------------------------------------------------- #
 # _mark_user_as_blocked

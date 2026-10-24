@@ -485,34 +485,106 @@ class TestBackups:
         msg = make_message()
         msg.document = MagicMock()
         msg.document.file_name = "backup.sql"
+        msg.document.file_size = 100
+        msg.bot = AsyncMock()
         mgr = make_manager()
-        target = tmp_path / "backup.sql"
-        with (
-            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=target),
-            patch("bot.dialogs.admin_menu.restore_db_backup", new=AsyncMock()),
-        ):
+        with patch("bot.dialogs.admin_menu.tempfile.mkdtemp", return_value=str(tmp_path)):
             await on_backup_upload_received(msg, MagicMock(), mgr)
-        assert "успешно восстановлена" in mgr.dialog_data["backup_upload_status"]
+        assert "RESTORE" in mgr.dialog_data["backup_upload_status"]
         assert mgr.switch_to.await_args[0][0] == Admin.backup_upload_confirm
+        assert "backup_restore_path" in mgr.dialog_data
 
-    async def test_on_backup_upload_restore_error(self, tmp_path):
+    async def test_on_backup_upload_rejects_wrong_type(self):
         msg = make_message()
         msg.document = MagicMock()
-        msg.document.file_name = "backup.sql.gz"
+        msg.document.file_name = "notes.txt"
+        msg.document.file_size = 10
         mgr = make_manager()
+        await on_backup_upload_received(msg, MagicMock(), mgr)
+        assert "sql" in msg.answer.await_args[0][0].lower()
+
+    async def test_on_backup_restore_typed_confirm(self, tmp_path):
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        backup = tmp_path / "backup.sql"
+        backup.write_text("-- sql", encoding="utf-8")
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={"backup_restore_path": str(backup)})
+        with (
+            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=backup),
+            patch("bot.dialogs.admin_menu.restore_db_backup", new=AsyncMock()) as restore,
+        ):
+            await on_backup_restore_typed(msg, MagicMock(), mgr)
+        restore.assert_awaited_once()
+        assert "успешно восстановлена" in mgr.dialog_data["backup_upload_status"]
+
+    async def test_on_backup_upload_restore_error(self, tmp_path):
+        from bot.dialogs.admin_menu import on_backup_restore_typed
         from core.db.backups import BackupError
 
-        target = tmp_path / "backup.sql"
+        backup = tmp_path / "backup.sql"
+        backup.write_text("-- sql", encoding="utf-8")
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={"backup_restore_path": str(backup)})
         with (
-            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=target),
+            patch("bot.dialogs.admin_menu.maybe_decompress_gzip", return_value=backup),
             patch(
                 "bot.dialogs.admin_menu.restore_db_backup",
                 new=AsyncMock(side_effect=BackupError("bad dump")),
             ),
         ):
-            await on_backup_upload_received(msg, MagicMock(), mgr)
+            await on_backup_restore_typed(msg, MagicMock(), mgr)
         assert "Не удалось применить" in mgr.dialog_data["backup_upload_status"]
-        assert mgr.switch_to.await_args[0][0] == Admin.backup_upload_confirm
+
+    async def test_on_backup_upload_rejects_oversized(self):
+        from bot.dialogs.admin_menu import MAX_RESTORE_BYTES
+
+        msg = make_message()
+        msg.document = MagicMock()
+        msg.document.file_name = "backup.sql"
+        msg.document.file_size = MAX_RESTORE_BYTES + 1
+        mgr = make_manager()
+        await on_backup_upload_received(msg, MagicMock(), mgr)
+        assert "слишком большой" in msg.answer.await_args[0][0]
+
+    async def test_on_backup_restore_typed_rejects_wrong_word(self):
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        msg = make_message()
+        msg.text = "yes"
+        mgr = make_manager(dialog_data={"backup_restore_path": "/tmp/x.sql"})
+        await on_backup_restore_typed(msg, MagicMock(), mgr)
+        assert "RESTORE" in msg.answer.await_args[0][0]
+        mgr.switch_to.assert_not_awaited()
+
+    async def test_on_backup_restore_typed_missing_file(self):
+        from bot.dialogs.admin_menu import on_backup_restore_typed
+
+        msg = make_message()
+        msg.text = "RESTORE"
+        mgr = make_manager(dialog_data={})
+        await on_backup_restore_typed(msg, MagicMock(), mgr)
+        assert "не найден" in msg.answer.await_args[0][0]
+        assert mgr.switch_to.await_args[0][0] == Admin.backup_menu
+
+    async def test_on_admin_dialog_start_rejects_non_admin(self):
+        from bot.dialogs.admin_menu import on_admin_dialog_start
+
+        mgr = make_manager()
+        mgr.event = MagicMock()
+        mgr.event.from_user = MagicMock(id=999999999)
+        mgr.done = AsyncMock()
+        await on_admin_dialog_start({}, mgr)
+        mgr.done.assert_awaited_once()
+
+    async def test_is_sql_backup_name(self):
+        from bot.dialogs.admin_menu import _is_sql_backup_name
+
+        assert _is_sql_backup_name("db.sql")
+        assert _is_sql_backup_name("db.sql.gz")
+        assert not _is_sql_backup_name("photo.png")
 
 
 # ---------------------------------------------------------------------------

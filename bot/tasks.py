@@ -141,7 +141,45 @@ class RobustRetries(Retries):
                     return
 
         # Fall back to default retry logic
+        if exception is not None:
+            retries = message.options.get("retries", 0)
+            max_retries = message.options.get("max_retries", self.max_retries)
+            if max_retries is not None and retries >= max_retries:
+                _record_failed_message_to_dlq(message, exception)
         super().after_process_message(broker, message, result=result, exception=exception)
+
+
+def _record_failed_message_to_dlq(message, exception) -> None:
+    """Persist a Dramatiq message to DLQ after retries are exhausted."""
+    try:
+        from core.config import settings
+        from core.dlq_manager import DLQManager
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        args = list(getattr(message, "args", None) or [])
+        user_id = args[0] if args and isinstance(args[0], int) else 0
+        retries = (getattr(message, "options", None) or {}).get("retries", 0)
+        actor_name = getattr(message, "actor_name", "unknown")
+        payload = {"actor": actor_name, "args": args[:8]}
+
+        async def _persist():
+            engine = create_async_engine(settings.DATABASE_URL)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                manager = DLQManager(session_factory=factory)
+                await manager.record_failed_message(
+                    user_id=user_id,
+                    payload=payload,
+                    error_message=str(exception),
+                    message_type=actor_name,
+                    retry_count=int(retries or 0),
+                )
+            finally:
+                await engine.dispose()
+
+        run_async(_persist())
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to record exhausted Dramatiq retries into DLQ")
 
 
 def _configure_broker_middleware(broker: Any) -> None:

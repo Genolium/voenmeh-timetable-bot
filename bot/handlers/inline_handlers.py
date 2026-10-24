@@ -9,6 +9,7 @@ from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessag
 from rapidfuzz import process
 
 from bot.text_formatters import esc, format_schedule_text
+from core.bot_identity import bot_mention
 from core.config import MOSCOW_TZ
 from core.i18n import i18n
 from core.manager import TimetableManager
@@ -141,7 +142,9 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 id="help",
                 title=_tr(lang, "inline_help_title"),
                 description=_tr(lang, "inline_help_description"),
-                input_message_content=InputTextMessageContent(message_text=_tr(lang, "inline_help_message")),
+                input_message_content=InputTextMessageContent(
+                    message_text=_tr(lang, "inline_help_message", bot_username=bot_mention())
+                ),
             )
         ]
         await query.answer(results, cache_time=300, is_personal=False)
@@ -162,7 +165,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 id=f"suggest:{g}",
                 title=f"📅 {g}",
                 description=_tr(lang, "inline_suggest_description", date=target_date.strftime("%d.%m")),
-                input_message_content=InputTextMessageContent(message_text=f"@voenmeh_bot {g} {query_text}"),
+                input_message_content=InputTextMessageContent(message_text=f"{bot_mention()} {g} {query_text}"),
             )
             for g in popular_groups
         ]
@@ -199,7 +202,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                     id=f"autocomplete:{match_name}",
                     title=f"📅 {match_name}",
                     description=_tr(lang, "inline_match_description", score=int(score)),
-                    input_message_content=InputTextMessageContent(message_text=f"@voenmeh_bot {match_name}"),
+                    input_message_content=InputTextMessageContent(message_text=f"{bot_mention()} {match_name}"),
                 )
             )
         await query.answer(results, cache_time=30, is_personal=True)

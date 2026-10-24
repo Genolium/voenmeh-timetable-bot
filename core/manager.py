@@ -1,6 +1,6 @@
 import gzip
 import json
-import pickle
+import logging
 import time
 from datetime import date, datetime, timedelta
 from typing import Any, cast
@@ -10,6 +10,25 @@ from redis.asyncio.client import Redis
 
 from core.config import CACHE_LIFETIME, DAY_MAP, MOSCOW_TZ, REDIS_SCHEDULE_CACHE_KEY
 from core.semester_calendar import SemesterInfo, get_semester_info
+
+logger = logging.getLogger(__name__)
+
+SCHEDULE_CACHE_KEYS = (
+    REDIS_SCHEDULE_CACHE_KEY,
+    "timetable:index:teachers",
+    "timetable:index:classrooms",
+)
+
+
+async def refresh_schedule_cache_ttl(redis_client: Redis) -> None:
+    """Extend TTL for live schedule blobs without rewriting their contents."""
+    ttl_seconds = int(CACHE_LIFETIME.total_seconds())
+    for key in SCHEDULE_CACHE_KEYS:
+        try:
+            if await redis_client.exists(key):
+                await redis_client.expire(key, ttl_seconds)
+        except Exception:
+            logger.warning("Failed to refresh TTL for %s", key, exc_info=True)
 
 
 class TimetableManager:
@@ -75,7 +94,11 @@ class TimetableManager:
                 print("Кэш в Redis не найден. Загрузка с сервера...")
                 from core.parser import fetch_and_parse_all_schedules
 
+                from core.parser import NOT_MODIFIED
+
                 new_data = await fetch_and_parse_all_schedules()
+                if new_data is NOT_MODIFIED:
+                    new_data = None
                 if new_data:
                     temp_instance = cls(new_data, redis_client)
                     await temp_instance.save_to_cache()
@@ -509,6 +532,5 @@ class TimetableManager:
 
         try:
             return cast(dict[Any, Any], json.loads(decompressed.decode("utf-8")))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            # Читаем старые кэши, записанные pickle, но новые записи — только JSON.
-            return cast(dict[Any, Any], pickle.loads(decompressed))
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError("Unsupported schedule cache format (JSON only)") from exc

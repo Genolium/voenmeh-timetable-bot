@@ -34,6 +34,14 @@ class TestGetFeedbackData:
         dm = make_dm(middleware={"user_data_manager": udm})
         data = await fm.get_feedback_data(dm)
         assert "feedback_enter" in data
+        assert "btn_cancel" in data
+
+
+class TestOnFeedbackCancel:
+    async def test_done(self):
+        dm = make_dm()
+        await fm.on_feedback_cancel(MagicMock(), MagicMock(), dm)
+        dm.done.assert_awaited_once()
 
 
 class TestOnFeedbackReceived:

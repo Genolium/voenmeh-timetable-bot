@@ -4,6 +4,7 @@ from aiogram import Bot
 from aiogram.types import ContentType, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
+from aiogram_dialog.widgets.kbd import Button
 from aiogram_dialog.widgets.text import Const, Format
 
 from bot.text_formatters import esc
@@ -25,7 +26,12 @@ async def get_feedback_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
 
     return {
         "feedback_enter": _("feedback_enter"),
+        "btn_cancel": _("btn_cancel"),
     }
+
+
+async def on_feedback_cancel(callback, button, manager: DialogManager) -> None:
+    await manager.done()
 
 
 async def on_feedback_received(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
@@ -119,6 +125,7 @@ feedback_dialog = Dialog(
         Format("{feedback_enter}"),
         # MessageInput ловит любое сообщение, так как мы не указали фильтр по типу контента
         MessageInput(on_feedback_received, content_types=[ContentType.ANY]),
+        Button(Format("{btn_cancel}"), id="feedback_cancel", on_click=on_feedback_cancel),
         state=Feedback.enter_feedback,
         getter=get_feedback_data,
     )

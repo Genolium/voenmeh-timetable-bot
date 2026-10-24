@@ -1,6 +1,5 @@
 import gzip
 import json
-import pickle
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -72,8 +71,7 @@ def manager(sample_schedules):
 async def test_create_manager_with_cache(mocker, sample_schedules):
     """Тест асинхронного конструктора с использованием кэша Redis."""
     mock_redis = AsyncMock()
-    compressed_data = gzip.compress(pickle.dumps(sample_schedules))
-    mock_redis.get.return_value = json.dumps(sample_schedules).encode("utf-8")
+    mock_redis.get.return_value = gzip.compress(json.dumps(sample_schedules).encode("utf-8"))
 
     # Mock the lock method to return an async context manager
     mock_lock = AsyncMock()

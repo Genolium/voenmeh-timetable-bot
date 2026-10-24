@@ -67,7 +67,7 @@ services:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
-    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-2} --threads ${DRAMATIQ_THREADS:-50} bot.tasks -Q high_priority medium_priority low_priority default
+    command: python -m dramatiq --processes ${DRAMATIQ_PROCESSES:-2} --threads ${DRAMATIQ_THREADS:-4} bot.tasks -Q high_priority medium_priority low_priority default
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
       OTEL_ENABLED: ${OTEL_ENABLED:-false}

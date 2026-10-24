@@ -36,7 +36,7 @@ from core.db.backups import create_db_backup
 from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
-from core.manager import TimetableManager
+from core.manager import TimetableManager, refresh_schedule_cache_ttl
 from core.metrics import (
     ERRORS_TOTAL,
     LAST_SCHEDULE_UPDATE_TS,
@@ -45,7 +45,7 @@ from core.metrics import (
     USERS_TOTAL,
     collect_system_metrics,
 )
-from core.parser import fetch_and_parse_all_schedules
+from core.parser import fetch_and_parse_all_schedules, is_unchanged_result
 from core.schedule_diff import ScheduleDiffDetector, ScheduleDiffFormatter
 from core.semester_settings import SemesterSettingsManager
 from core.user_data import UserDataManager
@@ -120,10 +120,11 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
 
-    current_hour = datetime.now(MOSCOW_TZ).hour
-    users_to_notify = await user_data_manager.get_users_for_evening_notify(target_hour=current_hour)
+    now = datetime.now(MOSCOW_TZ)
+    target_time = now.strftime("%H:%M")
+    users_to_notify = await user_data_manager.get_users_for_evening_notify(target_time=target_time)
     if not users_to_notify:
-        logger.info(f"Вечерняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
+        logger.info(f"Вечерняя рассылка ({target_time}): нет пользователей для уведомления.")
         return
 
     forecasts: dict[str, dict | None] = {}
@@ -131,7 +132,7 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         forecasts[lang] = await weather_api.get_forecast_for_time(tomorrow_9am, lang=lang)
     weather_forecast = forecasts.get("ru")
 
-    logger.info(f"Вечерняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
+    logger.info(f"Вечерняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
     for user_id, group_name, lang, user_type in users_to_notify:
@@ -208,17 +209,18 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
     today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
 
-    current_hour = datetime.now(MOSCOW_TZ).hour
-    users_to_notify = await user_data_manager.get_users_for_morning_summary(target_hour=current_hour)
+    now = datetime.now(MOSCOW_TZ)
+    target_time = now.strftime("%H:%M")
+    users_to_notify = await user_data_manager.get_users_for_morning_summary(target_time=target_time)
     if not users_to_notify:
-        logger.info(f"Утренняя рассылка ({current_hour}:00): нет пользователей для уведомления.")
+        logger.info(f"Утренняя рассылка ({target_time}): нет пользователей для уведомления.")
         return
 
     forecasts: dict[str, dict | None] = {}
     for lang in {row[2] or "ru" for row in users_to_notify}:
         forecasts[lang] = await weather_api.get_forecast_for_time(today_9am, lang=lang)
 
-    logger.info(f"Утренняя рассылка ({current_hour}:00): обработка {len(users_to_notify)} пользователей")
+    logger.info(f"Утренняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
 
     for user_id, group_name, lang, user_type in users_to_notify:
@@ -393,6 +395,17 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
     # For race condition: Use Redis lock
     async with redis_client.lock("timetable_manager_update_lock", timeout=300, blocking_timeout=120):
+        if is_unchanged_result(new_schedule_data):
+            logger.info("Расписание не изменилось (304). Продлеваем TTL кэша.")
+            await refresh_schedule_cache_ttl(redis_client)
+            updated_at = _dt.now(MOSCOW_TZ).timestamp()
+            LAST_SCHEDULE_UPDATE_TS.set(updated_at)
+            try:
+                await redis_client.set(REDIS_LAST_UPDATE_KEY, str(int(updated_at)))
+            except Exception:
+                pass
+            return
+
         if not new_schedule_data:
             logger.error("Не удалось получить расписание с сервера вуза.")
             # Проверяем, есть ли актуальные данные в основном кэше
@@ -405,13 +418,13 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
         new_hash = new_schedule_data.get("__current_xml_hash__")
         if new_hash != old_hash:
             logger.warning(f"ОБНАРУЖЕНЫ ИЗМЕНЕНИЯ В РАСПИСАНИИ! Старый хеш: {old_hash}, Новый: {new_hash}")
-            await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
 
             old_manager = global_timetable_manager_instance
             # Создаем новый менеджер с обновленными данными
             new_manager = TimetableManager(new_schedule_data, redis_client)
             new_manager.set_semester_settings_manager(SemesterSettingsManager(user_data_manager.async_session_maker))
             await new_manager.save_to_cache()
+            await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
 
             # Атомарно переключаем активный менеджер: диалоги, планировщик и middleware
             # читают его через TimetableManagerRef/глобальную ссылку.
@@ -458,6 +471,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
                 logger.warning(f"Не удалось уведомить администраторов: {e}")
         else:
             logger.info("Изменений в расписании не обнаружено.")
+            await refresh_schedule_cache_ttl(redis_client)
 
         # Успешный парсинг (с изменениями или без) — только теперь freshness честный.
         updated_at = _dt.now(MOSCOW_TZ).timestamp()
@@ -532,26 +546,14 @@ async def auto_backup(redis_client: Redis) -> None:
                 # Try to decompress the data (it's likely gzip-compressed)
                 import gzip
                 import json
-                import pickle
 
                 try:
                     decompressed = gzip.decompress(schedules)
-                    try:
-                        schedule_data = json.loads(decompressed.decode("utf-8"))
-                        logger.info("Successfully decompressed schedule data using gzip+json")
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        # Legacy cache written by older versions.
-                        schedule_data = pickle.loads(decompressed)
-                        logger.info("Successfully decompressed legacy gzip+pickle schedule data")
-                except (gzip.BadGzipFile, pickle.UnpicklingError):
-                    try:
-                        # Fallback: try as plain JSON
-                        schedule_data = json.loads(schedules.decode("utf-8"))
-                        logger.info("Successfully parsed schedule data as plain JSON")
-                    except UnicodeDecodeError:
-                        # Last resort: try to decode with error handling
-                        schedule_data = json.loads(schedules.decode("utf-8", errors="replace"))
-                        logger.warning("Successfully parsed schedule data with error replacement")
+                    schedule_data = json.loads(decompressed.decode("utf-8"))
+                    logger.info("Successfully decompressed schedule data using gzip+json")
+                except (gzip.BadGzipFile, json.JSONDecodeError, UnicodeDecodeError):
+                    schedule_data = json.loads(schedules.decode("utf-8"))
+                    logger.info("Successfully parsed schedule data as plain JSON")
 
                 # Write the decompressed data as readable JSON in backup_dir
                 ts = _dt.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")
@@ -858,12 +860,12 @@ def setup_scheduler(
     global_timetable_manager_instance = manager
     manager_ref = TimetableManagerRef(manager)
 
-    scheduler.add_job(evening_broadcast, "cron", hour="16-23", minute=0, args=[user_data_manager, manager_ref])
+    scheduler.add_job(evening_broadcast, "cron", hour="16-23", minute="*", args=[user_data_manager, manager_ref])
     scheduler.add_job(
         morning_summary_broadcast,
         "cron",
         hour="6-12",
-        minute=0,
+        minute="*",
         args=[user_data_manager, manager_ref],
     )
     scheduler.add_job(

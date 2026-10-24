@@ -11,7 +11,7 @@ from core.themes import DEFAULT_THEME, THEMES, get_theme_meta
 from core.user_data import UserDataManager
 
 from .constants import WidgetIds
-from .states import SettingsMenu
+from .states import MainMenu, SettingsMenu
 
 
 def get_status_text(status: bool, lang: str = "ru") -> str:
@@ -86,6 +86,12 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_evening_time": settings.get("evening_time", "20:00"),
         "is_morning_enabled": settings.get(WidgetIds.MORNING_SUMMARY.value, False),
         "is_evening_enabled": settings.get(WidgetIds.EVENING_NOTIFY.value, False),
+        "schedule_diff_status_text": get_status_text(settings.get(WidgetIds.SCHEDULE_DIFF_NOTIFY.value, True), user_lang),
+        "schedule_diff_button_text": get_button_text(
+            settings.get(WidgetIds.SCHEDULE_DIFF_NOTIFY.value, True), "diff", user_lang
+        ),
+        "settings_diff_label": _("settings_diff_label"),
+        "btn_change_role": _("btn_change_role"),
         "settings_morning_time_title": _("settings_morning_time_title"),
         "settings_evening_time_title": _("settings_evening_time_title"),
         "lang_ru": _("lang_ru"),
@@ -159,6 +165,12 @@ async def on_evening_time_selected(callback: CallbackQuery, widget: Select, mana
 
 async def on_back_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.done()
+
+
+async def on_change_role_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    from aiogram_dialog import StartMode
+
+    await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
 
 
 async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
@@ -370,6 +382,12 @@ settings_dialog = Dialog(
             ),
         ),
         Format("{reminder_time_text}", when="are_reminders_enabled"),
+        Format("{settings_diff_label}: <b>{schedule_diff_status_text}</b>"),
+        Button(
+            Format("{schedule_diff_button_text}"),
+            id=WidgetIds.SCHEDULE_DIFF_NOTIFY,
+            on_click=on_toggle_setting,
+        ),
         Button(
             Format("{theme_button_text}"),
             id="theme_btn",
@@ -380,7 +398,11 @@ settings_dialog = Dialog(
             id="lang_btn",
             on_click=lambda c, b, m: m.switch_to(SettingsMenu.select_lang),
         ),
-        Button(Format("{btn_news}"), id="news_btn", on_click=on_news_clicked),
+        Button(
+            Format("{btn_change_role}"),
+            id=WidgetIds.CHANGE_ROLE,
+            on_click=on_change_role_click,
+        ),
         Button(Format("{btn_back}"), id="back_to_schedule", on_click=on_back_click),
         state=SettingsMenu.main,
         getter=get_settings_data,

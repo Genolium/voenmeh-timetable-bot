@@ -1,18 +1,16 @@
 import random
-import re
 from typing import Any
 
 from aiogram.types import CallbackQuery, Message
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.input import MessageInput
-from aiogram_dialog.widgets.kbd import Button, Column, Row
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select
 from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 from thefuzz import process
 
-from bot.text_formatters import esc
 from core.config import WELCOME_IMAGE_PATH
-from core.i18n import I18n, i18n
+from core.i18n import i18n
 from core.manager import TimetableManager
 from core.text_utils import normalize_group_name
 from core.user_data import UserDataManager
@@ -55,6 +53,10 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> di
         "ru_checked": "✅" if user_lang == "ru" else "",
         "en_checked": "✅" if user_lang == "en" else "",
         "zh_checked": "✅" if user_lang == "zh" else "",
+        "group_suggestions": dialog_manager.dialog_data.get("group_suggestions", []),
+        "teacher_suggestions": dialog_manager.dialog_data.get("teacher_suggestions", []),
+        "onboarding_reminders_hint": _("onboarding_reminders_hint"),
+        "pick_suggestion": _("pick_suggestion"),
     }
 
 
@@ -100,11 +102,8 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
         good_suggestions = [s[0] for s in suggestions if s[1] > 75]
 
         if good_suggestions:
-            # Форматируем каждый предложенный вариант
-            formatted_suggestions = [f"<code>{esc(s)}</code>" for s in good_suggestions]
-            # Соединяем варианты
-            suggestion_text = ", ".join(formatted_suggestions)
-            await message.answer(_("group_suggestion", group=group_name, suggestions=suggestion_text))
+            manager.dialog_data["group_suggestions"] = good_suggestions
+            await manager.switch_to(MainMenu.enter_group)
         else:
             # Если нет даже похожих
             await message.answer(_("group_not_found", group=group_name))
@@ -117,6 +116,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
     await user_data_manager.set_user_type(user_id=message.from_user.id, user_type="student")
 
     manager.dialog_data[DialogDataKeys.GROUP] = group_name
+    manager.dialog_data.pop("group_suggestions", None)
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
@@ -139,9 +139,8 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
         # Предложим несколько ближайших вариантов
         suggestions = timetable_manager.find_teachers_fuzzy(teacher_name, limit=5, score_cutoff=55)
         if suggestions:
-            formatted_suggestions = [f"<code>{esc(s)}</code>" for s in suggestions[:3]]
-            suggestion_text = "\n".join(formatted_suggestions)
-            await message.answer(_("teacher_suggestion", suggestions=suggestion_text))
+            manager.dialog_data["teacher_suggestions"] = suggestions[:3]
+            await manager.switch_to(MainMenu.enter_teacher)
             return
         else:
             await message.answer(_("teacher_not_found", name=teacher_name))
@@ -156,6 +155,27 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
     await user_data_manager.set_user_type(user_id=message.from_user.id, user_type="teacher")
 
     manager.dialog_data[DialogDataKeys.GROUP] = teacher_name
+    manager.dialog_data.pop("teacher_suggestions", None)
+    await manager.switch_to(MainMenu.offer_tutorial)
+
+
+async def on_group_suggestion_selected(callback: CallbackQuery, widget, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
+    await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
+    await user_data_manager.set_user_type(user_id=callback.from_user.id, user_type="student")
+    manager.dialog_data[DialogDataKeys.GROUP] = item_id
+    manager.dialog_data.pop("group_suggestions", None)
+    await manager.switch_to(MainMenu.offer_tutorial)
+
+
+async def on_teacher_suggestion_selected(callback: CallbackQuery, widget, manager: DialogManager, item_id: str):
+    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
+    await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
+    await user_data_manager.set_user_type(user_id=callback.from_user.id, user_type="teacher")
+    manager.dialog_data[DialogDataKeys.GROUP] = item_id
+    manager.dialog_data.pop("teacher_suggestions", None)
     await manager.switch_to(MainMenu.offer_tutorial)
 
 
@@ -227,6 +247,15 @@ dialog = Dialog(
     Window(
         StaticMedia(path=WELCOME_IMAGE_PATH),
         Format("{reg_student_title}"),
+        Format("{pick_suggestion}", when=lambda data, w, m: bool(data.get("group_suggestions"))),
+        Select(
+            Format("{item}"),
+            id="group_suggest",
+            item_id_getter=lambda item: item,
+            items="group_suggestions",
+            on_click=on_group_suggestion_selected,
+            when=lambda data, w, m: bool(data.get("group_suggestions")),
+        ),
         MessageInput(on_group_entered),
         Button(
             Format("{back_to_role}"),
@@ -241,6 +270,15 @@ dialog = Dialog(
     Window(
         StaticMedia(path=WELCOME_IMAGE_PATH),
         Format("{reg_teacher_title}"),
+        Format("{pick_suggestion}", when=lambda data, w, m: bool(data.get("teacher_suggestions"))),
+        Select(
+            Format("{item}"),
+            id="teacher_suggest",
+            item_id_getter=lambda item: item,
+            items="teacher_suggestions",
+            on_click=on_teacher_suggestion_selected,
+            when=lambda data, w, m: bool(data.get("teacher_suggestions")),
+        ),
         MessageInput(on_teacher_entered),
         Button(
             Format("{back_to_role}"),
@@ -253,6 +291,7 @@ dialog = Dialog(
     ),
     Window(
         Format("{reg_complete}"),
+        Format("{onboarding_reminders_hint}"),
         Row(
             Button(
                 Format("{show_tutorial}"),

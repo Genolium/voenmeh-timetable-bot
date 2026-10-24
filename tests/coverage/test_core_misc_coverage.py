@@ -168,6 +168,21 @@ def test_config_admin_ids_valid_after_restore():
     assert all(isinstance(i, int) for i in config_module.ADMIN_IDS)
 
 
+def test_news_channel_url_branches(monkeypatch):
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "https://t.me/demo")
+    assert config_module.news_channel_url() == "https://t.me/demo"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "http://example.com/news")
+    assert config_module.news_channel_url() == "http://example.com/news"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "@demo")
+    assert config_module.news_channel_url() == "https://t.me/demo"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "-1001")
+    assert config_module.news_channel_url().startswith("https://t.me/")
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "plain")
+    assert config_module.news_channel_url() == "https://t.me/plain"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "")
+    assert "t.me" in config_module.news_channel_url()
+
+
 def test_config_get_redis_client(monkeypatch):
     import redis.asyncio as redis_asyncio
 

@@ -7,12 +7,11 @@ from typing import Any
 from aiogram import Bot
 from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
-from aiogram_dialog.widgets.kbd import Button, Row, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Row, SwitchTo, Url
 from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 
-from bot.tasks import generate_week_image_task, send_week_original_if_subscribed_task
 from bot.text_formatters import (
     format_full_week_text,
     format_schedule_text,
@@ -20,7 +19,14 @@ from bot.text_formatters import (
     generate_dynamic_header,
 )
 from bot.utils.image_compression import get_telegram_safe_image_path
-from core.config import MEDIA_PATH, MOSCOW_TZ, NO_LESSONS_IMAGE_PATH, REDIS_LAST_UPDATE_KEY, SUBSCRIPTION_CHANNEL
+from core.config import (
+    MEDIA_PATH,
+    MOSCOW_TZ,
+    NO_LESSONS_IMAGE_PATH,
+    REDIS_LAST_UPDATE_KEY,
+    SUBSCRIPTION_CHANNEL,
+    news_channel_url,
+)
 from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
@@ -182,11 +188,29 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
 
     ctx.dialog_data["user_type"] = user_type
 
-    # Получаем расписание на день: для преподавателя используем teacher-метод
-    if user_type == "teacher":
+    saved_group = None
+    if user_id and user_data_manager:
+        try:
+            saved_group = await user_data_manager.get_user_group(user_id)
+        except Exception:
+            saved_group = None
+
+    raw_schedules = getattr(manager, "_schedules", None)
+    if isinstance(raw_schedules, dict):
+        is_group_target = str(group).upper() in raw_schedules
+    else:
+        # Mocks / incomplete managers: keep the previous role-based lookup.
+        is_group_target = user_type != "teacher"
+    # Поиск чужой группы всегда идёт через групповое расписание, даже если
+    # в профиле пользователь — преподаватель.
+    if is_group_target:
+        day_info = await manager.get_schedule_for_day(group, target_date=current_date)
+        render_as_teacher = False
+    else:
         # Нормализуем имя преподавателя: если в индексе нет точного ключа,
         # подбираем ближайшее и сразу сохраняем канонический вариант в БД.
-        if group not in manager._teachers_index:
+        teachers_index = getattr(manager, "_teachers_index", None)
+        if not isinstance(teachers_index, dict) or group not in teachers_index:
             canonical = manager.resolve_canonical_teacher(group)
             if canonical:
                 try:
@@ -196,8 +220,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
                 except Exception:
                     pass
         day_info = await manager.get_teacher_schedule(group, target_date=current_date)
-    else:
-        day_info = await manager.get_schedule_for_day(group, target_date=current_date)
+        render_as_teacher = True
 
     # Метрики активности и популярности
     try:
@@ -228,25 +251,59 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     except Exception:
         pass
 
+    has_lessons = bool(day_info.get("lessons"))
+    is_error = bool(day_info and day_info.get("error"))
     # Выбираем форматтер: для преподавателя показываем группы вместо ФИО
-    schedule_text = (
-        format_teacher_schedule_text(day_info, lang=lang)
-        if user_type == "teacher"
-        else format_schedule_text(day_info, week_number, lang=lang)
-    )
+    schedule_text = ""
+    empty_caption = ""
+    if has_lessons or is_error:
+        schedule_text = (
+            format_teacher_schedule_text(day_info, lang=lang)
+            if render_as_teacher
+            else format_schedule_text(day_info, week_number, lang=lang)
+        )
+        live_header = dynamic_header if has_lessons else ""
+        live_progress = progress_bar if has_lessons else ""
+    else:
+        # Картинка уже говорит «пар нет» — в подписи оставляем только дату.
+        live_header = ""
+        live_progress = ""
+        date_str = current_date.strftime("%d.%m.%Y")
+        day_name = _("day_%s" % current_date.weekday())
+        week_name = day_info.get("week_name", "") if isinstance(day_info, dict) else ""
+        week_key = "week_odd" if week_name and "Неч" in str(week_name) else "week_even"
+        week_suffix = f" <i>({_('week_odd') if week_key == 'week_odd' else _('week_even')})</i>" if week_name else ""
+        week_info = f"\n{_('fmt_week', number=week_number)}" if week_number else ""
+        subject_line = f"🎓 <b>{group}</b>" if is_group_target else f"🧑‍🏫 <b>{group}</b>"
+        empty_caption = f"🗓 <b>{date_str} · {day_name}</b>{week_suffix}{week_info}\n{subject_line}"
+
+    today = datetime.now(MOSCOW_TZ).date()
+    if current_date == today:
+        nav_date_label = _("nav_today")
+    else:
+        nav_date_label = current_date.strftime("%d.%m")
+
+    show_my_group = bool(saved_group and str(saved_group).upper() != str(group).upper())
 
     return {
-        "dynamic_header": dynamic_header,
-        "progress_bar": progress_bar,
+        "dynamic_header": live_header,
+        "progress_bar": live_progress,
         "schedule_freshness": schedule_freshness,
         "schedule_text": schedule_text,
-        "has_lessons": bool(day_info.get("lessons")),
+        "empty_caption": empty_caption,
+        "has_lessons": has_lessons,
+        "show_schedule_text": has_lessons or is_error,
+        "show_my_group": show_my_group,
+        "nav_date_label": nav_date_label,
+        "news_url": news_channel_url(),
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
         "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
         "btn_week": _("btn_week"),
         "btn_change_group": _("btn_change_group"),
         "btn_settings": _("btn_settings"),
+        "btn_more": _("btn_more"),
+        "btn_my_group": _("btn_my_group"),
         "btn_search": _("btn_search"),
         "btn_news": _("btn_news"),
         "full_quality_gate_text": _("full_quality_gate_text"),
@@ -255,6 +312,8 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_feedback": _("btn_feedback"),
         "btn_text_week": _("btn_text_week"),
         "btn_report_error": _("btn_report_error"),
+        "btn_back": _("btn_back"),
+        "more_title": _("more_title"),
     }
 
 
@@ -638,6 +697,8 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
 
     # Фолбэк: файл не создался или отправка не удалась — через очередь
     try:
+        from bot.tasks import send_week_original_if_subscribed_task
+
         send_week_original_if_subscribed_task.send(callback.from_user.id, cache_key)
         await callback.answer("📤 Отправлю изображение в фоне…")
     except Exception:
@@ -685,17 +746,22 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     week_start = current_date - timedelta(days=current_date.weekday())
     week_schedule = {}
     week_name = ""
+    raw_schedules = getattr(manager_obj, "_schedules", None)
+    if isinstance(raw_schedules, dict):
+        is_group_target = str(group).upper() in raw_schedules
+    else:
+        is_group_target = ctx.dialog_data.get("user_type") != "teacher"
     for offset in range(6):
         target = week_start + timedelta(days=offset)
-        if ctx.dialog_data.get("user_type") == "teacher":
-            info = await manager_obj.get_teacher_schedule(group, target_date=target)
-        else:
+        if is_group_target:
             info = await manager_obj.get_schedule_for_day(group, target_date=target)
+        else:
+            info = await manager_obj.get_teacher_schedule(group, target_date=target)
         if info and not info.get("error"):
             week_name = info.get("week_name", week_name)
             week_schedule[info.get("day_name", "")] = info.get("lessons", [])
     title = i18n.get(
-        "schedule_teacher_title" if ctx.dialog_data.get("user_type") == "teacher" else "schedule_group_title",
+        "schedule_group_title" if is_group_target else "schedule_teacher_title",
         lang=lang,
         group=group,
     )
@@ -724,7 +790,28 @@ async def on_report_error_click(callback: CallbackQuery, button: Button, manager
 
 
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
+    user_type = manager.current_context().dialog_data.get("user_type", "student")
+    if user_type == "teacher":
+        await manager.start(MainMenu.enter_teacher, mode=StartMode.RESET_STACK)
+    else:
+        await manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
+
+
+async def on_my_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id if callback.from_user else None
+    saved_group = await user_data_manager.get_user_group(user_id) if user_data_manager and user_id else None
+    if saved_group:
+        await manager.start(Schedule.view, data={DialogDataKeys.GROUP: saved_group}, mode=StartMode.RESET_STACK)
+        return
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
+async def on_more_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    await manager.switch_to(Schedule.more)
 
 
 async def on_settings_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -735,24 +822,26 @@ async def on_find_click(callback: CallbackQuery, button: Button, manager: Dialog
     await manager.start(FindMenu.choice)
 
 
-async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    """Открывает канал с новостями разработки"""
-    # Force fetch language from DB
-    try:
-        user_data_manager = manager.middleware_data.get("user_data_manager")
-        user_id = callback.from_user.id
-        user_lang = await user_data_manager.get_user_language(user_id) or "ru"
-    except Exception:
-        user_lang = "ru"
+def _when_has_lessons(data, widget, manager) -> bool:
+    return bool(data.get("has_lessons"))
 
-    _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
 
-    await callback.answer(_("news_toast"))
-    await callback.message.answer(
-        _("news_message"),
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+def _when_show_schedule_text(data, widget, manager) -> bool:
+    return bool(data.get("show_schedule_text"))
+
+
+def _when_no_lessons(data, widget, manager) -> bool:
+    return not data.get("has_lessons") and not data.get("show_schedule_text")
+
+
+def _when_show_my_group(data, widget, manager) -> bool:
+    return bool(data.get("show_my_group"))
+
+
+async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager):
+    """Fallback: send the news channel URL if a URL button is unavailable."""
+    await callback.answer()
+    await callback.message.answer(news_channel_url())
 
 
 async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager) -> None:
@@ -786,12 +875,13 @@ schedul_dialog_windows = [
         StaticMedia(
             path=NO_LESSONS_IMAGE_PATH,
             type=ContentType.PHOTO,
-            when=lambda data, widget, manager: not data.get("has_lessons"),
+            when=_when_no_lessons,
         ),
-        Format("{dynamic_header}"),
-        Format("{progress_bar}"),
+        Format("{dynamic_header}", when=_when_has_lessons),
+        Format("{progress_bar}", when=_when_has_lessons),
         Format("{schedule_freshness}"),
-        Format("{schedule_text}"),
+        Format("{empty_caption}", when=_when_no_lessons),
+        Format("{schedule_text}", when=_when_show_schedule_text),
         Row(
             Button(
                 Const("⏪"),
@@ -803,7 +893,7 @@ schedul_dialog_windows = [
                 id=WidgetIds.PREV_DAY,
                 on_click=lambda c, b, m: on_date_shift(c, b, m, -1),
             ),
-            Button(Const("📅"), id=WidgetIds.TODAY, on_click=on_today_click),
+            Button(Format("{nav_date_label}"), id=WidgetIds.TODAY, on_click=on_today_click),
             Button(
                 Const("▶️"),
                 id=WidgetIds.NEXT_DAY,
@@ -815,13 +905,37 @@ schedul_dialog_windows = [
                 on_click=lambda c, b, m: on_date_shift(c, b, m, 7),
             ),
         ),
-        # Для преподавателей скрываем кнопки Неделя/Настройки/Поиск/Новости
         Row(
             Button(
                 Format("{btn_week}"),
                 id="week_as_image",
                 on_click=on_full_week_image_click,
             ),
+            Button(
+                Format("{btn_search}"),
+                id=WidgetIds.FIND_BTN,
+                on_click=on_find_click,
+            ),
+            Button(
+                Format("{btn_more}"),
+                id=WidgetIds.MORE,
+                on_click=on_more_click,
+            ),
+        ),
+        Button(
+            Format("{btn_my_group}"),
+            id=WidgetIds.MY_GROUP,
+            on_click=on_my_group_click,
+            when=_when_show_my_group,
+        ),
+        LinkPreview(is_disabled=True),
+        state=Schedule.view,
+        getter=get_schedule_data,
+        parse_mode="HTML",
+    ),
+    Window(
+        Format("{more_title}"),
+        Column(
             Button(
                 Format("{btn_text_week}"),
                 id="week_as_text",
@@ -832,31 +946,19 @@ schedul_dialog_windows = [
                 id=WidgetIds.CHANGE_GROUP,
                 on_click=on_change_group_click,
             ),
+            Url(Format("{btn_news}"), Format("{news_url}"), id="news_url"),
+            Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
+            Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),
+            Button(Format("{btn_report_error}"), id="report_error_btn", on_click=on_report_error_click),
             Button(
                 Format("{btn_settings}"),
                 id=WidgetIds.SETTINGS,
                 on_click=on_settings_click,
             ),
         ),
-        Row(
-            Button(
-                Format("{btn_search}"),
-                id=WidgetIds.FIND_BTN,
-                on_click=on_find_click,
-            ),
-            Button(
-                Format("{btn_news}"),
-                id="news_btn",
-                on_click=on_news_clicked,
-            ),
-        ),
-        Row(
-            Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
-            Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),
-            Button(Format("{btn_report_error}"), id="report_error_btn", on_click=on_report_error_click),
-        ),
+        SwitchTo(Format("{btn_back}"), id="more_back", state=Schedule.view),
         LinkPreview(is_disabled=True),
-        state=Schedule.view,
+        state=Schedule.more,
         getter=get_schedule_data,
         parse_mode="HTML",
     ),

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 import random
@@ -18,7 +19,7 @@ from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
 from bot.scheduler import evening_broadcast, morning_summary_broadcast
 from bot.tasks import copy_message_task, send_message_task
 from bot.text_formatters import generate_reminder_text
-from core.config import MOSCOW_TZ
+from core.config import ADMIN_IDS, MOSCOW_TZ
 from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
 from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
@@ -51,6 +52,9 @@ async def on_override_input(message: Message, message_input: MessageInput, manag
         )
         return
     group, date_str, time_str, subject, room, lesson_type = parts
+    subject = html.escape(subject, quote=False)
+    room = html.escape(room, quote=False)
+    lesson_type = html.escape(lesson_type, quote=False)
     try:
         from datetime import datetime as _datetime
 
@@ -84,7 +88,10 @@ async def on_override_input(message: Message, message_input: MessageInput, manag
             }
         ],
     )
-    await message.answer(f"✅ Коррекция сохранена для <b>{group.upper()}</b> на {date_str}.", parse_mode="HTML")
+    await message.answer(
+        f"✅ Коррекция сохранена для <b>{html.escape(group.upper(), quote=False)}</b> на {html.escape(date_str, quote=False)}.",
+        parse_mode="HTML",
+    )
     await manager.switch_to(Admin.menu)
 
 
@@ -268,37 +275,78 @@ async def on_backup_create(callback: CallbackQuery, button: Button, manager: Dia
         await manager.switch_to(Admin.backup_menu)
 
 
+MAX_RESTORE_BYTES = 20 * 1024 * 1024
+RESTORE_CONFIRM_WORD = "RESTORE"
+
+
+def _is_sql_backup_name(name: str | None) -> bool:
+    lower = (name or "").lower()
+    return lower.endswith(".sql") or lower.endswith(".sql.gz") or lower.endswith(".gz")
+
+
 async def on_backup_upload_received(message: Message, widget: MessageInput, manager: DialogManager) -> None:
     document = message.document
     if not document:
         await message.answer("❌ Отправьте документ с расширением .sql или .sql.gz.")
         return
 
-    await message.answer("⏳ Получен файл. Начинаю восстановление, это может занять несколько минут...")
+    file_name = document.file_name or ""
+    if not _is_sql_backup_name(file_name):
+        await message.answer("❌ Нужен файл .sql или .sql.gz.")
+        return
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / (document.file_name or "backup.sql")
-        await message.bot.download(document, destination=tmp_path)
-        target_path = maybe_decompress_gzip(tmp_path)
+    file_size = getattr(document, "file_size", None) or 0
+    if file_size > MAX_RESTORE_BYTES:
+        await message.answer("❌ Файл слишком большой (лимит 20 МБ).")
+        return
 
-        try:
-            await restore_db_backup(target_path)
-        except BackupError as exc:
-            status = f"❌ Не удалось применить резервную копию: {exc}"
-            manager.dialog_data["backup_status"] = status
-            manager.dialog_data["backup_upload_status"] = status
-            await message.answer(status)
-            await manager.switch_to(Admin.backup_upload_confirm)
-            return
-
-    success_status = (
-        "✅ База данных успешно восстановлена из резервной копии.\n"
-        "Перезагрузите сервисы, если изменения не применились автоматически."
+    tmp_dir = Path(tempfile.mkdtemp(prefix="voenmeh_restore_"))
+    tmp_path = tmp_dir / (file_name or "backup.sql")
+    await message.bot.download(document, destination=tmp_path)
+    manager.dialog_data["backup_restore_path"] = str(tmp_path)
+    manager.dialog_data["backup_upload_status"] = (
+        f"Файл <code>{html.escape(file_name, quote=False)}</code> принят.\n"
+        f"Для восстановления базы введите <b>{RESTORE_CONFIRM_WORD}</b>."
     )
-    manager.dialog_data["backup_upload_status"] = success_status
-    manager.dialog_data["backup_status"] = success_status
-    await message.answer(success_status)
     await manager.switch_to(Admin.backup_upload_confirm)
+
+
+async def on_backup_restore_typed(message: Message, widget: MessageInput, manager: DialogManager) -> None:
+    if (message.text or "").strip() != RESTORE_CONFIRM_WORD:
+        await message.answer(f"Введите {RESTORE_CONFIRM_WORD} для подтверждения или нажмите Отмена.")
+        return
+
+    raw_path = manager.dialog_data.get("backup_restore_path")
+    if not raw_path:
+        await message.answer("❌ Файл восстановления не найден. Загрузите бэкап заново.")
+        await manager.switch_to(Admin.backup_menu)
+        return
+
+    tmp_path = Path(raw_path)
+    try:
+        target_path = maybe_decompress_gzip(tmp_path)
+        await restore_db_backup(target_path)
+        status = (
+            "✅ База данных успешно восстановлена из резервной копии.\n"
+            "Перезагрузите сервисы, если изменения не применились автоматически."
+        )
+    except BackupError as exc:
+        status = f"❌ Не удалось применить резервную копию: {exc}"
+    except Exception as exc:
+        status = f"❌ Не удалось применить резервную копию: {exc}"
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            tmp_path.parent.rmdir()
+        except OSError:
+            pass
+        manager.dialog_data.pop("backup_restore_path", None)
+
+    manager.dialog_data["backup_upload_status"] = status
+    manager.dialog_data["backup_status"] = status
+    await message.answer(status)
+    await manager.switch_to(Admin.backup_menu)
 
 
 async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
@@ -1102,6 +1150,12 @@ async def on_message_to_user_input(message: Message, message_input: MessageInput
         await message.answer(f"❌ Ошибка при отправке: {str(e)}")
 
 
+async def on_admin_dialog_start(start_data, manager: DialogManager):
+    user = getattr(manager.event, "from_user", None)
+    if not user or user.id not in ADMIN_IDS:
+        await manager.done()
+
+
 admin_dialog = Dialog(
     # Главный экран: разделы
     Window(
@@ -1225,7 +1279,8 @@ admin_dialog = Dialog(
     ),
     Window(
         Format("{backup_upload_status}"),
-        SwitchTo(Const("◀️ В меню бэкапов"), id="back_from_backup_status", state=Admin.backup_menu),
+        MessageInput(on_backup_restore_typed, content_types=[ContentType.TEXT]),
+        SwitchTo(Const("◀️ Отмена"), id="back_from_backup_status", state=Admin.backup_menu),
         getter=get_backup_upload_data,
         state=Admin.backup_upload_confirm,
         parse_mode="HTML",
@@ -1381,4 +1436,5 @@ admin_dialog = Dialog(
         state=Admin.sub_filter_add_channel,
         parse_mode="HTML",
     ),
+    on_start=on_admin_dialog_start,
 )
