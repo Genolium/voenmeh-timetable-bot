@@ -255,10 +255,12 @@ class TestScheduleViewHandlers:
 
         await on_today_click(mock_callback, button, mock_manager)
 
-        # Проверяем, что дата была обновлена на сегодняшнюю
+        # Проверяем, что дата была обновлена на сегодняшнюю (по Москве, как в хендлере)
         from datetime import datetime
 
-        today_iso = datetime.now().date().isoformat()
+        from core.config import MOSCOW_TZ
+
+        today_iso = datetime.now(MOSCOW_TZ).date().isoformat()
         assert ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] == today_iso
 
     @pytest.mark.asyncio

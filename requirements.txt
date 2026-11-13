@@ -20,10 +20,10 @@ pydantic==2.11.7
 pydantic-settings==2.3.0
 python-dotenv==1.2.2
 python-json-logger==3.3.0
-opentelemetry-api==1.45.1
-opentelemetry-exporter-otlp==1.45.1
-opentelemetry-instrumentation-logging==0.66b1
-opentelemetry-sdk==1.45.1
+opentelemetry-api==1.45.2
+opentelemetry-exporter-otlp==1.45.2
+opentelemetry-instrumentation-logging==0.66b2
+opentelemetry-sdk==1.45.2
 pytz==2025.2
 rapidfuzz==3.13.0
 redis==6.2.0
