@@ -8,6 +8,7 @@ from urllib.parse import quote
 import pytest
 
 from core.bot_identity import bot_mention, get_bot_username, set_bot_username
+from core.config import MOSCOW_TZ
 from core.i18n import i18n
 from core.manager import TimetableManager, refresh_schedule_cache_ttl
 from core.parser import NOT_MODIFIED, resolve_lesson_end
@@ -242,7 +243,17 @@ async def test_failed_parse_does_not_refresh_ttl(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_teacher_searching_group_uses_group_lookup():
+async def test_teacher_searching_group_uses_group_lookup(monkeypatch):
+    from bot.dialogs import schedule_view
+
+    fixed = datetime(2026, 10, 24, 12, 0, tzinfo=MOSCOW_TZ)
+
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(schedule_view, "datetime", FixedDatetime)
     from bot.dialogs.schedule_view import get_schedule_data
 
     dm = AsyncMock()
