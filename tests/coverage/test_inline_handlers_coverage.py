@@ -52,28 +52,39 @@ class TestParseDay:
             assert d == today + timedelta(days=1)
             assert parts == ["Группа"]
 
-    def test_weekday_alias_in_future(self):
-        today = _today()
-        # pick a weekday strictly after today to hit the days_diff >= 0 branch
-        target = (today.weekday() + 2) % 7
-        alias = next(name for name, num in DAY_ALIASES.items() if num == target and name.isascii())
+    def test_weekday_alias_in_future(self, monkeypatch):
+        # Фиксируем «сегодня» (среда), иначе тест зависит от дня запуска:
+        # в пятницу/субботу «+2 дня» заворачивается в прошлое.
+        fixed = datetime(2026, 11, 11, 12, 0, tzinfo=MOSCOW_TZ)
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(ih, "datetime", FixedDatetime)
+        today = fixed.date()
+        # четверг строго после среды -> days_diff >= 0
+        alias = next(name for name, num in DAY_ALIASES.items() if num == 3 and name.isascii())
         d, parts = parse_day_from_query([alias, "Группа"])
-        expected_diff = target - today.weekday()
-        if expected_diff < 0:
-            expected_diff += 7
-        assert d == today + timedelta(days=expected_diff)
+        assert d == today + timedelta(days=1)
         assert parts == ["Группа"]
 
-    def test_weekday_alias_already_passed(self):
-        today = _today()
-        # pick a weekday strictly before today to hit the days_diff < 0 branch
-        target = (today.weekday() - 1) % 7
-        alias = next(name for name, num in DAY_ALIASES.items() if num == target and name.isascii())
+    def test_weekday_alias_already_passed(self, monkeypatch):
+        fixed = datetime(2026, 11, 11, 12, 0, tzinfo=MOSCOW_TZ)
+
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed
+
+        monkeypatch.setattr(ih, "datetime", FixedDatetime)
+        today = fixed.date()
+        # понедельник уже прошёл -> days_diff < 0, переносим на следующую неделю
+        alias = next(name for name, num in DAY_ALIASES.items() if num == 0 and name.isascii())
         d, parts = parse_day_from_query([alias, "Группа"])
-        expected_diff = target - today.weekday()
-        if expected_diff < 0:
-            expected_diff += 7
-        assert d == today + timedelta(days=expected_diff)
+        assert d == today + timedelta(days=5)
+        assert parts == ["Группа"]
 
     def test_no_day_defaults_to_today(self):
         d, parts = parse_day_from_query(["Группа"])
