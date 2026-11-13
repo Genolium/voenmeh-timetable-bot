@@ -363,13 +363,29 @@ async def test_generate_bg_read_failure(monkeypatch, tmp_path):
     real_read = Path.read_bytes
 
     def fake_read(self):
-        if self.name == "light_background.png":
+        if self.name == "light_background.jpg":
             raise RuntimeError("cannot read")
         return real_read(self)
 
     monkeypatch.setattr(Path, "read_bytes", fake_read)
     assert await ig.generate_schedule_image(_schedule(), "Нечетная", "G1", str(tmp_path / "o.png"), user_theme="light") is True
     assert ig._bg_images_cache["light"] == ""
+
+
+@pytest.mark.asyncio
+async def test_generate_bg_prefers_jpeg(monkeypatch, tmp_path):
+    _install(monkeypatch, FakeContext(FakeBrowser([FakePage(height=900)])))
+    assert await ig.generate_schedule_image(_schedule(), "Нечетная", "G1", str(tmp_path / "o.png"), user_theme="light") is True
+    assert ig._bg_images_cache["light"].startswith("data:image/jpeg;base64,")
+
+
+@pytest.mark.asyncio
+async def test_generate_bg_keeps_png_for_line_art(monkeypatch, tmp_path):
+    _install(monkeypatch, FakeContext(FakeBrowser([FakePage(height=900)])))
+    assert (
+        await ig.generate_schedule_image(_schedule(), "Нечетная", "G1", str(tmp_path / "o.png"), user_theme="matrix") is True
+    )
+    assert ig._bg_images_cache["matrix"].startswith("data:image/png;base64,")
 
 
 @pytest.mark.asyncio

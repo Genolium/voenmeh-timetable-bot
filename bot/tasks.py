@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict
 
 import aiohttp
@@ -141,7 +142,46 @@ class RobustRetries(Retries):
                     return
 
         # Fall back to default retry logic
+        if exception is not None:
+            retries = message.options.get("retries", 0)
+            max_retries = message.options.get("max_retries", self.max_retries)
+            if max_retries is not None and retries >= max_retries:
+                _record_failed_message_to_dlq(message, exception)
         super().after_process_message(broker, message, result=result, exception=exception)
+
+
+def _record_failed_message_to_dlq(message: object, exception: BaseException) -> None:
+    """Persist a Dramatiq message to DLQ after retries are exhausted."""
+    try:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from core.config import settings
+        from core.dlq_manager import DLQManager
+
+        args = list(getattr(message, "args", None) or [])
+        user_id = args[0] if args and isinstance(args[0], int) else 0
+        retries = (getattr(message, "options", None) or {}).get("retries", 0)
+        actor_name = getattr(message, "actor_name", "unknown")
+        payload = {"actor": actor_name, "args": args[:8]}
+
+        async def _persist():
+            engine = create_async_engine(settings.DATABASE_URL)
+            factory = async_sessionmaker(engine, expire_on_commit=False)
+            try:
+                manager = DLQManager(session_factory=factory)
+                await manager.record_failed_message(
+                    user_id=user_id,
+                    payload=payload,
+                    error_message=str(exception),
+                    message_type=actor_name,
+                    retry_count=int(retries or 0),
+                )
+            finally:
+                await engine.dispose()
+
+        run_async(_persist())
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to record exhausted Dramatiq retries into DLQ")
 
 
 def _configure_broker_middleware(broker: Any) -> None:
@@ -176,9 +216,22 @@ def _create_noop_broker():
     return _NoopBroker()
 
 
+def _compose_hostname_outside_docker(broker_url: str) -> bool:
+    """True when URL points at a Compose service name but we are not in Docker."""
+    from urllib.parse import urlparse
+
+    try:
+        host = (urlparse(broker_url).hostname or "").lower()
+    except Exception:
+        return False
+    if host not in {"rabbitmq", "redis", "db"}:
+        return False
+    return not Path("/.dockerenv").exists()
+
+
 def _create_broker(broker_url: str | None) -> "Broker":
     """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
-    if broker_url:
+    if broker_url and not _compose_hostname_outside_docker(broker_url):
         # Connection parameters are handled via rabbitmq.conf and retry middleware
         broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
     else:
@@ -379,6 +432,61 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int) -> Non
         raise
 
 
+_MEDIA_SEND_METHODS = {
+    "photo": "send_photo",
+    "video": "send_video",
+    "animation": "send_animation",
+    "document": "send_document",
+    "audio": "send_audio",
+    "voice": "send_voice",
+    "video_note": "send_video_note",
+    "sticker": "send_sticker",
+}
+_MEDIA_NO_CAPTION_KINDS = {"sticker", "video_note"}
+
+
+async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
+    """Отправка медиа с HTML-подписью. copy_message теги не разбирает."""
+    method_name = _MEDIA_SEND_METHODS.get(kind)
+    if not method_name:
+        raise ValueError(f"Unsupported broadcast media kind: {kind}")
+    try:
+        bot = await get_worker_bot()
+        method = getattr(bot, method_name)
+        kwargs: Dict[str, Any] = {}
+        if caption and kind not in _MEDIA_NO_CAPTION_KINDS:
+            kwargs["caption"] = caption
+            kwargs["parse_mode"] = "HTML"
+        async with rate_limiter:
+            await method(user_id, file_id, **kwargs)
+        log.info(f"[SEND_OK] Медиа ({kind}) отправлено пользователю {user_id}")
+        return
+    except TelegramForbiddenError:
+        log.info(f"User {user_id} blocked the bot. Marking as blocked.")
+        await _mark_user_as_blocked(user_id)
+        return
+    except TelegramBadRequest as e:
+        if "bot was blocked by the user" in str(e).lower() or "chat not found" in str(e).lower():
+            log.info(f"[SEND_BLOCKED] User {user_id} blocked or deleted chat. Marking as blocked.")
+            await _mark_user_as_blocked(user_id)
+            return
+        log.error(f"BadRequest sending media to {user_id}: {e}")
+        raise
+    except RetryAfter as e:
+        log.warning(f"Telegram Rate Limit (RetryAfter {e.retry_after}s) for {user_id}")
+        raise RateLimitExceeded("telegram retry after")
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "connect call failed" in error_msg or "cannot connect" in error_msg:
+            log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
+            raise
+        if "timeout" in error_msg:
+            log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
+            return
+        log.error(f"[SEND_FAIL] Unknown error sending media to {user_id}: {e}")
+        raise
+
+
 @dramatiq.actor(
     queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
 )  # 15 мин (достаточно для сетевых задержек)
@@ -389,6 +497,11 @@ def send_message_task(user_id: int, text: str) -> None:
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
 def copy_message_task(user_id: int, from_chat_id: int, message_id: int) -> None:
     run_async(_copy_message(user_id, from_chat_id, message_id))
+
+
+@dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)
+def send_media_task(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
+    run_async(_send_media(user_id, kind, file_id, caption))
 
 
 @dramatiq.actor(

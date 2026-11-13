@@ -24,6 +24,7 @@ from bot.tasks import (
     _create_bot_with_timeout,
     _mark_user_as_blocked,
     _send_error_message,
+    _send_media,
     _send_message,
     _shutdown_telemetry,
     check_theme_subscription_task,
@@ -32,6 +33,7 @@ from bot.tasks import (
     get_redis_client,
     get_worker_bot,
     send_lesson_reminder_task,
+    send_media_task,
     send_message_task,
     send_week_original_if_subscribed_task,
 )
@@ -163,6 +165,85 @@ class TestRobustRetries:
         message.message_id = "m"
         retries.after_process_message(broker, message, exception=ValueError("boom"))
         broker.enqueue.assert_called_once()
+
+    def test_exhausted_retries_go_to_dlq(self, monkeypatch):
+        record = MagicMock()
+        monkeypatch.setattr(tasks, "_record_failed_message_to_dlq", record)
+        retries = RobustRetries(max_retries=2, min_backoff=1, max_backoff=2)
+        broker = MagicMock()
+        actor = MagicMock()
+        actor.options = {}
+        broker.get_actor.return_value = actor
+        message = MagicMock()
+        message.options = {"retries": 2}
+        message.actor_name = "send_message_task"
+        message.message_id = "m"
+        retries.after_process_message(broker, message, exception=ValueError("boom"))
+        record.assert_called_once()
+
+
+def test_record_failed_message_to_dlq_helper(monkeypatch):
+    recorded = {}
+
+    class FakeEngine:
+        async def dispose(self):
+            recorded["disposed"] = True
+
+    class FakeDLQ:
+        def __init__(self, session_factory=None):
+            recorded["factory"] = session_factory
+
+        async def record_failed_message(self, **kwargs):
+            recorded["kwargs"] = kwargs
+            return 1
+
+    monkeypatch.setattr("core.dlq_manager.DLQManager", FakeDLQ)
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", lambda *a, **k: FakeEngine())
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.async_sessionmaker", lambda *a, **k: object())
+
+    def fake_run(coro):
+        asyncio.run(coro)
+
+    monkeypatch.setattr(tasks, "run_async", fake_run)
+    message = SimpleNamespace(args=[7, "payload"], options={"retries": 5}, actor_name="send_message_task")
+    tasks._record_failed_message_to_dlq(message, ValueError("boom"))
+    assert recorded["kwargs"]["user_id"] == 7
+    assert recorded["disposed"] is True
+
+
+def test_record_failed_message_to_dlq_swallows_errors(monkeypatch):
+    def fake_run(coro):
+        coro.close()
+        raise RuntimeError("persist failed")
+
+    monkeypatch.setattr(tasks, "run_async", fake_run)
+    tasks._record_failed_message_to_dlq(SimpleNamespace(args=[], options={}), Exception("e"))
+
+
+def test_compose_hostname_outside_docker_uses_stub_for_compose_hosts():
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is True
+    assert tasks._compose_hostname_outside_docker("amqp://localhost:5672/") is False
+    assert tasks._compose_hostname_outside_docker("amqp://127.0.0.1:5672/") is False
+
+
+def test_compose_hostname_swallows_urlparse_errors(monkeypatch):
+    def _boom(_url):
+        raise RuntimeError("bad url")
+
+    monkeypatch.setattr("urllib.parse.urlparse", _boom)
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is False
+
+
+def test_compose_hostname_inside_docker_keeps_rabbitmq(monkeypatch):
+    class FakePath:
+        def __init__(self, _path):
+            pass
+
+        def exists(self):
+            return True
+
+    monkeypatch.setattr(tasks, "Path", FakePath)
+    assert tasks._compose_hostname_outside_docker("amqp://guest@rabbitmq:5672/") is False
 
 
 # --------------------------------------------------------------------------- #
@@ -341,6 +422,111 @@ class TestCopyMessage:
             await _copy_message(1, 2, 3)
 
 
+class TestSendMedia:
+    @pytest.mark.asyncio
+    async def test_success_photo_with_caption(self, monkeypatch):
+        bot = AsyncMock()
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        await _send_media(1, "photo", "fid", "<b>hi</b>")
+        bot.send_photo.assert_awaited_once_with(1, "fid", caption="<b>hi</b>", parse_mode="HTML")
+
+    @pytest.mark.asyncio
+    async def test_success_photo_without_caption(self, monkeypatch):
+        bot = AsyncMock()
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        await _send_media(1, "photo", "fid", "")
+        bot.send_photo.assert_awaited_once_with(1, "fid")
+
+    @pytest.mark.asyncio
+    async def test_sticker_ignores_caption(self, monkeypatch):
+        bot = AsyncMock()
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        await _send_media(1, "sticker", "fid", "<b>nope</b>")
+        bot.send_sticker.assert_awaited_once_with(1, "fid")
+
+    @pytest.mark.asyncio
+    async def test_unsupported_kind(self):
+        with pytest.raises(ValueError, match="Unsupported broadcast media kind"):
+            await _send_media(1, "weird", "fid")
+
+    @pytest.mark.asyncio
+    async def test_forbidden(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = TelegramForbiddenError(method=MagicMock(), message="forbidden")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        mark = AsyncMock()
+        monkeypatch.setattr(tasks, "_mark_user_as_blocked", mark)
+        await _send_media(1, "photo", "fid")
+        mark.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_bad_request_blocked(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = TelegramBadRequest(method=MagicMock(), message="bot was blocked by the user")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        mark = AsyncMock()
+        monkeypatch.setattr(tasks, "_mark_user_as_blocked", mark)
+        await _send_media(1, "photo", "fid")
+        mark.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_bad_request_chat_not_found(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = TelegramBadRequest(method=MagicMock(), message="chat not found")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        mark = AsyncMock()
+        monkeypatch.setattr(tasks, "_mark_user_as_blocked", mark)
+        await _send_media(1, "photo", "fid")
+        mark.assert_awaited_once_with(1)
+
+    @pytest.mark.asyncio
+    async def test_bad_request_other_raises(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = TelegramBadRequest(method=MagicMock(), message="unexpected")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        with pytest.raises(TelegramBadRequest):
+            await _send_media(1, "photo", "fid")
+
+    @pytest.mark.asyncio
+    async def test_retry_after(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = TelegramRetryAfter(method=MagicMock(), message="slow", retry_after=1)
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        with pytest.raises((RateLimitExceeded, TypeError)):
+            await _send_media(1, "photo", "fid")
+
+    @pytest.mark.asyncio
+    async def test_connection_error_raises(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = Exception("connect call failed")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        with pytest.raises(Exception):
+            await _send_media(1, "photo", "fid")
+
+    @pytest.mark.asyncio
+    async def test_cannot_connect_raises(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = Exception("cannot connect")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        with pytest.raises(Exception):
+            await _send_media(1, "photo", "fid")
+
+    @pytest.mark.asyncio
+    async def test_timeout_swallowed(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = Exception("timeout")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        assert await _send_media(1, "photo", "fid") is None
+
+    @pytest.mark.asyncio
+    async def test_unknown_error_raises(self, monkeypatch):
+        bot = AsyncMock()
+        bot.send_photo.side_effect = Exception("weird")
+        monkeypatch.setattr(tasks, "get_worker_bot", AsyncMock(return_value=bot))
+        with pytest.raises(Exception):
+            await _send_media(1, "photo", "fid")
+
+
 # --------------------------------------------------------------------------- #
 # Simple task wrappers
 # --------------------------------------------------------------------------- #
@@ -353,6 +539,11 @@ class TestTaskWrappers:
     def test_copy_message_task(self, monkeypatch):
         monkeypatch.setattr(tasks, "run_async", MagicMock())
         copy_message_task(1, 2, 3)
+        tasks.run_async.assert_called_once()
+
+    def test_send_media_task(self, monkeypatch):
+        monkeypatch.setattr(tasks, "run_async", MagicMock())
+        send_media_task(1, "photo", "file", "<b>hi</b>")
         tasks.run_async.assert_called_once()
 
     def test_reminder_task_with_text(self, monkeypatch):

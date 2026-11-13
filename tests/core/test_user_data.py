@@ -84,6 +84,7 @@ async def test_get_user_settings_for_unknown_user_returns_defaults(
         "evening_notify": False,
         "morning_summary": False,
         "lesson_reminders": False,
+        "schedule_diff_notify": False,
         "reminder_time_minutes": 20,
         "theme": "standard",
         "morning_time": "08:00",
@@ -99,6 +100,9 @@ async def test_update_setting_invalid_name_is_ignored(manager_db: UserDataManage
     assert settings["evening_notify"] is True
     assert settings["morning_summary"] is True
     assert settings["lesson_reminders"] is True
+    await manager_db.update_setting(1, "schedule_diff_notify", False)
+    settings = await manager_db.get_user_settings(1)
+    assert settings["schedule_diff_notify"] is False
 
 
 @pytest.mark.asyncio
@@ -182,6 +186,7 @@ class TestUserDataManagerWithSQLAlchemy:
             "evening_notify": True,
             "morning_summary": True,
             "lesson_reminders": True,
+            "schedule_diff_notify": True,
             "reminder_time_minutes": 20,
             "theme": "standard",
             "morning_time": "08:00",

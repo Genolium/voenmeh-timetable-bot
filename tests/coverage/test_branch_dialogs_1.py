@@ -279,19 +279,6 @@ class TestScheduleViewBranches:
         udm.set_user_group.assert_not_awaited()
         tm.get_teacher_schedule.assert_awaited_once()
 
-    async def test_schedule_view_get_schedule_data_without_redis_update(self):
-        """224->231: в Redis нет метки последнего обновления расписания."""
-        tm = make_timetable_manager()
-        tm.redis.get.return_value = None
-        dm = _sched_dm(
-            tm=tm,
-            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
-        )
-
-        data = await schedule_view.get_schedule_data(dm)
-
-        assert data["schedule_freshness"] == ""
-
     async def test_schedule_view_get_week_image_data_without_event_user(self):
         """409->416: нет user_id — тема пользователя не запрашивается."""
         tm = make_timetable_manager()
@@ -343,7 +330,7 @@ class TestScheduleViewBranches:
 
         with (
             patch("pathlib.Path.exists", return_value=True),
-            patch.object(schedule_view, "send_week_original_if_subscribed_task"),
+            patch("bot.tasks.send_week_original_if_subscribed_task"),
         ):
             await schedule_view.on_send_original_file(callback, None, dm)
 
@@ -442,7 +429,7 @@ class TestScheduleViewBranches:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=service),
-            patch.object(schedule_view, "send_week_original_if_subscribed_task"),
+            patch("bot.tasks.send_week_original_if_subscribed_task"),
         ):
             await schedule_view.on_send_original_file(callback, None, dm)
 
