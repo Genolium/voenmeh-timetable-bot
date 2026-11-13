@@ -132,6 +132,7 @@ class TestCommandHandlers:
 
         mock_message = MagicMock()
         mock_message.from_user.id = 123456789
+        mock_message.from_user.language_code = "en"
 
         await main.start_command_handler(mock_message, mock_dialog_manager)
 

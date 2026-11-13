@@ -69,10 +69,12 @@ async def get_history_data(dialog_manager: DialogManager, **kwargs: Any) -> dict
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     items = []
+    labels = {"group": "🎓", "teacher": "🧑‍🏫", "room": "🚪"}
     if user_data_manager:
         for item_type in ("group", "teacher", "room"):
             for value in await user_data_manager.get_history(user_id, item_type):
-                items.append(f"{item_type}:{value}")
+                prefix = labels.get(item_type, "")
+                items.append((f"{item_type}:{value}", f"{prefix} {value}".strip()))
     return {
         "history_items": items,
         "find_history_title": _("find_history_title"),
@@ -111,6 +113,9 @@ async def on_group_input(message: Message, message_input: MessageInput, manager:
         return
 
     if len(found) == 1:
+        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        if user_data_manager and message.from_user:
+            await user_data_manager.add_to_history(message.from_user.id, "group", found[0])
         await manager.start(
             Schedule.view,
             data={DialogDataKeys.GROUP: found[0]},
@@ -279,9 +284,9 @@ find_dialog = Dialog(
     Window(
         Format("{find_history_title}"),
         Select(
-            Format("{item}"),
+            Format("{item[1]}"),
             id="history_select",
-            item_id_getter=lambda item: item,
+            item_id_getter=lambda item: item[0],
             items="history_items",
             on_click=on_history_selected,
         ),

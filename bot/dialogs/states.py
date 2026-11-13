@@ -11,6 +11,7 @@ class MainMenu(StatesGroup):
 
 class Schedule(StatesGroup):
     view = State()
+    more = State()
     full_week_view = State()
     week_image_view = State()
     full_quality_gate = State()

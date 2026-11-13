@@ -88,8 +88,9 @@ class TestOnGroupEntered:
         message = make_message(text="О735Х")
         with patch.object(mm.process, "extract", return_value=[("О735Б", 90), ("X", 40)]):
             await mm.on_group_entered(message, MagicMock(), dm)
-        message.answer.assert_awaited_once()
-        dm.switch_to.assert_not_awaited()
+        message.answer.assert_not_awaited()
+        assert dm.dialog_data["group_suggestions"] == ["О735Б"]
+        dm.switch_to.assert_awaited_with(MainMenu.enter_group)
 
     async def test_not_found(self):
         tm = make_timetable_manager(_schedules={"О735Б": {}})
@@ -132,8 +133,9 @@ class TestOnTeacherEntered:
         dm = _dm(tm=tm)
         message = make_message(text="Иванов")
         await mm.on_teacher_entered(message, MagicMock(), dm)
-        message.answer.assert_awaited_once()
-        dm.switch_to.assert_not_awaited()
+        message.answer.assert_not_awaited()
+        assert dm.dialog_data["teacher_suggestions"] == ["Иванов И.И.", "Петров П.П.", "Сидоров С.С."]
+        dm.switch_to.assert_awaited_with(MainMenu.enter_teacher)
 
     async def test_not_found(self):
         tm = make_timetable_manager()

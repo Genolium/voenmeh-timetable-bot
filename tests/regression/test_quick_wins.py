@@ -98,7 +98,11 @@ async def test_history_ui_reads_and_routes_entries():
     dm.middleware_data = {"user_data_manager": udm}
 
     data = await get_history_data(dm)
-    assert "group:О735Б" in data["history_items"]
+    ids = {item[0] for item in data["history_items"]}
+    labels = {item[1] for item in data["history_items"]}
+    assert "group:О735Б" in ids
+    assert "🎓 О735Б" in labels
+    assert not any(str(label).startswith("group:") for label in labels)
 
     dm.start = AsyncMock()
     dm.switch_to = AsyncMock()

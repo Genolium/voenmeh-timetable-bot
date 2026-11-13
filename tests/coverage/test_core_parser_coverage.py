@@ -525,7 +525,7 @@ async def test_legacy_xml_close_failure(monkeypatch):
 @pytest.mark.asyncio
 async def test_fetch_all_voenmeh_su_not_modified():
     with patch("core.parser.fetch_and_parse_from_voenmeh_su", AsyncMock(return_value=parser.NOT_MODIFIED)):
-        assert await parser.fetch_and_parse_all_schedules() is None
+        assert await parser.fetch_and_parse_all_schedules() is parser.NOT_MODIFIED
 
 
 @pytest.mark.asyncio
@@ -559,7 +559,7 @@ async def test_fetch_all_xml_not_modified():
         patch("core.parser.fetch_and_parse_from_voenmeh_su", AsyncMock(return_value=None)),
         patch("core.parser._fetch_and_parse_legacy_xml", AsyncMock(return_value=parser.NOT_MODIFIED)),
     ):
-        assert await parser.fetch_and_parse_all_schedules() is None
+        assert await parser.fetch_and_parse_all_schedules() is parser.NOT_MODIFIED
 
 
 @pytest.mark.asyncio

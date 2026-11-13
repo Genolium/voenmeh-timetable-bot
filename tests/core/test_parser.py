@@ -162,7 +162,7 @@ async def test_parser_handles_304(monkeypatch):
 
     monkeypatch.setattr("aiohttp.ClientSession", lambda *a, **k: Session())
     res = await parser.fetch_and_parse_all_schedules()
-    assert res is None
+    assert res is parser.NOT_MODIFIED
 
 
 # --- Тесты для оффлайн режима (fallback) ---
@@ -530,6 +530,7 @@ async def test_fetch_and_parse_from_voenmeh_su_success():
                 "id": 37691,
                 "day": 1,
                 "time": "14:55",
+                "end": "16:05",
                 "week": "odd",
                 "kind": "пр",
                 "subject": "НИР",
@@ -587,7 +588,7 @@ async def test_fetch_and_parse_from_voenmeh_su_success():
     mon_lesson = o735b["odd"]["Понедельник"][0]
     assert mon_lesson["subject"] == "НИР"
     assert mon_lesson["type"] == "пр"
-    assert mon_lesson["time"] == "14:55-16:25"
+    assert mon_lesson["time"] == "14:55-16:05"
     assert mon_lesson["teachers"] == "Снижко Е.А."
     assert mon_lesson["room"] == "258*"
 

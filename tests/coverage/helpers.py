@@ -70,7 +70,7 @@ def make_timetable_manager(**attrs):
     """A TimetableManager stand-in that is safe for ``hasattr(..., 'redis')``."""
     tm = MagicMock()
     tm.redis = AsyncMock()
-    tm._schedules = {}
+    tm._schedules = {"О735Б": {}}
     tm._teachers_index = {}
     tm.get_teacher_schedule = AsyncMock(return_value={"lessons": []})
     tm.get_classroom_schedule = AsyncMock(return_value={"lessons": []})

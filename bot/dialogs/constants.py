@@ -19,6 +19,7 @@ class WidgetIds(str, Enum):
     EVENING_NOTIFY = "evening_notify"
     MORNING_SUMMARY = "morning_summary"
     LESSON_REMINDERS = "lesson_reminders"
+    SCHEDULE_DIFF_NOTIFY = "schedule_diff_notify"
 
     # Schedule View
     PREV_WEEK = "prev_week"
@@ -30,6 +31,9 @@ class WidgetIds(str, Enum):
     SETTINGS = "settings"
     FIND_BTN = "find_btn"
     FULL_WEEK = "full_week"
+    MORE = "more_btn"
+    MY_GROUP = "my_group_btn"
+    CHANGE_ROLE = "change_role"
 
     # Find Menu
     FIND_TEACHER_BTN = "find_teacher_btn"
