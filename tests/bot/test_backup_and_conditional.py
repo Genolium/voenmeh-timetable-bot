@@ -35,5 +35,9 @@ async def test_monitor_handles_304_path(mocker):
     redis.lock = MagicMock(return_value=mock_lock)
 
     mock_bot = AsyncMock()
-    mocker.patch("bot.scheduler.fetch_and_parse_all_schedules", AsyncMock(return_value=None))
+    from core.parser import NOT_MODIFIED
+
+    mocker.patch("bot.scheduler.fetch_and_parse_all_schedules", AsyncMock(return_value=NOT_MODIFIED))
+    mocker.patch("bot.scheduler.refresh_schedule_cache_ttl", AsyncMock())
+    mocker.patch("bot.scheduler.LAST_SCHEDULE_UPDATE_TS", MagicMock())
     await monitor_schedule_changes(udm, redis, mock_bot)

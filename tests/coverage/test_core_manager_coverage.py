@@ -5,7 +5,6 @@ Redis is faked, the parser is patched. No network/DB access happens.
 
 import gzip
 import json
-import pickle
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -148,6 +147,17 @@ async def test_create_from_network(redis_client):
         manager = await TimetableManager.create(redis_client)
     assert manager is not None
     assert redis_client.set_calls  # saved to cache
+
+
+@pytest.mark.asyncio
+async def test_create_not_modified_falls_back_to_backup(redis_client):
+    from core.parser import NOT_MODIFIED
+
+    redis_client._keys = ["timetable:backup:1"]
+    redis_client.store["timetable:backup:1"] = compress(sample_data())
+    with patch("core.parser.fetch_and_parse_all_schedules", AsyncMock(return_value=NOT_MODIFIED)):
+        manager = await TimetableManager.create(redis_client)
+    assert manager is not None
 
 
 @pytest.mark.asyncio

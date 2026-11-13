@@ -262,13 +262,34 @@ class TestGetScheduleData:
 
     async def test_metrics_error_is_swallowed(self):
         tm = make_timetable_manager()
+        tm.get_schedule_for_day.return_value = {
+            "lessons": [{"subject": "A", "time": "09:00-10:30", "start_time_raw": "09:00", "end_time_raw": "10:30"}],
+            "date": date(2025, 9, 1),
+            "week_name": "Нечетная",
+            "week_number": 1,
+        }
         dm = sched_dm(
             tm=tm,
             dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
         )
         with patch.object(sv, "GROUP_POPULARITY", MagicMock(labels=MagicMock(side_effect=RuntimeError("boom")))):
             data = await sv.get_schedule_data(dm)
+        assert data["has_lessons"] is True
         assert data["schedule_text"]
+
+    async def test_saved_group_lookup_error_is_swallowed(self):
+        tm = make_timetable_manager()
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        udm.get_user_type.return_value = "student"
+        udm.get_user_group.side_effect = RuntimeError("db down")
+        dm = sched_dm(
+            tm=tm,
+            udm=udm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        data = await sv.get_schedule_data(dm)
+        assert data["show_my_group"] is False
 
     async def test_error_day_info(self):
         tm = make_timetable_manager()
@@ -578,7 +599,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -596,7 +617,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", side_effect=[False, False, False]),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -610,7 +631,7 @@ class TestOnSendOriginalFile:
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
             patch("pathlib.Path.exists", return_value=True),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             await sv.on_send_original_file(callback, None, dm)
         send_task.send.assert_called_once()
@@ -628,7 +649,7 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
-            patch.object(sv, "send_week_original_if_subscribed_task") as send_task,
+            patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
         ):
             send_task.send.side_effect = RuntimeError("queue down")
             await sv.on_send_original_file(callback, None, dm)
@@ -821,6 +842,133 @@ class TestNewsAndBack:
         callback.message.delete.side_effect = RuntimeError("cannot delete")
         callback.answer.side_effect = RuntimeError("cannot answer")
         await sv.on_inline_back(callback, dm)
+
+
+class TestMoreMenuAndOwnGroup:
+    async def test_on_more_click(self):
+        dm = sched_dm()
+        await sv.on_more_click(make_callback(), MagicMock(), dm)
+        dm.switch_to.assert_awaited_with(Schedule.more)
+
+    async def test_on_my_group_click_opens_saved(self):
+        udm = AsyncMock()
+        udm.get_user_group.return_value = "О735Б"
+        dm = sched_dm(udm=udm)
+        await sv.on_my_group_click(make_callback(), MagicMock(), dm)
+        dm.start.assert_awaited()
+        assert dm.start.await_args.args[0] == Schedule.view
+
+    async def test_on_my_group_click_without_saved_answers(self):
+        udm = AsyncMock()
+        udm.get_user_group.return_value = None
+        dm = sched_dm(udm=udm)
+        callback = make_callback()
+        await sv.on_my_group_click(callback, MagicMock(), dm)
+        callback.answer.assert_awaited()
+
+    async def test_on_change_group_click_teacher(self):
+        dm = sched_dm(dialog_data={"user_type": "teacher"})
+        await sv.on_change_group_click(make_callback(), MagicMock(), dm)
+        assert dm.start.await_args.args[0] == MainMenu.enter_teacher
+
+    async def test_teacher_searching_group_uses_group_lookup(self):
+        tm = make_timetable_manager()
+        tm._schedules = {"О735Б": {}}
+        tm.get_schedule_for_day.return_value = {
+            "lessons": [{"subject": "A", "time": "09:00-10:30", "start_time_raw": "09:00", "end_time_raw": "10:30"}],
+            "date": date(2025, 9, 1),
+            "week_name": "Четная",
+            "week_number": 2,
+        }
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        udm.get_user_type.return_value = "teacher"
+        udm.get_user_group.return_value = "Иванов И.И."
+        dm = sched_dm(
+            tm=tm,
+            udm=udm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        data = await sv.get_schedule_data(dm)
+        tm.get_schedule_for_day.assert_awaited()
+        tm.get_teacher_schedule.assert_not_awaited()
+        assert data["show_my_group"] is True
+        assert data["has_lessons"] is True
+
+    async def test_empty_day_uses_caption_not_duplicate_text(self):
+        tm = make_timetable_manager()
+        tm._schedules = {"О735Б": {}}
+        tm.get_schedule_for_day.return_value = {
+            "lessons": [],
+            "date": date(2025, 9, 1),
+            "week_name": "Нечетная неделя",
+            "week_number": 3,
+        }
+        dm = sched_dm(
+            tm=tm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        data = await sv.get_schedule_data(dm)
+        assert data["schedule_text"] == ""
+        assert data["empty_caption"]
+        assert "О735Б" in data["empty_caption"]
+        assert sv._when_no_lessons(data, None, None)
+        assert not sv._when_has_lessons(data, None, None)
+        assert not sv._when_show_schedule_text(data, None, None)
+
+    async def test_non_dict_schedules_falls_back_to_role(self):
+        tm = make_timetable_manager()
+        tm._schedules = object()
+        dm = sched_dm(
+            tm=tm,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        await sv.get_schedule_data(dm)
+        tm.get_schedule_for_day.assert_awaited_once()
+
+    async def test_text_week_non_dict_schedules_uses_teacher_lookup(self):
+        tm = make_timetable_manager()
+        tm._schedules = object()
+        tm.get_teacher_schedule.return_value = None
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(
+            tm=tm,
+            udm=udm,
+            dialog_data={
+                DialogDataKeys.GROUP: "Иванов И.И.",
+                DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01",
+                "user_type": "teacher",
+            },
+        )
+        await sv.on_text_week_click(make_callback(), MagicMock(), dm)
+        assert tm.get_teacher_schedule.await_count == 6
+
+    async def test_help_feedback_and_report_error(self):
+        dm = sched_dm(dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"})
+        await sv.on_help_click(make_callback(), MagicMock(), dm)
+        await sv.on_feedback_click(make_callback(), MagicMock(), dm)
+        await sv.on_report_error_click(make_callback(), MagicMock(), dm)
+        assert dm.start.await_count == 3
+
+    async def test_check_subscription_button_delegates(self):
+        bot = AsyncMock()
+        bot.get_chat_member.return_value = MagicMock(status="member")
+        dm = sched_dm(
+            bot=bot,
+            dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"},
+        )
+        with patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"), patch("pathlib.Path.exists", return_value=True):
+            await sv.on_check_subscription_button(make_callback(), MagicMock(), dm)
+        bot.send_document.assert_awaited_once()
+
+    async def test_my_group_answer_error_is_swallowed(self):
+        udm = AsyncMock()
+        udm.get_user_group.return_value = None
+        dm = sched_dm(udm=udm)
+        callback = make_callback()
+        callback.answer.side_effect = RuntimeError("toast failed")
+        await sv.on_my_group_click(callback, MagicMock(), dm)
 
 
 class TestDeadShims:

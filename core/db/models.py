@@ -26,6 +26,7 @@ class User(Base):
     evening_notify: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
     morning_summary: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
     lesson_reminders: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
+    schedule_diff_notify: Mapped[bool] = mapped_column(Boolean, server_default="t", default=True)
 
     reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=20, server_default="20", nullable=False)
     morning_time: Mapped[str] = mapped_column(String(5), default="08:00", server_default="08:00", nullable=False)

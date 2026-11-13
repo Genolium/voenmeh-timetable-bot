@@ -55,7 +55,23 @@ def print_progress_bar(
         print()  # Новая строка в конце
 
 
-_bg_images_cache: dict[str, bytes] = {}
+_bg_images_cache: dict[str, str] = {}
+
+
+def _background_path(key: str) -> Path | None:
+    """Возвращает первый существующий фон: сначала JPEG, затем PNG.
+
+    JPEG используется для фотографий и градиентов, PNG — для line-art,
+    который в JPEG получается больше (см. scripts/optimize_backgrounds.py).
+    """
+    assets = Path(__file__).resolve().parent.parent / "assets"
+    for name in (f"{key}_background.jpg", f"{key}_background.png", f"{key}.jpg", f"{key}.png"):
+        candidate = assets / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 _template_cache = None
 _template_mtime: float | None = None
 
@@ -224,7 +240,7 @@ async def generate_schedule_image(
                 target_key = "orange" if slug == "odd" else "purple"
             else:
                 week_key = f"{base_key}_{slug}"
-                if (project_root / "assets" / f"{week_key}_background.png").exists():
+                if _background_path(week_key) is not None:
                     target_key = week_key
                 else:
                     target_key = base_key
@@ -232,22 +248,19 @@ async def generate_schedule_image(
             if target_key in _bg_images_cache:
                 return _bg_images_cache[target_key]
 
-            # Ищем файл в папке assets
-            candidates = [
-                project_root / "assets" / f"{target_key}_background.png",
-                project_root / "assets" / f"{target_key}.png",
-            ]
-            for p in candidates:
-                if p.exists():
-                    try:
-                        encoded = f"data:image/png;base64,{b64encode(p.read_bytes()).decode()}"
-                        _bg_images_cache[target_key] = encoded
-                        return encoded
-                    except Exception:
-                        break
+            path = _background_path(target_key)
+            if path is None:
+                _bg_images_cache[target_key] = ""
+                return ""
 
-            _bg_images_cache[target_key] = ""
-            return ""
+            try:
+                mime = "image/jpeg" if path.suffix == ".jpg" else "image/png"
+                encoded = f"data:{mime};base64,{b64encode(path.read_bytes()).decode()}"
+            except Exception:
+                _bg_images_cache[target_key] = ""
+                return ""
+            _bg_images_cache[target_key] = encoded
+            return encoded
 
         bg_image_data = _get_bg_image_data(user_theme, week_slug)
 

@@ -163,9 +163,34 @@ def test_config_admin_ids_invalid(monkeypatch):
         importlib.reload(config_module)
 
 
+def test_config_admin_ids_empty(monkeypatch):
+    monkeypatch.setenv("ADMIN_ID", "")
+    try:
+        importlib.reload(config_module)
+        assert config_module.ADMIN_IDS == []
+    finally:
+        monkeypatch.delenv("ADMIN_ID", raising=False)
+        importlib.reload(config_module)
+
+
 def test_config_admin_ids_valid_after_restore():
     # Sanity check that the module still parses the .env value after reload.
     assert all(isinstance(i, int) for i in config_module.ADMIN_IDS)
+
+
+def test_news_channel_url_branches(monkeypatch):
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "https://t.me/demo")
+    assert config_module.news_channel_url() == "https://t.me/demo"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "http://example.com/news")
+    assert config_module.news_channel_url() == "http://example.com/news"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "@demo")
+    assert config_module.news_channel_url() == "https://t.me/demo"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "-1001")
+    assert config_module.news_channel_url().startswith("https://t.me/")
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "plain")
+    assert config_module.news_channel_url() == "https://t.me/plain"
+    monkeypatch.setattr(config_module, "SUBSCRIPTION_CHANNEL", "")
+    assert "t.me" in config_module.news_channel_url()
 
 
 def test_config_get_redis_client(monkeypatch):
