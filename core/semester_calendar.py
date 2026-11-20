@@ -35,6 +35,14 @@ def _monday_of_week(value: date) -> date:
     return value - timedelta(days=value.weekday())
 
 
+def _safe_date(year: int, month: int, day: int) -> date:
+    """Construct a date, clamping Feb 29 to Feb 28 in non-leap years."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return date(year, month, 28)
+
+
 def _resolve_dates(
     target: date,
     fall_start: date | None,
@@ -44,8 +52,8 @@ def _resolve_dates(
     fall_month, fall_day = (fall_start.month, fall_start.day) if fall_start else DEFAULT_FALL_START
     spring_month, spring_day = (spring_start.month, spring_start.day) if spring_start else DEFAULT_SPRING_START
     academic_year = _academic_year_start(target)
-    fall = date(academic_year, fall_month, fall_day)
-    spring = date(academic_year + 1, spring_month, spring_day)
+    fall = _safe_date(academic_year, fall_month, fall_day)
+    spring = _safe_date(academic_year + 1, spring_month, spring_day)
     return fall, spring
 
 

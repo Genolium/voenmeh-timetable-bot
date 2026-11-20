@@ -37,7 +37,8 @@ def resolve_lesson_end(start_dt: datetime, item: dict | None = None) -> str:
     if item:
         raw_end = item.get("end") or item.get("end_time")
         if raw_end:
-            token = str(raw_end).split()[0]
+            parts = str(raw_end).split()
+            token = parts[0] if parts else ""
             try:
                 return datetime.strptime(token, "%H:%M").strftime("%H:%M")
             except ValueError:
@@ -199,7 +200,8 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
                 week = item.get("week")
                 time_raw = item.get("time", "N/A")
-                start_time_token = time_raw.split()[0] if time_raw else "N/A"
+                time_parts = str(time_raw).split() if time_raw else []
+                start_time_token = time_parts[0] if time_parts else "N/A"
                 try:
                     start_dt = datetime.strptime(start_time_token, "%H:%M")
                     start_time_str = start_dt.strftime("%H:%M")
@@ -413,7 +415,10 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if API_URL == "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml":
             now = datetime.now(MOSCOW_TZ)
             current_academic_year = now.year if now.month >= 8 else now.year - 1
-            xml_start_year = int(period_meta.get("StartYear", 0))
+            try:
+                xml_start_year = int(period_meta.get("StartYear", 0))
+            except (TypeError, ValueError):
+                xml_start_year = 0
             if xml_start_year and xml_start_year < current_academic_year:
                 logging.warning(
                     f"XML с {API_URL} содержит устаревшее расписание за {xml_start_year} год "

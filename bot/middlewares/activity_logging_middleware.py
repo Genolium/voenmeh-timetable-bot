@@ -77,7 +77,8 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if text_value and not str(text_value).startswith("<MagicMock"):
             if str(text_value).startswith("/"):
                 action = "command"
-                BOT_COMMANDS.labels(command=str(text_value)[1:], user_type=user_type).inc()
+                raw_cmd = str(text_value)[1:].split()[0].split("@")[0][:32] if str(text_value)[1:].strip() else ""
+                BOT_COMMANDS.labels(command=raw_cmd, user_type=user_type).inc()
             else:
                 action = "text_message"
         elif callback_data is not None and not str(callback_data).startswith("<MagicMock"):
@@ -89,7 +90,12 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                 if hasattr(dialog_manager, "current_dialog"):
                     dialog_name = getattr(dialog_manager.current_dialog, "__name__", "unknown")
                 if hasattr(dialog_manager, "current_context"):
-                    state = str(dialog_manager.current_context.state)
+                    ctx_attr = dialog_manager.current_context
+                    try:
+                        ctx = ctx_attr() if callable(ctx_attr) else ctx_attr
+                        state = str(getattr(ctx, "state", "unknown"))
+                    except Exception:
+                        state = "unknown"
 
                 DIALOG_USAGE.labels(dialog_name=dialog_name, state=state, user_type=user_type).inc()
 
@@ -145,9 +151,13 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             },
         )
 
-        # Обновляем время последнего действия для расчета интервалов
+        # Обновляем время последнего действия для расчета интервалов (с ограничением памяти)
         if user_id != "unknown":
-            self.last_user_actions[user_id] = time.time()
+            now_action_ts = time.time()
+            self.last_user_actions[user_id] = now_action_ts
+            if len(self.last_user_actions) > 10000:
+                cutoff = now_action_ts - 86400
+                self.last_user_actions = {uid: ts for uid, ts in self.last_user_actions.items() if ts >= cutoff}
 
         try:
             return await handler(event, data)

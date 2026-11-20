@@ -80,8 +80,8 @@ class UserDataManager:
             if db_url.startswith("postgresql"):
                 engine_kwargs.update(
                     {
-                        "pool_size": 20,
-                        "max_overflow": 15,
+                        "pool_size": 10,
+                        "max_overflow": 10,
                         "pool_recycle": 1800,
                         "pool_pre_ping": True,
                     }
@@ -215,6 +215,8 @@ class UserDataManager:
             user = await session.get(User, user_id)
             if user:
                 user.last_active_date = now_msk_naive()
+                if username is not None and user.username != username:
+                    user.username = username
                 if user.is_blocked:
                     user.is_blocked = False
                     user.blocked_date = None
@@ -230,6 +232,8 @@ class UserDataManager:
             user = await session.get(User, user_id)
             if user:
                 user.last_active_date = now_msk_naive()
+                if username is not None and user.username != username:
+                    user.username = username
                 if user.is_blocked:
                     user.is_blocked = False
                     user.blocked_date = None
@@ -483,7 +487,7 @@ class UserDataManager:
         yesterday_key = f"timetable:stats:snapshot:{yesterday.strftime('%Y%m%d')}"
 
         delta_users_str = f"+{new_users_day}"
-        delta_dau_pct = 0
+        delta_dau_pct_val: Optional[int] = None
         delta_subs_str = "+0"
 
         if redis_client:
@@ -499,7 +503,7 @@ class UserDataManager:
                     delta_users_str = f"+{diff_total}" if diff_total >= 0 else str(diff_total)
 
                     if y_dau > 0:
-                        delta_dau_pct = round(((dau - y_dau) / y_dau) * 100)
+                        delta_dau_pct_val = round(((dau - y_dau) / y_dau) * 100)
 
                     diff_subs = subscribed_total - y_subs
                     delta_subs_str = f"+{diff_subs}" if diff_subs >= 0 else str(diff_subs)
@@ -507,10 +511,11 @@ class UserDataManager:
                 logger.warning(f"Error reading yesterday stats snapshot: {e}")
 
         # Если в Redis ещё нет вчерашнего снепшота, рассчитываем дельту DAU из базы
-        if delta_dau_pct == 0:
+        if delta_dau_pct_val is None:
             dau_prev = await self.get_dau_previous_day()
-            if dau_prev > 0:
-                delta_dau_pct = round(((dau - dau_prev) / dau_prev) * 100)
+            delta_dau_pct = round(((dau - dau_prev) / dau_prev) * 100) if dau_prev > 0 else 0
+        else:
+            delta_dau_pct = delta_dau_pct_val
 
         dau_pct_str = f"+{delta_dau_pct}%" if delta_dau_pct >= 0 else f"{delta_dau_pct}%"
 

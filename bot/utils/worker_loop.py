@@ -49,10 +49,12 @@ def get_worker_loop() -> asyncio.AbstractEventLoop:
 
 def stop_worker_loop():
     """Stops the global worker loop and joins the thread."""
-    global _worker_loop
+    global _worker_loop, _worker_loop_thread
     if _worker_loop and _worker_loop.is_running():
         _worker_loop.call_soon_threadsafe(_worker_loop.stop)
         logger.info("Stopping worker loop...")
+    if _worker_loop_thread and _worker_loop_thread.is_alive():
+        _worker_loop_thread.join(timeout=5.0)
 
 
 def run_async(coro):

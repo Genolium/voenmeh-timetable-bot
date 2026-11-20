@@ -44,9 +44,9 @@ def compress_image_for_telegram(
             if img.mode in ("RGBA", "LA", "P"):
                 # Создаем белый фон для прозрачных изображений
                 background = Image.new("RGB", img.size, (255, 255, 255))
-                if img.mode == "P":
+                if img.mode in ("P", "LA"):
                     img = img.convert("RGBA")
-                background.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+                background.paste(img, mask=img.split()[-1])
                 img = background
             elif img.mode != "RGB":
                 img = img.convert("RGB")
@@ -112,13 +112,25 @@ def get_telegram_safe_image_path(input_path: str) -> str:
 
     file_size = os.path.getsize(input_path)
 
-    # Если файл уже подходящего размера, возвращаем как есть
+    # Проверяем не только размер в байтах, но и максимальные габариты Telegram (4096px)
+    needs_resize = False
     if file_size <= TELEGRAM_MAX_PHOTO_SIZE:
-        return input_path
+        try:
+            with Image.open(input_path) as img:
+                w, h = img.size
+                needs_resize = w > TELEGRAM_MAX_DIMENSION or h > TELEGRAM_MAX_DIMENSION
+        except Exception:
+            needs_resize = False
+        if not needs_resize:
+            return input_path
 
     # Создаем путь для сжатого изображения
     input_path_obj = Path(input_path)
     compressed_path = input_path_obj.parent / f"{input_path_obj.stem}_compressed{input_path_obj.suffix}"
+
+    # Переиспользуем уже сжатый файл, если он не устарел
+    if compressed_path.exists() and compressed_path.stat().st_mtime >= input_path_obj.stat().st_mtime:
+        return str(compressed_path)
 
     # Сжимаем изображение
     return compress_image_for_telegram(

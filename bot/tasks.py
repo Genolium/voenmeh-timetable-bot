@@ -129,15 +129,15 @@ class RobustRetries(Retries):
                     "amqp connection error",
                 ]
             ):
-                # Exponential backoff for connection issues
-                retries_left = message.options.get("retries", self.max_retries)
-                if retries_left > 0:
-                    # Increase backoff for connection issues
+                # Exponential backoff for connection issues (consistent upward retry counter with Dramatiq Retries)
+                retries = message.options.get("retries", 0)
+                max_retries = message.options.get("max_retries", self.max_retries)
+                if max_retries is None or retries < max_retries:
                     backoff = min(
                         self.max_backoff,
-                        self.min_backoff * (2 ** (self.max_retries - retries_left)),
+                        self.min_backoff * (2**retries),
                     )
-                    message.options["retries"] = retries_left - 1
+                    message.options["retries"] = retries + 1
                     broker.enqueue(message, delay=backoff)
                     return
 
@@ -312,15 +312,18 @@ BOT_INSTANCE = None  # Не используется напрямую; бот с
 rate_limiter = AsyncLimiter(25, 1)
 
 _worker_bot = None
+_worker_bot_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def get_worker_bot() -> Bot:
     """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
-    global _worker_bot
-    if _worker_bot is None:
+    global _worker_bot, _worker_bot_loop
+    current_loop = asyncio.get_running_loop()
+    if _worker_bot is None or _worker_bot_loop is not current_loop:
         # limit=15 ограничивает количество одновременных TCP-соединений
         session = AiohttpSession(timeout=45.0, limit=15)
         _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        _worker_bot_loop = current_loop
 
     return _worker_bot
 
@@ -384,7 +387,7 @@ async def _send_message(user_id: int, text: str) -> None:
 
         # Если это Read Timeout (мы отправили данные, но ответ завис) - НЕ РЕТРАИМ!
         # Telegram с вероятностью 99% уже доставил сообщение. Ретрай вызовет дубликат.
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
 
@@ -424,7 +427,7 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int) -> Non
             raise
 
         # Если это Read Timeout - НЕ РЕТРАИМ!
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
 
@@ -480,7 +483,7 @@ async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") 
         if "connect call failed" in error_msg or "cannot connect" in error_msg:
             log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
             raise
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
         log.error(f"[SEND_FAIL] Unknown error sending media to {user_id}: {e}")
@@ -544,6 +547,7 @@ def generate_week_image_task(
     placeholder_msg_id: int | None = None,
     final_caption: str | None = None,
     lang: str = "ru",
+    user_theme: str | None = None,
 ) -> None:
     # CRITICAL: Acquire semaphore in the Dramatiq thread to avoid blocking the background loop
     with _generation_semaphore:
@@ -567,7 +571,13 @@ def generate_week_image_task(
 
                 if is_auto_generation:
                     success, _ = await image_service._generate_and_cache_image(
-                        cache_key, week_schedule, week_name, group, generated_by="mass", exec_locally=True
+                        cache_key,
+                        week_schedule,
+                        week_name,
+                        group,
+                        generated_by="mass",
+                        user_theme=user_theme,
+                        exec_locally=True,
                     )
                     if success:
                         log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
@@ -579,27 +589,28 @@ def generate_week_image_task(
                     async with bot_for_images:
                         # Вычисляем тему пользователя. В этой ветке user_id всегда задан,
                         # т.к. авто-генерация обрабатывается выше.
-                        user_theme = None
+                        resolved_theme = user_theme
                         assert user_id is not None
-                        db_url = os.getenv("DATABASE_URL")
-                        if db_url:
-                            udm = UserDataManager(db_url=db_url, redis_url=redis_url)
-                            try:
-                                user_theme = await udm.get_user_theme(user_id)
-                            except Exception:
-                                user_theme = None
-                            finally:
+                        if resolved_theme is None:
+                            db_url = os.getenv("DATABASE_URL")
+                            if db_url:
+                                udm = UserDataManager(db_url=db_url, redis_url=redis_url)
                                 try:
-                                    await udm.engine.dispose()
+                                    resolved_theme = await udm.get_user_theme(user_id)
                                 except Exception:
-                                    pass
+                                    resolved_theme = None
+                                finally:
+                                    try:
+                                        await udm.engine.dispose()
+                                    except Exception:
+                                        pass
                         success, _ = await image_service.get_or_generate_week_image(
                             group=group,
                             week_key=week_key,
                             week_name=week_name,
                             week_schedule=week_schedule,
                             user_id=user_id,
-                            user_theme=user_theme,
+                            user_theme=resolved_theme,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption,
                             lang=lang,

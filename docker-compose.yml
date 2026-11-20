@@ -33,6 +33,8 @@ services:
     <<: *base-app-build
     container_name: voenmeh_migrate
     working_dir: /app
+    security_opt:
+      - no-new-privileges:true
     env_file:
       - .env
     command: ["python", "-m", "core.db.migrate"]
@@ -253,7 +255,7 @@ services:
     env_file: [ .env ]
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@voenmeh.local}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin123}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?Set PGADMIN_DEFAULT_PASSWORD in .env}
       PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
       PGADMIN_SERVER_JSON_FILE: '/var/lib/pgadmin/servers.json'

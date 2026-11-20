@@ -129,7 +129,11 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
 
     forecasts: dict[str, dict | None] = {}
     for lang in {row[2] or "ru" for row in users_to_notify}:
-        forecasts[lang] = await weather_api.get_forecast_for_time(tomorrow_9am, lang=lang)
+        try:
+            forecasts[lang] = await weather_api.get_forecast_for_time(tomorrow_9am, lang=lang)
+        except Exception as e:
+            logger.warning(f"Weather forecast failed for evening broadcast ({lang}): {e}")
+            forecasts[lang] = None
     weather_forecast = forecasts.get("ru")
 
     logger.info(f"Вечерняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
@@ -218,7 +222,11 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
 
     forecasts: dict[str, dict | None] = {}
     for lang in {row[2] or "ru" for row in users_to_notify}:
-        forecasts[lang] = await weather_api.get_forecast_for_time(today_9am, lang=lang)
+        try:
+            forecasts[lang] = await weather_api.get_forecast_for_time(today_9am, lang=lang)
+        except Exception as e:
+            logger.warning(f"Weather forecast failed for morning broadcast ({lang}): {e}")
+            forecasts[lang] = None
 
     logger.info(f"Утренняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
     processed_count = 0
@@ -349,12 +357,16 @@ async def minutely_reminders_checker(
                     # 1. Напоминание перед началом первой пары
                     reminder_dt = first_start_dt - timedelta(minutes=reminder_time)
                     if reminder_dt.hour == now.hour and reminder_dt.minute == now.minute:
-                        send_lesson_reminder_task.send(user_id, first_lesson, "first", None, reminder_time, lang)
+                        await asyncio.to_thread(
+                            send_lesson_reminder_task.send, user_id, first_lesson, "first", None, reminder_time, lang
+                        )
                         logger.info(f"Отправлено напоминание о первой паре для {user_id}")
 
                     # 2. Напоминания об окончании пар и перерывах
                     for next_lesson, rem_type, break_dur in end_events:
-                        send_lesson_reminder_task.send(user_id, next_lesson, rem_type, break_dur, None, lang)
+                        await asyncio.to_thread(
+                            send_lesson_reminder_task.send, user_id, next_lesson, rem_type, break_dur, None, lang
+                        )
                         logger.info(f"Отправлено напоминание об окончании пары для {user_id}")
 
             except Exception as grp_err:
@@ -369,7 +381,6 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
     global global_timetable_manager_instance  # Оставляем для возможности переприсвоения
 
-    old_hash = (await redis_client.get(REDIS_SCHEDULE_HASH_KEY) or b"").decode()
     # Add retries
     attempts = 0
     new_schedule_data = None
@@ -395,6 +406,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
 
     # For race condition: Use Redis lock
     async with redis_client.lock("timetable_manager_update_lock", timeout=300, blocking_timeout=120):
+        old_hash = (await redis_client.get(REDIS_SCHEDULE_HASH_KEY) or b"").decode()
         if is_unchanged_result(new_schedule_data):
             logger.info("Расписание не изменилось (304). Продлеваем TTL кэша.")
             await refresh_schedule_cache_ttl(redis_client)
@@ -424,7 +436,8 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
             new_manager = TimetableManager(new_schedule_data, redis_client)
             new_manager.set_semester_settings_manager(SemesterSettingsManager(user_data_manager.async_session_maker))
             await new_manager.save_to_cache()
-            await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
+            if new_hash:
+                await redis_client.set(REDIS_SCHEDULE_HASH_KEY, new_hash)
 
             # Атомарно переключаем активный менеджер: диалоги, планировщик и middleware
             # читают его через TimetableManagerRef/глобальную ссылку.

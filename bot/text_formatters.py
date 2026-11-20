@@ -657,7 +657,7 @@ def generate_reminder_text(
     if teachers := lesson.get("teachers"):
         # Use localized "with {teachers}" format
         teacher_fmt = i18n.get("fmt_teacher_with", lang)
-        info_parts.append(teacher_fmt.format(teachers=teachers))
+        info_parts.append(teacher_fmt.format(teachers=esc(teachers)))
 
     if info_parts:
         text += " ".join(info_parts)

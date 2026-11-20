@@ -102,13 +102,22 @@ class ScheduleDiffDetector:
         else:
             new_lessons = new_schedule.get("lessons", [])
 
-        # Нормализуем пары
-        old_normalized = {
-            cls._get_lesson_id(cls._normalize_lesson(lesson)): cls._normalize_lesson(lesson) for lesson in old_lessons
-        }
-        new_normalized = {
-            cls._get_lesson_id(cls._normalize_lesson(lesson)): cls._normalize_lesson(lesson) for lesson in new_lessons
-        }
+        # Нормализуем пары (не затираем подгруппы с одинаковым временем и предметом)
+        def _index_lessons(raw_lessons: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+            indexed: dict[str, dict[str, str]] = {}
+            for raw in raw_lessons:
+                norm = cls._normalize_lesson(raw)
+                base_id = cls._get_lesson_id(norm)
+                lid = base_id
+                suffix = 2
+                while lid in indexed:
+                    lid = f"{base_id}#{suffix}"
+                    suffix += 1
+                indexed[lid] = norm
+            return indexed
+
+        old_normalized = _index_lessons(old_lessons)
+        new_normalized = _index_lessons(new_lessons)
 
         old_ids = set(old_normalized.keys())
         new_ids = set(new_normalized.keys())
@@ -314,6 +323,7 @@ class ScheduleDiffFormatter:
             ChangeType.LESSON_ADDED,
             ChangeType.LESSON_REMOVED,
             ChangeType.TIME_CHANGED,
+            ChangeType.SUBJECT_CHANGED,
             ChangeType.ROOM_CHANGED,
             ChangeType.TEACHER_CHANGED,
             ChangeType.TYPE_CHANGED,

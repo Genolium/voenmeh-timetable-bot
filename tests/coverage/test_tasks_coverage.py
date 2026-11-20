@@ -130,20 +130,21 @@ class TestRobustRetries:
         message.options = {"retries": 2}
         retries.after_process_message(broker, message, exception=Exception("broken pipe detected"))
         broker.enqueue.assert_called_once()
-        assert message.options["retries"] == 1
+        assert message.options["retries"] == 3
 
-    def test_connection_error_without_retries_left_falls_back(self):
+    def test_connection_error_without_retries_left_falls_back(self, monkeypatch):
+        monkeypatch.setattr(tasks, "_record_failed_message_to_dlq", MagicMock())
         retries = RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000)
         broker = MagicMock()
         actor = MagicMock()
         actor.options = {}
         broker.get_actor.return_value = actor
         message = MagicMock()
-        message.options = {"retries": 0}
+        message.options = {"retries": 5}
         message.actor_name = "a"
         message.message_id = "m"
         retries.after_process_message(broker, message, exception=Exception("stream lost"))
-        broker.enqueue.assert_called_once()
+        broker.enqueue.assert_not_called()
 
     def test_no_exception_delegates(self):
         retries = RobustRetries(max_retries=5, min_backoff=2000, max_backoff=30000)

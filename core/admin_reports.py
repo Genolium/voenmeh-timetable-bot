@@ -266,7 +266,11 @@ class AdminReportsGenerator:
     ) -> str:
         """Форматирует ежедневный отчёт."""
 
-        top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
+        import html as html_lib
+
+        top_groups_text = "\n".join(
+            [f"  • {html_lib.escape(str(g or 'Не указана'))}: {c} пользователей" for g, c in top_groups[:5]]
+        )
         if not top_groups_text:
             top_groups_text = "  • Нет данных"
 
@@ -365,7 +369,11 @@ class AdminReportsGenerator:
     ) -> str:
         """Форматирует еженедельный отчёт."""
 
-        top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
+        import html as html_lib
+
+        top_groups_text = "\n".join(
+            [f"  • {html_lib.escape(str(g or 'Не указана'))}: {c} пользователей" for g, c in top_groups[:5]]
+        )
         if not top_groups_text:
             top_groups_text = "  • Нет данных"
 
@@ -405,7 +413,11 @@ class AdminReportsGenerator:
     ) -> str:
         """Форматирует ежемесячный отчёт."""
 
-        top_groups_text = "\n".join([f"  • {g or 'Не указана'}: {c} пользователей" for g, c in top_groups[:5]])
+        import html as html_lib
+
+        top_groups_text = "\n".join(
+            [f"  • {html_lib.escape(str(g or 'Не указана'))}: {c} пользователей" for g, c in top_groups[:5]]
+        )
         if not top_groups_text:
             top_groups_text = "  • Нет данных"
 

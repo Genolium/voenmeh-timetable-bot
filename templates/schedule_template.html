@@ -1,11 +1,14 @@
 <!doctype html>
-<html lang="ru">
+<html lang="{{ lang | default('ru') }}">
 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Расписание — {{ i18n_week_type }}: {{ group }}</title>
   <style>
+    .hidden {
+      display: none;
+    }
     /* --- 1. Подключение шрифтов --- */
     /* Этот блок загружает все шрифты, используемые в дизайне. */
     /* font-display: swap; нужен для того, чтобы текст был виден сразу, не дожидаясь загрузки кастомного шрифта. */
@@ -438,7 +441,7 @@
       /* ⬛ OLED */
       --oled-odd-bg: #000000;
       --oled-odd-accent: #ffffff;
-      --oled-odd-badge-bg: #262626;
+      --oled-odd-badge-bg: #b8b8b8;
       --oled-odd-card-bg: #0d0d0d;
       --oled-odd-card-accent: #ffffff;
       --oled-odd-card-day-title: #ffffff;
@@ -447,7 +450,7 @@
 
       --oled-even-bg: #000000;
       --oled-even-accent: #ffffff;
-      --oled-even-badge-bg: #262626;
+      --oled-even-badge-bg: #b8b8b8;
       --oled-even-card-bg: #0d0d0d;
       --oled-even-card-accent: #ffffff;
       --oled-even-card-day-title: #ffffff;
@@ -458,7 +461,7 @@
       --oled-text-light: #a3a3a3;
       --oled-card-text: #ffffff;
       --oled-card-text-light: #a3a3a3;
-      --oled-badge-time: #ffffff;
+      --oled-badge-time: #0d0d0d;
 
       /* 📖 PAPER */
       --paper-odd-bg: #ede4d4;
@@ -800,15 +803,21 @@
       text-overflow: ellipsis;
     }
 
-    /* Номер аудитории */
+    /* Преподаватель (под названием предмета в колонках 1-8, не ломая сетку) */
     .lesson-teacher {
-      font-size: 10px;
-      opacity: 0.72;
+      grid-column: 1 / 9;
+      font-size: 2.1rem;
+      color: var(--card-text-light);
+      opacity: 0.85;
       line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
+    /* Номер аудитории (используем колонки 9-10 без пустого зазора) */
     .lesson-room {
-      grid-column: 9 / 10;
+      grid-column: 9 / 11;
       font-weight: 400;
       color: var(--card-text-accent);
       text-align: left;
@@ -938,13 +947,7 @@
       }
 
       /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
-      .lesson-teacher {
-      font-size: 10px;
-      opacity: 0.72;
-      line-height: 1.2;
-    }
-
-    .lesson-room {
+      .lesson-room {
         display: none;
       }
 
@@ -1010,11 +1013,6 @@
       {% endfor %}
     </section>
   </div>
-  <style>
-    .hidden {
-      display: none;
-    }
-  </style>
   <script>
     (function () {
       function setRem(el, value) { el.style.fontSize = value.toFixed(2) + 'rem'; }

@@ -100,9 +100,9 @@ class DLQManager:
         try:
             async with self.session_factory() as session:
                 stmt = update(FailedMessage).where(FailedMessage.id == message_id).values(status=new_status)
-                await session.execute(stmt)
+                result = await session.execute(stmt)
                 await session.commit()
-                return True
+                return bool(getattr(result, "rowcount", 1))
         except Exception as e:
             logger.error(f"❌ [DLQ] Ошибка обновления статуса сообщения {message_id}: {e}")
             return False

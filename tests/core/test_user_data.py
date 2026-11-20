@@ -169,7 +169,7 @@ class TestUserDataManagerWithSQLAlchemy:
         async with manager_with_db.async_session_maker() as session:
             user_after = await session.get(User, 123)
             assert user_after.last_active_date > first_active_date
-            assert user_after.username == "testuser"
+            assert user_after.username == "testuser_new_name"
 
     @pytest.mark.asyncio
     async def test_set_and_get_user_group(self, manager_with_db: UserDataManager):

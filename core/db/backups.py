@@ -176,7 +176,9 @@ async def restore_db_backup(
 def maybe_decompress_gzip(source: Path) -> Path:
     if source.suffix.lower() != ".gz":
         return source
+    import shutil
+
     target = source.with_suffix("")
     with gzip.open(source, "rb") as src, open(target, "wb") as dst:
-        dst.write(src.read())
+        shutil.copyfileobj(src, dst)
     return target

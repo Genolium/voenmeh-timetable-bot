@@ -107,7 +107,7 @@ async def test_robust_retries_backoff_on_connection_error():
     )
 
     broker.enqueue.assert_called_once()
-    assert message.options["retries"] == 1
+    assert message.options["retries"] == 3
 
 
 def test_setup_broker_without_url():

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import logging
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -29,7 +30,7 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
         self.manager = SubscriptionFilterManager(session_factory, redis_client)
 
     def _get_user_id_and_chat_id(self, update: Update) -> tuple[Optional[int], Optional[int]]:
-        msg = getattr(update, "message", None)
+        msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
         if msg and getattr(msg, "from_user", None):
             chat = getattr(msg, "chat", None)
             chat_id = getattr(chat, "id", None)
@@ -60,7 +61,7 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
             "Для использования бота необходимо подписаться на следующие каналы:\n",
         ]
         for i, ch in enumerate(channels, 1):
-            title = ch.get("title", "Канал")
+            title = html.escape(str(ch.get("title", "Канал")))
             lines.append(f"  {i}. <b>{title}</b>")
 
         lines.append("\n<i>После подписки нажмите кнопку «🔄 Проверить подписку» ниже.</i>")

@@ -61,12 +61,16 @@ async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: Di
         await manager.done()
 
 
+async def _noop_pager(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    await callback.answer()
+
+
 about_dialog = Dialog(
     Window(
         StaticMedia(path=ABOUT_WELCOME_IMG),
         Format("{about_page_1}"),
         Row(
-            Button(Const(f"1/{TOTAL_PAGES}"), id="pager_1"),
+            Button(Const(f"1/{TOTAL_PAGES}"), id="pager_1", on_click=_noop_pager),
             SwitchTo(Format("{about_next}"), id="next_1", state=About.page_2),
             Button(Format("{about_finish}"), id="finish_1", on_click=on_finish_clicked),
         ),
@@ -80,7 +84,7 @@ about_dialog = Dialog(
         Format("{about_page_2}"),
         Row(
             Back(Format("{about_back}")),
-            Button(Const(f"2/{TOTAL_PAGES}"), id="pager_2"),
+            Button(Const(f"2/{TOTAL_PAGES}"), id="pager_2", on_click=_noop_pager),
             SwitchTo(Format("{about_next}"), id="next_2", state=About.page_3),
             Button(Format("{about_finish}"), id="finish_2", on_click=on_finish_clicked),
         ),
@@ -94,7 +98,7 @@ about_dialog = Dialog(
         Format("{about_page_3}"),
         Row(
             Back(Format("{about_back}")),
-            Button(Const(f"3/{TOTAL_PAGES}"), id="pager_3"),
+            Button(Const(f"3/{TOTAL_PAGES}"), id="pager_3", on_click=_noop_pager),
             SwitchTo(Format("{about_next}"), id="next_3", state=About.page_4),
             Button(Format("{about_finish}"), id="finish_3", on_click=on_finish_clicked),
         ),
@@ -108,7 +112,7 @@ about_dialog = Dialog(
         Format("{about_page_4}"),
         Row(
             Back(Format("{about_back}")),
-            Button(Const(f"4/{TOTAL_PAGES}"), id="pager_4"),
+            Button(Const(f"4/{TOTAL_PAGES}"), id="pager_4", on_click=_noop_pager),
             SwitchTo(Format("{about_next}"), id="next_4", state=About.page_5),
             Button(Format("{about_finish}"), id="finish_4", on_click=on_finish_clicked),
         ),
@@ -122,7 +126,7 @@ about_dialog = Dialog(
         Format("{about_page_5}"),
         Row(
             Back(Format("{about_back}")),
-            Button(Const(f"5/{TOTAL_PAGES}"), id="pager_5"),
+            Button(Const(f"5/{TOTAL_PAGES}"), id="pager_5", on_click=_noop_pager),
             Button(
                 Format("{about_finish}"),
                 id=WidgetIds.FINISH_TUTORIAL,

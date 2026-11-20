@@ -1,3 +1,4 @@
+import html
 import random
 from typing import Any
 
@@ -45,7 +46,7 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> di
         "reg_student_title": _("reg_student_title", random_group=random_group),
         "reg_teacher_title": _("reg_teacher_title"),
         "back_to_role": _("back_to_role"),
-        "reg_complete": _("reg_complete", group=dialog_manager.dialog_data.get(DialogDataKeys.GROUP, "???")),
+        "reg_complete": _("reg_complete", group=html.escape(str(dialog_manager.dialog_data.get(DialogDataKeys.GROUP, "???")))),
         "show_tutorial": _("show_tutorial"),
         "start_using": _("start_using"),
         "lang_select_title": _("lang_select_title"),
@@ -55,6 +56,9 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> di
         "zh_checked": "✅" if user_lang == "zh" else "",
         "group_suggestions": dialog_manager.dialog_data.get("group_suggestions", []),
         "teacher_suggestions": dialog_manager.dialog_data.get("teacher_suggestions", []),
+        "teacher_suggestion_items": [
+            (str(idx), name) for idx, name in enumerate(dialog_manager.dialog_data.get("teacher_suggestions", []))
+        ],
         "onboarding_reminders_hint": _("onboarding_reminders_hint"),
         "pick_suggestion": _("pick_suggestion"),
     }
@@ -106,7 +110,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
             await manager.switch_to(MainMenu.enter_group)
         else:
             # Если нет даже похожих
-            await message.answer(_("group_not_found", group=group_name))
+            await message.answer(_("group_not_found", group=html.escape(group_name)))
         return  # В любом случае, если не было точного совпадения, выходим
 
     # Этот код выполнится только если было точное совпадение
@@ -143,7 +147,7 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
             await manager.switch_to(MainMenu.enter_teacher)
             return
         else:
-            await message.answer(_("teacher_not_found", name=teacher_name))
+            await message.answer(_("teacher_not_found", name=html.escape(teacher_name)))
             return
 
     teacher_name = canonical
@@ -172,11 +176,13 @@ async def on_group_suggestion_selected(callback: CallbackQuery, widget: object, 
 async def on_teacher_suggestion_selected(
     callback: CallbackQuery, widget: object, manager: DialogManager, item_id: str
 ) -> None:
+    suggestions = manager.dialog_data.get("teacher_suggestions", [])
+    resolved = suggestions[int(item_id)] if item_id.isdigit() and int(item_id) < len(suggestions) else item_id
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
-    await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
+    await user_data_manager.set_user_group(user_id=callback.from_user.id, group=resolved)
     await user_data_manager.set_user_type(user_id=callback.from_user.id, user_type="teacher")
-    manager.dialog_data[DialogDataKeys.GROUP] = item_id
+    manager.dialog_data[DialogDataKeys.GROUP] = resolved
     manager.dialog_data.pop("teacher_suggestions", None)
     await manager.switch_to(MainMenu.offer_tutorial)
 
@@ -274,10 +280,10 @@ dialog = Dialog(
         Format("{reg_teacher_title}"),
         Format("{pick_suggestion}", when=lambda data, w, m: bool(data.get("teacher_suggestions"))),
         Select(
-            Format("{item}"),
+            Format("{item[1]}"),
             id="teacher_suggest",
-            item_id_getter=lambda item: item,
-            items="teacher_suggestions",
+            item_id_getter=lambda item: item[0],
+            items="teacher_suggestion_items",
             on_click=on_teacher_suggestion_selected,
             when=lambda data, w, m: bool(data.get("teacher_suggestions")),
         ),
@@ -308,5 +314,6 @@ dialog = Dialog(
         ),
         state=MainMenu.offer_tutorial,
         getter=get_main_menu_data,
+        parse_mode="HTML",
     ),
 )

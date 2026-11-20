@@ -211,10 +211,11 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
         await handle_graduated_groups(user_data_manager, timetable_manager, redis_client)
         await bot.send_message(admin_id, "✅ Проверка выпустившихся групп завершена!")
     except Exception as e:
-        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {e}")
+        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {html.escape(str(e))}")
         import traceback
 
-        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{traceback.format_exc()}</code>")
+        tb_text = html.escape(traceback.format_exc()[-3500:])
+        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{tb_text}</code>")
     finally:
         try:
             if redis_client is not None:
@@ -372,9 +373,9 @@ async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     if channels:
         lines = []
         for i, ch in enumerate(channels, 1):
-            title = ch.get("title", "Без названия")
-            link = ch.get("invite_link") or ""
-            cid = ch.get("channel_id", "")
+            title = html.escape(str(ch.get("title", "Без названия")))
+            link = html.escape(str(ch.get("invite_link") or ""), quote=True)
+            cid = html.escape(str(ch.get("channel_id", "")))
             lines.append(f"{i}. <a href='{link}'>{title}</a> (<code>{cid}</code>)")
         channels_text = "\n".join(lines)
     else:
@@ -587,8 +588,8 @@ async def build_segment_users(
 def render_template(template_text: str, user_info: Any) -> str:
     placeholders = {
         "user_id": str(user_info.user_id),
-        "username": user_info.username or "N/A",
-        "group": user_info.group or "N/A",
+        "username": html.escape(str(user_info.username or "N/A")),
+        "group": html.escape(str(user_info.group or "N/A")),
         "last_active": (user_info.last_active_date.strftime("%d.%m.%Y") if user_info.last_active_date else "N/A"),
     }
     text = template_text
@@ -1074,8 +1075,8 @@ async def on_user_id_input(message: Message, widget: TextInput, manager: DialogM
         "user_id": user_info.user_id,
         "username": user_info.username,
         "group": user_info.group,
-        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M"),
-        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M"),
+        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M") if user_info.registration_date else "N/A",
+        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M") if user_info.last_active_date else "N/A",
     }
     await manager.switch_to(Admin.user_manage)
 
@@ -1085,14 +1086,16 @@ async def on_new_group_input(message: Message, widget: TextInput, manager: Dialo
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
     if new_group not in timetable_manager._schedules:
-        await message.answer(f"❌ Группа <b>{new_group}</b> не найдена в расписании.")
+        await message.answer(f"❌ Группа <b>{html.escape(new_group)}</b> не найдена в расписании.")
         return
 
     user_id = manager.dialog_data["found_user_info"]["user_id"]
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
 
     await user_data_manager.set_user_group(user_id, new_group)
-    await message.answer(f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{new_group}</b>.")
+    await message.answer(
+        f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{html.escape(new_group)}</b>."
+    )
 
     manager.dialog_data["found_user_info"]["group"] = new_group
     await manager.switch_to(Admin.user_manage)
@@ -1320,6 +1323,7 @@ admin_dialog = Dialog(
             SwitchTo(Const("📢 Обязательная подписка"), id="section_sub_filter", state=Admin.sub_filter_menu),
         ),
         state=Admin.menu,
+        parse_mode="HTML",
     ),
     # Раздел: Рассылки
     Window(
@@ -1421,7 +1425,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите шаблон сообщения. Доступные плейсхолдеры: {user_id}, {username}, {group}"),
-        MessageInput(on_template_input_message, content_types=[ContentType.TEXT]),
+        MessageInput(on_template_input_message, content_types=[ContentType.ANY]),
         SwitchTo(Const("◀️ Назад"), id="template_back", state=Admin.segment_menu),
         state=Admin.template_input,
     ),

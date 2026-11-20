@@ -66,7 +66,7 @@ def test_init_postgres_asyncpg_sets_connect_args():
         ce.return_value = MagicMock()
         UserDataManager("postgresql+asyncpg://u:p@h:5432/db")
         kwargs = ce.call_args.kwargs
-        assert kwargs["pool_size"] == 20
+        assert kwargs["pool_size"] == 10
         assert kwargs["connect_args"]["server_settings"]["TimeZone"]
 
 

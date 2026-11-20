@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -752,18 +753,29 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     title = i18n.get(
         "schedule_group_title" if is_group_target else "schedule_teacher_title",
         lang=lang,
-        group=group,
+        group=html.escape(str(group)),
     )
     text = f"{title}\n\n{format_full_week_text(week_schedule, week_name or i18n.get('week_even', lang), lang=lang)}"
-    await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    if len(text) <= 4096:
+        await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        return
+    chunk = ""
+    for line in text.split("\n"):
+        candidate = f"{chunk}\n{line}" if chunk else line
+        if len(candidate) > 4096 and chunk:
+            await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
+            chunk = line
+        else:
+            chunk = candidate
+    await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(About.page_1, mode=StartMode.RESET_STACK)
+    await manager.start(About.page_1, mode=StartMode.NORMAL)
 
 
 async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
+    await manager.start(Feedback.enter_feedback, mode=StartMode.NORMAL)
 
 
 async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -774,7 +786,7 @@ async def on_report_error_click(callback: CallbackQuery, button: Button, manager
     await manager.start(
         Feedback.enter_feedback,
         data={"feedback_context": context},
-        mode=StartMode.RESET_STACK,
+        mode=StartMode.NORMAL,
     )
 
 

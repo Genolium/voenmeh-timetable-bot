@@ -213,10 +213,14 @@ class SubscriptionFilterManager:
                 pass
 
     async def invalidate_all_caches(self) -> None:
-        """Сбрасывает кэш каналов в Redis."""
+        """Сбрасывает кэш каналов и пользовательских статусов подписки в Redis."""
         if self.redis:
             try:
                 await self.redis.delete(KEY_CHANNELS_LIST)
+                if hasattr(self.redis, "scan_iter"):
+                    user_keys = [key async for key in self.redis.scan_iter(match=f"{KEY_USER_PREFIX}:*")]
+                    if user_keys:
+                        await self.redis.delete(*user_keys)
             except Exception:
                 pass
 
@@ -252,6 +256,7 @@ class SubscriptionFilterManager:
             return True, []
 
         missing_channels: List[Dict[str, Any]] = []
+        had_error = False
 
         for ch in channels:
             cid = ch["channel_id"]
@@ -271,14 +276,16 @@ class SubscriptionFilterManager:
                 if "user not found" in err_msg or "participant_id_invalid" in err_msg or "chat not found" in err_msg:
                     missing_channels.append(ch)
                 else:
+                    had_error = True
                     logger.warning(f"BadRequest when checking sub for {user_id} in {cid}: {e}")
-                    # В случае неизвестной ошибки API не блокируем пользователя жестко
+                    # В случае неизвестной ошибки API не блокируем пользователя жестко, но и не кэшируем успех
             except Exception as e:
+                had_error = True
                 logger.error(f"Unexpected error checking sub for {user_id} in {cid}: {e}")
 
         if not missing_channels:
-            # Все каналы подписаны, кэшируем статус
-            if self.redis:
+            # Все каналы подписаны; кэшируем статус только если не было ошибок API
+            if not had_error and self.redis:
                 try:
                     await self.redis.set(user_cache_key, "1", ex=USER_CACHE_TTL)
                 except Exception as e:
