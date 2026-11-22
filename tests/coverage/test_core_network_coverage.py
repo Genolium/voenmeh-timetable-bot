@@ -513,7 +513,9 @@ async def test_business_check_metrics_success_and_failure(monkeypatch):
     monitor._send_alert = AsyncMock()
 
     monkeypatch.setattr(
-        aiohttp, "ClientSession", lambda *a, **k: _FakeSession([_FakeGetCtx(_FakeResponse(200, {"status": "success"}))])
+        aiohttp,
+        "ClientSession",
+        lambda *a, **k: _FakeSession([_FakeGetCtx(_FakeResponse(200, {"status": "success", "data": {"result": []}}))] * 6),
     )
     await monitor._check_business_metrics()
     assert monitor._send_alert.await_count == 0
@@ -523,6 +525,49 @@ async def test_business_check_metrics_success_and_failure(monkeypatch):
     )
     await monitor._check_business_metrics()
     assert monitor._send_alert.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_business_check_metrics_thresholds_and_edge_cases(monkeypatch):
+    monitor = BusinessMetricsMonitor()
+    monitor.prometheus_url = "http://prom"
+    monitor._send_alert = AsyncMock()
+    monitor.thresholds["user_activity_drop"] = None  # cover None threshold skip
+
+    responses = [
+        _FakeGetCtx(_FakeResponse(200, {"status": "success"})),  # up
+        _FakeGetCtx(
+            _FakeResponse(200, {"status": "success", "data": {"result": [{"value": [0, "0.5"]}]}})
+        ),  # cache_hit_rate < 0.8 -> breach
+        _FakeGetCtx(
+            _FakeResponse(200, {"status": "success", "data": {"result": [{"value": [0, "15.0"]}]}})
+        ),  # schedule_generation_time > 10 -> breach
+        _FakeGetCtx(
+            _FakeResponse(200, {"status": "success", "data": {"result": [{"value": [0, "0.01"]}]}})
+        ),  # notification_failure_rate <= 0.1 -> ok
+        _FakeGetCtx(
+            _FakeResponse(200, {"status": "success", "data": {"result": [{"value": [0, "NaN"]}]}})
+        ),  # user_conversion_drop non-finite -> skip
+    ]
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **k: _FakeSession(responses))
+    await monitor._check_business_metrics()
+    assert monitor._send_alert.await_count == 2
+
+    # Cover invalid scalar formats
+    monitor2 = BusinessMetricsMonitor()
+    monitor2.prometheus_url = "http://prom"
+    monitor2._send_alert = AsyncMock()
+    bad_responses = [
+        _FakeGetCtx(_FakeResponse(200, {"status": "success"})),  # up
+        _FakeGetCtx(_FakeResponse(200, {"status": "error"})),  # status != success
+        _FakeGetCtx(_FakeResponse(200, {"status": "success", "data": {"result": [{"value": ["bad"]}]}})),  # len < 2
+        _FakeGetCtx(_FakeResponse(200, {"status": "success", "data": {"result": [{"value": [0, "nope"]}]}})),  # ValueError
+        _FakeGetCtx(_FakeResponse(200, {"status": "success", "data": {"result": []}})),  # empty
+        _FakeGetCtx(_FakeResponse(200, {"status": "success", "data": {"result": []}})),  # empty
+    ]
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **k: _FakeSession(bad_responses))
+    await monitor2._check_business_metrics()
+    assert monitor2._send_alert.await_count == 0
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,12 @@ def make_redis():
     lock.__aenter__ = AsyncMock(return_value=None)
     lock.__aexit__ = AsyncMock(return_value=None)
     redis.lock = MagicMock(return_value=lock)
+
+    async def _scan_iter(*args, **kwargs):
+        if False:
+            yield b""
+
+    redis.scan_iter = _scan_iter
     return redis
 
 

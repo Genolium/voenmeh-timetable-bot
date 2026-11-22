@@ -855,36 +855,22 @@ class TestSubFilter:
 class TestSegments:
     async def test_build_segment_users_with_filters(self):
         udm = make_udm()
-
-        async def all_ids():
-            return list(range(1, 102))
-
-        async def info(uid):
-            if uid == 999:
-                return None
-            obj = MagicMock()
-            obj.group = "О7" if uid % 2 == 0 else "ИУ5"
-            obj.last_active_date = datetime.now() if uid % 3 else None
-            return obj
-
-        udm.get_all_user_ids = AsyncMock(side_effect=all_ids)
-        udm.get_full_user_info = AsyncMock(side_effect=info)
+        udm.get_segment_user_ids = AsyncMock(return_value=[2, 4])
 
         result = await build_segment_users(udm, "о7", 7)
-        assert result  # часть пользователей прошла фильтр
-        assert all(uid % 2 == 0 for uid in result)
+        assert result == [2, 4]
+        udm.get_segment_user_ids.assert_awaited_once_with(group_prefix="о7", days_active=7)
 
     async def test_build_segment_users_no_filters(self):
         udm = make_udm()
-        udm.get_all_user_ids = AsyncMock(return_value=[1, 2])
-        udm.get_full_user_info = AsyncMock(return_value=make_user_info())
+        udm.get_segment_user_ids = AsyncMock(return_value=[1, 2])
         result = await build_segment_users(udm, None, None)
         assert result == [1, 2]
+        udm.get_segment_user_ids.assert_awaited_once_with(group_prefix=None, days_active=None)
 
-    async def test_build_segment_users_skips_none_info(self):
+    async def test_build_segment_users_empty(self):
         udm = make_udm()
-        udm.get_all_user_ids = AsyncMock(return_value=[1])
-        udm.get_full_user_info = AsyncMock(return_value=None)
+        udm.get_segment_user_ids = AsyncMock(return_value=[])
         result = await build_segment_users(udm, None, None)
         assert result == []
 

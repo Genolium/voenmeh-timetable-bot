@@ -71,36 +71,38 @@ async def get_top_features(
     if not redis_client:
         return []
 
+    def _accumulate_hash(target: Dict[str, int], raw_data: Any, *, overwrite: bool = False) -> None:
+        if not isinstance(raw_data, dict):
+            return
+        for f_name, count in raw_data.items():
+            key = f_name.decode("utf-8") if isinstance(f_name, bytes) else str(f_name)
+            try:
+                cnt = int(count)
+            except (ValueError, TypeError):
+                cnt = 1
+            target[key] = cnt if overwrite else target.get(key, 0) + cnt
+
     try:
         aggregated: Dict[str, int] = {}
         now = now_msk_naive()
 
-        # Суммируем посуточные счётчики
-        for i in range(days):
-            date_str = (now - timedelta(days=i)).strftime("%Y%m%d")
-            daily_key = f"{FEATURE_KEY_PREFIX}:daily:{date_str}"
-            day_data = await redis_client.hgetall(daily_key)
-            if isinstance(day_data, dict):
-                for f_name, count in day_data.items():
-                    key = f_name.decode("utf-8") if isinstance(f_name, bytes) else str(f_name)
-                    try:
-                        cnt = int(count)
-                    except (ValueError, TypeError):
-                        cnt = 1
-                    aggregated[key] = aggregated.get(key, 0) + cnt
+        # Получаем посуточные счётчики одним pipeline-запросом вместо N round-trip'ов
+        if days > 0:
+            pipe = redis_client.pipeline()
+            if inspect.isawaitable(pipe):
+                pipe = await pipe
+            for i in range(days):
+                date_str = (now - timedelta(days=i)).strftime("%Y%m%d")
+                pipe.hgetall(f"{FEATURE_KEY_PREFIX}:daily:{date_str}")
+            day_results = await pipe.execute()
+            for day_data in day_results:
+                _accumulate_hash(aggregated, day_data)
 
         # Если посуточные ключи пусты (например, только запустились), читаем общий хэш
         if not aggregated:
             total_key = f"{FEATURE_KEY_PREFIX}:total"
             total_data = await redis_client.hgetall(total_key)
-            if isinstance(total_data, dict):
-                for f_name, count in total_data.items():
-                    key = f_name.decode("utf-8") if isinstance(f_name, bytes) else str(f_name)
-                    try:
-                        cnt = int(count)
-                    except (ValueError, TypeError):
-                        cnt = 1
-                    aggregated[key] = cnt
+            _accumulate_hash(aggregated, total_data, overwrite=True)
 
         if not aggregated:
             return []

@@ -132,6 +132,127 @@ async def test_prometheus_metrics_helpers(generator):
     assert "avg_daily_users" in await generator._get_prometheus_metrics_monthly()
 
 
+async def test_prometheus_http_queries_and_fallbacks(generator, monkeypatch):
+    from types import SimpleNamespace
+
+    from core import admin_reports
+
+    class _FakeResp:
+        def __init__(self, status=200, payload=None):
+            self.status = status
+            self._payload = payload or {}
+
+        async def json(self):
+            return self._payload
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    class _FakeSession:
+        def __init__(self, mapping):
+            self.mapping = mapping
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def get(self, url, params=None, timeout=None):
+            q = (params or {}).get("query", "")
+            for substr, resp in self.mapping:
+                if substr in q:
+                    return resp
+            return _FakeResp(200, {"status": "success", "data": {"result": []}})
+
+    monkeypatch.setenv("PROMETHEUS_URL", "http://prom:9090/")
+    mapping = [
+        ("bot_tasks_sent_total", _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "42"]}]}})),
+        ("bot_errors_total", _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "3"]}]}})),
+        ("bot_retries_total", _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "7"]}]}})),
+        ("bot_parser_operations_total", _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "4"]}]}})),
+        (
+            "bot_last_schedule_update_timestamp",
+            _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "1700000000"]}]}}),
+        ),
+        (
+            "bot_user_activity_hourly_total",
+            _FakeResp(200, {"status": "success", "data": {"result": [{"metric": {"hour_of_day": "9"}, "value": [0, "15"]}]}}),
+        ),
+        ("bot_user_activity_daily_total", _FakeResp(200, {"status": "success", "data": {"result": [{"value": [0, "12.4"]}]}})),
+    ]
+    monkeypatch.setattr(admin_reports.aiohttp, "ClientSession", lambda: _FakeSession(mapping))
+
+    with patch("core.admin_reports.get_top_features", AsyncMock(return_value=[("day_nav", "Переход", 9)])):
+        daily = await generator._get_prometheus_metrics()
+        weekly = await generator._get_prometheus_metrics_weekly()
+        monthly = await generator._get_prometheus_metrics_monthly()
+
+    assert daily["tasks_sent"] == 42
+    assert daily["last_update"] != "Нет данных"
+    assert weekly["peak_activity"] == "09:00-10:00"
+    assert monthly["avg_daily_users"] == 12
+    assert monthly["top_features"] == ["Переход"]
+
+    # Local helper branches + invalid Prometheus responses
+    fake_metric = MagicMock()
+    fake_metric.collect.return_value = [
+        SimpleNamespace(
+            samples=[
+                SimpleNamespace(name="x_created", labels={}, value=1.0),
+                SimpleNamespace(name="x_total", labels={"status": "failed"}, value=2.0),
+                SimpleNamespace(name="x_total", labels={"status": "success"}, value=5.0),
+            ]
+        )
+    ]
+    assert admin_reports._local_counter_sum(fake_metric, ("status", "success")) == 5
+
+    fake_ts = MagicMock()
+    fake_ts.collect.return_value = [SimpleNamespace(samples=[SimpleNamespace(name="ts", labels={}, value=1700000000.0)])]
+    monkeypatch.setattr(admin_reports, "LAST_SCHEDULE_UPDATE_TS", fake_ts)
+    assert admin_reports._local_last_update_str() != "Нет данных"
+
+    assert generator._extract_scalar([]) is None
+    assert generator._extract_scalar([{"value": ["only_one"]}]) is None
+    assert generator._extract_scalar([{"value": [0, "not-a-float"]}]) is None
+    assert generator._extract_scalar([{"value": [0, "NaN"]}]) is None
+
+    # Non-200 / error status / bad hour / exception fallback
+    bad_mapping = [
+        ("bot_tasks_sent_total", _FakeResp(500, {})),
+        ("bot_errors_total", _FakeResp(200, {"status": "error"})),
+        (
+            "bot_user_activity_hourly_total",
+            _FakeResp(200, {"status": "success", "data": {"result": [{"metric": {"hour_of_day": "bad"}}]}}),
+        ),
+    ]
+    monkeypatch.setattr(admin_reports.aiohttp, "ClientSession", lambda: _FakeSession(bad_mapping))
+    weekly_bad = await generator._get_prometheus_metrics_weekly()
+    assert weekly_bad["peak_activity"] == "Нет данных"
+
+    no_hour_mapping = [
+        ("bot_user_activity_hourly_total", _FakeResp(200, {"status": "success", "data": {"result": [{"metric": {}}]}})),
+    ]
+    monkeypatch.setattr(admin_reports.aiohttp, "ClientSession", lambda: _FakeSession(no_hour_mapping))
+    assert (await generator._get_prometheus_metrics_weekly())["peak_activity"] == "Нет данных"
+
+    monkeypatch.setattr(admin_reports.aiohttp, "ClientSession", lambda: _FakeSession([]))
+    assert (await generator._get_prometheus_metrics_weekly())["peak_activity"] == "Нет данных"
+
+    monkeypatch.setattr(admin_reports.aiohttp, "ClientSession", MagicMock(side_effect=RuntimeError("prom down")))
+    generator.user_data_manager._get_redis_client = AsyncMock(side_effect=RuntimeError("redis down"))
+    monthly_err = await generator._get_prometheus_metrics_monthly()
+    assert monthly_err["top_features"] == ["Нет данных"]
+
+    # Enrich avg_daily_users from active_users_month when Prometheus is unset
+    monkeypatch.delenv("PROMETHEUS_URL", raising=False)
+    report_m = await generator.generate_monthly_report()
+    assert "Среднесуточная активность: <b>17</b>" in report_m
+
+
 # ---------------------------------------------------------------------------
 # formatters
 # ---------------------------------------------------------------------------
@@ -291,3 +412,13 @@ async def test_send_monthly_reports_outer_exception(bot, user_data_manager):
         instance.generate_monthly_report = AsyncMock(side_effect=Exception("boom"))
         generator_cls.return_value = instance
         await send_monthly_reports(bot, user_data_manager)
+
+
+def test_local_last_update_str_empty():
+    from core.admin_reports import _local_last_update_str
+
+    empty_family = MagicMock()
+    empty_family.samples = []
+    with patch("core.admin_reports.LAST_SCHEDULE_UPDATE_TS") as metric:
+        metric.collect.return_value = [empty_family]
+        assert _local_last_update_str() == "Нет данных"

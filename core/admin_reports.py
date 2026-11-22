@@ -2,14 +2,16 @@
 Модуль для генерации автоматических отчётов по статистике для администраторов.
 """
 
-import json
 import logging
-from datetime import datetime, timedelta, timezone
+import math
+import os
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import aiohttp
 from aiogram import Bot
-from aiogram.types import FSInputFile, InputFile
+from aiogram.types import FSInputFile
 
 from core.analytics import get_top_features
 from core.config import MOSCOW_TZ
@@ -17,14 +19,37 @@ from core.db.backups import create_db_backup
 from core.metrics import (
     ERRORS_TOTAL,
     LAST_SCHEDULE_UPDATE_TS,
+    PARSER_STATS,
     RETRIES_TOTAL,
-    SUBSCRIBED_USERS,
     TASKS_SENT_TO_QUEUE,
-    USERS_TOTAL,
 )
 from core.user_data import UserDataManager
 
 logger = logging.getLogger(__name__)
+
+
+def _local_counter_sum(metric: Any, label_filter: Optional[tuple[str, str]] = None) -> int:
+    """Суммирует текущие значения Prometheus-счётчика в текущем процессе."""
+    total = 0.0
+    for family in metric.collect():
+        for sample in family.samples:
+            if not sample.name.endswith("_total"):
+                continue
+            if label_filter and sample.labels.get(label_filter[0]) != label_filter[1]:
+                continue
+            total += float(sample.value)
+    return int(round(total))
+
+
+def _local_last_update_str() -> str:
+    """Возвращает время последнего обновления расписания из локальной метрики."""
+    ts = 0.0
+    for family in LAST_SCHEDULE_UPDATE_TS.collect():
+        for sample in family.samples:
+            ts = max(ts, float(sample.value))
+    if ts > 0:
+        return datetime.fromtimestamp(ts, tz=MOSCOW_TZ).strftime("%d.%m.%Y %H:%M")
+    return "Нет данных"
 
 
 class AdminReportsGenerator:
@@ -90,7 +115,7 @@ class AdminReportsGenerator:
             except Exception:
                 pass
 
-            # Получаем метрики из Prometheus (мокаем для примера)
+            # Получаем метрики из Prometheus (или локального реестра при отсутствии PROMETHEUS_URL)
             prometheus_metrics = await self._get_prometheus_metrics()
 
             # Текущая дата
@@ -131,7 +156,6 @@ class AdminReportsGenerator:
         """
         try:
             # Получаем статистику за неделю
-            week_ago = datetime.now(MOSCOW_TZ) - timedelta(days=7)
             new_users_week = await self.user_data_manager.get_new_users_count(7)
             active_users_week = await self.user_data_manager.get_active_users_by_period(7)
 
@@ -176,7 +200,6 @@ class AdminReportsGenerator:
         """
         try:
             # Получаем статистику за месяц
-            month_ago = datetime.now(MOSCOW_TZ) - timedelta(days=30)
             new_users_month = await self.user_data_manager.get_new_users_count(30)
             active_users_month = await self.user_data_manager.get_active_users_by_period(30)
 
@@ -195,6 +218,13 @@ class AdminReportsGenerator:
 
             # Получаем метрики из Prometheus за месяц
             prometheus_metrics = await self._get_prometheus_metrics_monthly()
+            if (
+                isinstance(prometheus_metrics, dict)
+                and not prometheus_metrics.get("avg_daily_users")
+                and isinstance(active_users_month, (int, float))
+                and active_users_month > 0
+            ):
+                prometheus_metrics["avg_daily_users"] = max(1, round(active_users_month / 30))
 
             # Формируем отчёт
             report = self._format_monthly_report(
@@ -212,37 +242,172 @@ class AdminReportsGenerator:
             logger.error(f"Error generating monthly report: {e}")
             return "❌ Ошибка при генерации месячного отчёта. Проверьте логи."
 
+    async def _query_prometheus_vector(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        query: str,
+    ) -> List[Dict[str, Any]]:
+        """Выполняет instant query к Prometheus HTTP API."""
+        async with session.get(
+            f"{base_url}/api/v1/query",
+            params={"query": query},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return []
+            payload = await resp.json()
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return []
+        result = payload.get("data", {}).get("result")
+        return result if isinstance(result, list) else []
+
+    @staticmethod
+    def _extract_scalar(rows: List[Dict[str, Any]]) -> Optional[float]:
+        """Извлекает конечное скалярное значение из результата Prometheus vector."""
+        if not rows or not isinstance(rows[0], dict):
+            return None
+        value_pair = rows[0].get("value")
+        if not isinstance(value_pair, (list, tuple)) or len(value_pair) < 2:
+            return None
+        try:
+            value = float(value_pair[1])
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    async def _fetch_prometheus_window(
+        self,
+        window: str,
+        extra_queries: Optional[Dict[str, str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Запрашивает счётчики за окно времени и дополнительные PromQL-выражения."""
+        base_url = (os.getenv("PROMETHEUS_URL") or "").strip().rstrip("/")
+        if not base_url:
+            return None
+
+        queries = {
+            "tasks": f"sum(increase(bot_tasks_sent_total[{window}]))",
+            "errors": f"sum(increase(bot_errors_total[{window}]))",
+            "retries": f"sum(increase(bot_retries_total[{window}]))",
+            "updates": f'sum(increase(bot_parser_operations_total{{status="success"}}[{window}]))',
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                counts: Dict[str, int] = {}
+                for key, promql in queries.items():
+                    rows = await self._query_prometheus_vector(session, base_url, promql)
+                    val = self._extract_scalar(rows)
+                    counts[key] = max(0, int(round(val))) if val is not None else 0
+
+                extra: Dict[str, List[Dict[str, Any]]] = {}
+                for key, promql in (extra_queries or {}).items():
+                    extra[key] = await self._query_prometheus_vector(session, base_url, promql)
+
+                return {"counts": counts, "extra": extra}
+        except Exception as exc:
+            logger.warning(f"Failed to query Prometheus metrics ({window}): {exc}")
+            return None
+
     async def _get_prometheus_metrics(self) -> Dict[str, Any]:
-        """Получает метрики из Prometheus за последние 24 часа."""
-        # В реальности здесь будет запрос к Prometheus API
-        # Пока возвращаем моковые данные
+        """Получает метрики из Prometheus за последние 24 часа (с fallback на локальные метрики)."""
+        prom = await self._fetch_prometheus_window(
+            "24h",
+            extra_queries={"last_update_ts": "max(bot_last_schedule_update_timestamp)"},
+        )
+        if prom is not None:
+            counts = prom["counts"]
+            ts = self._extract_scalar(prom["extra"].get("last_update_ts", []))
+            last_update = (
+                datetime.fromtimestamp(ts, tz=MOSCOW_TZ).strftime("%d.%m.%Y %H:%M")
+                if ts and ts > 0
+                else _local_last_update_str()
+            )
+            return {
+                "tasks_sent": counts["tasks"],
+                "errors_count": counts["errors"],
+                "retries_count": counts["retries"],
+                "schedule_updates": counts["updates"],
+                "last_update": last_update,
+            }
+
         return {
-            "tasks_sent": 150,
-            "errors_count": 2,
-            "retries_count": 5,
-            "schedule_updates": 3,
-            "last_update": datetime.now(MOSCOW_TZ).strftime("%d.%m.%Y %H:%M"),
+            "tasks_sent": _local_counter_sum(TASKS_SENT_TO_QUEUE),
+            "errors_count": _local_counter_sum(ERRORS_TOTAL),
+            "retries_count": _local_counter_sum(RETRIES_TOTAL),
+            "schedule_updates": _local_counter_sum(PARSER_STATS, ("status", "success")),
+            "last_update": _local_last_update_str(),
         }
 
     async def _get_prometheus_metrics_weekly(self) -> Dict[str, Any]:
-        """Получает метрики из Prometheus за последнюю неделю."""
+        """Получает метрики из Prometheus за последнюю неделю (с fallback на локальные метрики)."""
+        prom = await self._fetch_prometheus_window(
+            "7d",
+            extra_queries={
+                "peak_hour": "topk(1, sum by (hour_of_day) (increase(bot_user_activity_hourly_total[7d])))",
+            },
+        )
+        if prom is not None:
+            counts = prom["counts"]
+            peak_rows = prom["extra"].get("peak_hour", [])
+            peak_activity = "Нет данных"
+            if peak_rows and isinstance(peak_rows[0], dict):
+                hour_raw = peak_rows[0].get("metric", {}).get("hour_of_day")
+                if hour_raw is not None:
+                    try:
+                        hour_int = int(str(hour_raw)) % 24
+                        peak_activity = f"{hour_int:02d}:00-{(hour_int + 1) % 24:02d}:00"
+                    except ValueError:
+                        pass
+            return {
+                "tasks_sent_total": counts["tasks"],
+                "errors_total": counts["errors"],
+                "retries_total": counts["retries"],
+                "schedule_updates": counts["updates"],
+                "peak_activity": peak_activity,
+            }
+
         return {
-            "tasks_sent_total": 1050,
-            "errors_total": 14,
-            "retries_total": 35,
-            "schedule_updates": 21,
-            "peak_activity": "Понедельник 08:00-09:00",
+            "tasks_sent_total": _local_counter_sum(TASKS_SENT_TO_QUEUE),
+            "errors_total": _local_counter_sum(ERRORS_TOTAL),
+            "retries_total": _local_counter_sum(RETRIES_TOTAL),
+            "schedule_updates": _local_counter_sum(PARSER_STATS, ("status", "success")),
+            "peak_activity": "Нет данных",
         }
 
     async def _get_prometheus_metrics_monthly(self) -> Dict[str, Any]:
-        """Получает метрики из Prometheus за последний месяц."""
+        """Получает метрики из Prometheus за последний месяц (с fallback на локальные метрики)."""
+        top_features_names: List[str] = []
+        try:
+            redis_client = await self.user_data_manager._get_redis_client()
+            top = await get_top_features(redis_client, days=30, limit=3)
+            top_features_names = [name for _, name, _ in top]
+        except Exception:
+            top_features_names = []
+
+        prom = await self._fetch_prometheus_window(
+            "30d",
+            extra_queries={"avg_dau": "sum(increase(bot_user_activity_daily_total[30d])) / 30"},
+        )
+        if prom is not None:
+            counts = prom["counts"]
+            avg_dau_val = self._extract_scalar(prom["extra"].get("avg_dau", []))
+            return {
+                "tasks_sent_total": counts["tasks"],
+                "errors_total": counts["errors"],
+                "retries_total": counts["retries"],
+                "schedule_updates": counts["updates"],
+                "avg_daily_users": max(0, int(round(avg_dau_val))) if avg_dau_val is not None else 0,
+                "top_features": top_features_names or ["Нет данных"],
+            }
+
         return {
-            "tasks_sent_total": 4200,
-            "errors_total": 56,
-            "retries_total": 140,
-            "schedule_updates": 90,
-            "avg_daily_users": 1250,
-            "top_features": ["schedule_view", "settings", "feedback"],
+            "tasks_sent_total": _local_counter_sum(TASKS_SENT_TO_QUEUE),
+            "errors_total": _local_counter_sum(ERRORS_TOTAL),
+            "retries_total": _local_counter_sum(RETRIES_TOTAL),
+            "schedule_updates": _local_counter_sum(PARSER_STATS, ("status", "success")),
+            "avg_daily_users": 0,
+            "top_features": top_features_names or ["Нет данных"],
         }
 
     def _format_daily_report(

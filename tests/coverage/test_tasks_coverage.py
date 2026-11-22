@@ -533,19 +533,22 @@ class TestSendMedia:
 # --------------------------------------------------------------------------- #
 class TestTaskWrappers:
     def test_send_message_task(self, monkeypatch):
-        monkeypatch.setattr(tasks, "run_async", MagicMock())
+        mock_run = MagicMock(side_effect=lambda coro: coro.close())
+        monkeypatch.setattr(tasks, "run_async", mock_run)
         send_message_task(1, "hi")
-        tasks.run_async.assert_called_once()
+        mock_run.assert_called_once()
 
     def test_copy_message_task(self, monkeypatch):
-        monkeypatch.setattr(tasks, "run_async", MagicMock())
+        mock_run = MagicMock(side_effect=lambda coro: coro.close())
+        monkeypatch.setattr(tasks, "run_async", mock_run)
         copy_message_task(1, 2, 3)
-        tasks.run_async.assert_called_once()
+        mock_run.assert_called_once()
 
     def test_send_media_task(self, monkeypatch):
-        monkeypatch.setattr(tasks, "run_async", MagicMock())
+        mock_run = MagicMock(side_effect=lambda coro: coro.close())
+        monkeypatch.setattr(tasks, "run_async", mock_run)
         send_media_task(1, "photo", "file", "<b>hi</b>")
-        tasks.run_async.assert_called_once()
+        mock_run.assert_called_once()
 
     def test_reminder_task_with_text(self, monkeypatch):
         monkeypatch.setattr(tasks, "run_async", _run_coro)

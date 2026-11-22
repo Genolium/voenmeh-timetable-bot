@@ -51,6 +51,7 @@ def mock_user_data_manager():
         "delta_dau_pct_str": "+8%",
         "delta_subs_str": "-2",
     }
+    manager._get_redis_client = AsyncMock(return_value=None)
     return manager
 
 

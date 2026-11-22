@@ -541,32 +541,65 @@ class UserDataManager:
     async def get_activity_history(self, days: int = 7) -> Tuple[List[datetime], List[int], List[int]]:
         """
         Возвращает историю активности по дням: (список дат, новые пользователи, активные DAU).
+        Выполняет 2 агрегированных GROUP BY запроса вместо 2 * days запросов.
         """
         now = datetime.now(MOSCOW_TZ)
         dates = [now - timedelta(days=i) for i in reversed(range(days))]
-        new_users = []
-        active_users = []
+        if not dates:
+            return dates, [], []
+
+        start_bound = datetime(dates[0].year, dates[0].month, dates[0].day, 0, 0, 0)
+        end_bound = datetime(dates[-1].year, dates[-1].month, dates[-1].day, 23, 59, 59)
 
         async with self.async_session_maker() as session:
-            for d in dates:
-                start = datetime(d.year, d.month, d.day, 0, 0, 0)
-                end = datetime(d.year, d.month, d.day, 23, 59, 59)
-
-                stmt_new = select(func.count(User.user_id)).where(
-                    User.registration_date >= start,
-                    User.registration_date <= end,
+            reg_day = func.date(User.registration_date).label("day")
+            stmt_new = (
+                select(reg_day, func.count(User.user_id))
+                .where(
+                    User.registration_date >= start_bound,
+                    User.registration_date <= end_bound,
                 )
-                cnt_new = await session.scalar(stmt_new) or 0
-                new_users.append(cnt_new)
+                .group_by(reg_day)
+            )
+            new_rows = {str(day)[:10]: int(cnt) for day, cnt in (await session.execute(stmt_new)).all() if day is not None}
 
-                stmt_act = select(func.count(User.user_id)).where(
-                    User.last_active_date >= start,
-                    User.last_active_date <= end,
+            act_day = func.date(User.last_active_date).label("day")
+            stmt_act = (
+                select(act_day, func.count(User.user_id))
+                .where(
+                    User.last_active_date >= start_bound,
+                    User.last_active_date <= end_bound,
                 )
-                cnt_act = await session.scalar(stmt_act) or 0
-                active_users.append(cnt_act)
+                .group_by(act_day)
+            )
+            act_rows = {str(day)[:10]: int(cnt) for day, cnt in (await session.execute(stmt_act)).all() if day is not None}
 
+        new_users = [new_rows.get(d.strftime("%Y-%m-%d"), 0) for d in dates]
+        active_users = [act_rows.get(d.strftime("%Y-%m-%d"), 0) for d in dates]
         return dates, new_users, active_users
+
+    async def get_segment_user_ids(
+        self,
+        group_prefix: Optional[str] = None,
+        days_active: Optional[int] = None,
+    ) -> List[int]:
+        """Возвращает ID пользователей сегмента одним SQL-запросом."""
+        group_prefix_up = (group_prefix or "").upper().strip()
+        async with self.async_session_maker() as session:
+            stmt = select(User.user_id)
+            if group_prefix_up:
+                stmt = stmt.where(
+                    User.group.isnot(None),
+                    func.upper(User.group).startswith(group_prefix_up, autoescape=True),
+                )
+            if days_active and days_active > 0:
+                threshold = now_msk_naive() - timedelta(days=days_active)
+                stmt = stmt.where(
+                    User.last_active_date.isnot(None),
+                    User.last_active_date >= threshold,
+                )
+            result = await session.scalars(stmt)
+            return list(result)
 
     async def get_all_users_with_groups(self) -> List[Tuple[int, Optional[str]]]:
         """Получает всех пользователей с их группами."""

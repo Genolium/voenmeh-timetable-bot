@@ -4,13 +4,13 @@ import json
 import logging
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
 
 import aiohttp
+import defusedxml.ElementTree as ET
 
 from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT, VOENMEH_SU_API_URL
 from core.metrics import ERRORS_TOTAL, EXTERNAL_SERVICE_STATUS, PARSER_DURATION, PARSER_STATS, RETRIES_TOTAL
@@ -157,7 +157,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             logging.error("voenmeh.su вернул пустой список групп")
             return None
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -404,7 +404,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         current_hash = hashlib.md5(xml_bytes).hexdigest()
         root = ET.fromstring(xml_data)
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -599,7 +599,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if voenmeh_su_data:
             logging.info("Расписание успешно получено с основного API voenmeh.su.")
-            save_fallback_schedule(voenmeh_su_data)
+            save_fallback_schedule(cast(dict[str, Any], voenmeh_su_data))
             return voenmeh_su_data
         logging.warning("voenmeh.su не вернул данные. Переход к резервному источнику XML...")
     except Exception as e:
@@ -614,7 +614,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if xml_data:
             logging.info("Расписание успешно получено с резервного XML источника.")
-            save_fallback_schedule(xml_data)
+            save_fallback_schedule(cast(dict[str, Any], xml_data))
             return xml_data
     except Exception as e:
         ERRORS_TOTAL.labels(source="parser_xml").inc()

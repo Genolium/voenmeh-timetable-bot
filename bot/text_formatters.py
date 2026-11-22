@@ -55,7 +55,6 @@ def format_schedule_text(day_info: dict, week_number: int | None = None, lang: s
         return cast(str, i18n.get("fmt_date_missing", lang))
 
     date_str = date_obj.strftime("%d.%m.%Y")
-    day_name_ru = day_info.get("day_name", "")
     day_idx = date_obj.weekday()
     day_name = i18n.get(f"day_{day_idx}", lang)
 

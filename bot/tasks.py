@@ -35,7 +35,6 @@ from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.encoder import JSONEncoder
-from dramatiq.errors import RateLimitExceeded
 from dramatiq.middleware import Middleware
 from dramatiq.middleware.retries import Retries
 from dramatiq.middleware.time_limit import TimeLimit
@@ -637,7 +636,6 @@ def generate_week_image_task(
 async def _send_error_message(user_id: int, error_text: str) -> None:
     """Отправляет сообщение об ошибке пользователю."""
     try:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]])
         error_message = f"❌ {error_text}\n\nПопробуйте позже или обратитесь к администратору."
         await _send_message(user_id, error_message)
         log.info(f"⚠️ Отправлено сообщение об ошибке пользователю {user_id}")

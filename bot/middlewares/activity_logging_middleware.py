@@ -55,7 +55,6 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if from_user is not None and getattr(from_user, "id", None):
             user_id = str(from_user.id)
             username = getattr(from_user, "username", "unknown")
-            user_full_name = getattr(from_user, "full_name", "unknown")
 
         # Получаем тип пользователя из данных (если доступно)
         # В UserDataMiddleware данные пользователя уже должны быть в middleware_data

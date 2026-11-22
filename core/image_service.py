@@ -87,7 +87,7 @@ class ImageService:
                         file_path, user_id, placeholder_msg_id, final_caption, lang=lang
                     )
                     if not send_success:
-                        logger.warning(f"⚠️ Failed to send cached image, will regenerate")
+                        logger.warning("⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
                         await self.cache_manager.invalidate_cache(cache_key)
                     else:

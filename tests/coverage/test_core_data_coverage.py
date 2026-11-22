@@ -442,11 +442,40 @@ async def test_get_daily_dynamics_without_redis(mgr):
 
 
 async def test_get_activity_history(mgr):
-    await mgr.register_user(1200, "u")
+    from core.time_utils import now_msk_naive
+
+    now_naive = now_msk_naive()
+    async with mgr.async_session_maker() as session:
+        session.add(User(user_id=1200, username="u", registration_date=now_naive, last_active_date=now_naive))
+        await session.commit()
     dates, new_users, active_users = await mgr.get_activity_history(days=3)
     assert len(dates) == 3
     assert len(new_users) == 3
     assert len(active_users) == 3
+    assert new_users[-1] >= 1
+    assert active_users[-1] >= 1
+
+    dates0, new0, act0 = await mgr.get_activity_history(days=0)
+    assert dates0 == [] and new0 == [] and act0 == []
+
+
+async def test_get_segment_user_ids(mgr):
+    from datetime import timedelta
+
+    async with mgr.async_session_maker() as session:
+        session.add_all(
+            [
+                User(user_id=2101, group="О735Б", last_active_date=datetime.now()),
+                User(user_id=2102, group="О735А", last_active_date=datetime.now() - timedelta(days=20)),
+                User(user_id=2103, group="И101", last_active_date=datetime.now()),
+                User(user_id=2104, group=None, last_active_date=None),
+            ]
+        )
+        await session.commit()
+
+    assert set(await mgr.get_segment_user_ids()) == {2101, 2102, 2103, 2104}
+    assert await mgr.get_segment_user_ids(group_prefix="о735", days_active=7) == [2101]
+    assert set(await mgr.get_segment_user_ids(group_prefix="О7")) == {2101, 2102}
 
 
 async def test_gather_stats(mgr):

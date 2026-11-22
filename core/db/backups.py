@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlalchemy.engine import make_url
 from core.config import MOSCOW_TZ
 
 DEFAULT_TIMEOUT_SECONDS = 300
-DEFAULT_OUTPUT_DIR = Path("/tmp")
+DEFAULT_OUTPUT_DIR = Path(tempfile.gettempdir())
 UNSUPPORTED_SETTINGS = {"transaction_timeout"}
 
 

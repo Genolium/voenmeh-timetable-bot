@@ -1,25 +1,16 @@
 import asyncio
 import logging
+import math
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+import aiohttp
 
 from core.alert_sender import AlertSender
 from core.config import MOSCOW_TZ
-
-# Keep imports for type hints; do not introspect metric internals
-from core.metrics import (
-    GROUP_POPULARITY,
-    IMAGE_CACHE_HITS,
-    IMAGE_CACHE_MISSES,
-    IMAGE_CACHE_SIZE,
-    NOTIFICATION_DELIVERY,
-    SCHEDULE_GENERATION_TIME,
-    USER_ACTIVITY_DAILY,
-    USER_CONVERSION,
-)
 
 
 class AlertSeverity(Enum):
@@ -70,24 +61,110 @@ class BusinessMetricsMonitor:
         except Exception as e:
             logging.error(f"Business monitoring crashed: {e}")
 
-    async def _check_business_metrics(self):
+    _METRIC_RULES: tuple[tuple[str, str, str, AlertSeverity, str], ...] = (
+        (
+            "user_activity_drop",
+            "sum(increase(bot_user_activity_daily_total[24h])) / (sum(increase(bot_user_activity_daily_total[7d])) / 7)",
+            "<",
+            AlertSeverity.WARNING,
+            "User Activity Drop",
+        ),
+        (
+            "cache_hit_rate",
+            "sum(increase(bot_image_cache_hits_total[1h])) / "
+            "(sum(increase(bot_image_cache_hits_total[1h])) + sum(increase(bot_image_cache_misses_total[1h])))",
+            "<",
+            AlertSeverity.WARNING,
+            "Low Image Cache Hit Rate",
+        ),
+        (
+            "schedule_generation_time",
+            "histogram_quantile(0.95, sum(rate(bot_schedule_generation_duration_seconds_bucket[15m])) by (le))",
+            ">",
+            AlertSeverity.WARNING,
+            "Slow Schedule Image Generation",
+        ),
+        (
+            "notification_failure_rate",
+            'sum(increase(bot_notification_delivery_total{delivery_status="failed"}[15m])) / '
+            "sum(increase(bot_notification_delivery_total[15m]))",
+            ">",
+            AlertSeverity.CRITICAL,
+            "High Notification Failure Rate",
+        ),
+        (
+            "user_conversion_drop",
+            'sum(increase(bot_user_conversion_total{conversion_stage="daily_use"}[24h])) / '
+            'sum(increase(bot_user_conversion_total{conversion_stage="first_use"}[24h]))',
+            "<",
+            AlertSeverity.WARNING,
+            "User Conversion Drop",
+        ),
+    )
+
+    async def _query_prometheus_scalar(
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        promql: str,
+    ) -> Optional[float]:
+        async with session.get(
+            f"{base_url}/api/v1/query",
+            params={"query": promql},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            payload = await resp.json()
+        if not isinstance(payload, dict) or payload.get("status") != "success":
+            return None
+        result = payload.get("data", {}).get("result")
+        if not isinstance(result, list) or not result or not isinstance(result[0], dict):
+            return None
+        value_pair = result[0].get("value")
+        if not isinstance(value_pair, (list, tuple)) or len(value_pair) < 2:
+            return None
+        try:
+            value = float(value_pair[1])
+        except (TypeError, ValueError):
+            return None
+        return value if math.isfinite(value) else None
+
+    async def _check_business_metrics(self) -> None:
         if not self.prometheus_url:
             return
-        # Example: Query Prometheus for metrics
+        base_url = self.prometheus_url.strip().rstrip("/")
         try:
-            import aiohttp
-
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.prometheus_url}/api/v1/query?query=up") as resp:
+                async with session.get(
+                    f"{base_url}/api/v1/query",
+                    params={"query": "up"},
+                    timeout=aiohttp.ClientTimeout(total=10),
+                ) as resp:
                     data = await resp.json()
-                    # Check and alert if needed
-                    if data["status"] != "success":
+                    if not isinstance(data, dict) or data.get("status") != "success":
                         await self._send_alert(
                             "Prometheus Query Failed",
                             "Error querying metrics",
                             AlertSeverity.CRITICAL,
                             "prometheus",
                             {},
+                        )
+                        return
+
+                for metric_name, promql, comparator, severity, title in self._METRIC_RULES:
+                    threshold = self.thresholds.get(metric_name)
+                    if threshold is None:
+                        continue
+                    current_value = await self._query_prometheus_scalar(session, base_url, promql)
+                    if current_value is None:
+                        continue
+                    breached = current_value < threshold if comparator == "<" else current_value > threshold
+                    if breached:
+                        await self._send_alert(
+                            title,
+                            f"{metric_name}={current_value:.3f} {comparator} threshold {threshold}",
+                            severity,
+                            metric_name,
+                            {"current_value": current_value, "threshold": threshold},
                         )
         except Exception as e:
             logging.error(f"Metrics check failed: {e}")

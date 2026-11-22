@@ -503,7 +503,7 @@ BACKUP_TTL_SECONDS = BACKUP_RETENTION_DAYS * 86400
 
 async def backup_current_schedule(redis_client: Redis) -> None:
     try:
-        data = await redis_client.get(REDIS_SCHEDULE_HASH_KEY)
+        await redis_client.get(REDIS_SCHEDULE_HASH_KEY)
         # Сохраняем «снапшот» ключа хеша и дамп данных кэша расписания
         from core.config import REDIS_SCHEDULE_CACHE_KEY
 

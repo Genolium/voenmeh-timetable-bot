@@ -353,6 +353,6 @@
     "settings_morning_time_title": "🌅 请选择早间通知时间：",
     "settings_evening_time_title": "🌙 请选择晚间通知时间：",
     "about_error_unavailable": "⚠️ 说明页面暂时不可用。",
-    "theme_changed_success": "✅ 主题已更改！",
+    "theme_changed_success": "✅ 主题已更改为 {theme}！",
     "rate_limit_error": "⏳ 请求过于频繁，请稍后再试。"
 }

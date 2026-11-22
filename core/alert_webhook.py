@@ -93,7 +93,7 @@ def create_alert_app(
         all_ok = all(checks.values())
         status_code = 200 if all_ok else 503
 
-        response_data = {
+        response_data: Dict[str, Any] = {
             "status": "ready" if all_ok else "not_ready",
             "checks": checks,
             "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -161,6 +161,7 @@ async def run_alert_webhook_server(
     )
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    host = os.getenv("ALERT_WEBHOOK_HOST", "127.0.0.1")
+    site = web.TCPSite(runner, host, port)
     await site.start()
-    logging.info(f"Health check server started on http://0.0.0.0:{port}/health")
+    logging.info(f"Health check server started on http://{host}:{port}/health")

@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import tempfile
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
@@ -22,7 +22,6 @@ from bot.tasks import copy_message_task, send_media_task, send_message_task
 from bot.text_formatters import generate_reminder_text
 from core.config import ADMIN_IDS, MOSCOW_TZ
 from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
-from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.semester_settings import SemesterSettingsManager
@@ -192,8 +191,6 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
     timetable_manager = manager.middleware_data.get("manager")
 
     # Создаем правильный Redis-клиент
-    import os
-
     from redis.asyncio import Redis
 
     redis_url = os.getenv("REDIS_URL")
@@ -489,10 +486,8 @@ async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manag
 async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты осеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -521,10 +516,8 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
 async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты весеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -555,34 +548,9 @@ async def build_segment_users(
     user_data_manager: UserDataManager,
     group_prefix: str | None,
     days_active: int | None,
-) -> Any:
-    """Строит список пользователей для сегментированной рассылки с оптимизацией."""
-    group_prefix_up = (group_prefix or "").upper().strip()
-    all_ids = await user_data_manager.get_all_user_ids()
-    selected_ids: list[int] = []
-    from datetime import datetime as dt
-
-    threshold = None
-    if days_active and days_active > 0:
-        threshold = dt.now(MOSCOW_TZ).replace(tzinfo=None) - timedelta(days=days_active)
-
-    processed_count = 0
-    for uid in all_ids:
-        processed_count += 1
-        info = await user_data_manager.get_full_user_info(uid)
-        if not info:
-            continue
-        if group_prefix_up and not (info.group or "").upper().startswith(group_prefix_up):
-            continue
-        if threshold and (not info.last_active_date or info.last_active_date < threshold):
-            continue
-        selected_ids.append(uid)
-
-        # Периодически освобождаем event loop для обработки других событий
-        if processed_count % 100 == 0:
-            await asyncio.sleep(0)
-
-    return selected_ids
+) -> list[int]:
+    """Строит список пользователей для сегментированной рассылки одним SQL-запросом."""
+    return await user_data_manager.get_segment_user_ids(group_prefix=group_prefix, days_active=days_active)
 
 
 def render_template(template_text: str, user_info: Any) -> str:
@@ -1188,15 +1156,12 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 
     # Формируем список файлов для отображения (ограничиваем до 5 файлов)
     files_before = cache_info_before.get("files", [])
-    files_after = cache_info_after.get("files", [])
 
     # Показываем только первые 5 файлов
     files_to_show = files_before[:5]
     files_text_before = "\n".join([f"   • {f}" for f in files_to_show]) if files_to_show else "   • Нет файлов"
     if len(files_before) > 5:
         files_text_before += f"\n   ... и еще {len(files_before) - 5} файлов"
-
-    files_text_after = "\n".join([f"   • {f}" for f in files_after]) if files_after else "   • Нет файлов"
 
     # Добавляем информацию о Redis кэше
     redis_before = cache_info_before.get("redis_keys", 0)
@@ -1233,12 +1198,11 @@ async def on_cancel_generation(callback: CallbackQuery) -> None:
 
         # Обновляем сообщение
         try:
-            status_msg_id = active_generations[admin_id]["status_msg_id"]
             await callback.message.edit_text(
                 "⏹️ <b>Генерация отменена</b>\n\n" "Процесс остановлен пользователем.",
                 parse_mode="HTML",
             )
-        except:
+        except Exception:
             pass
 
         # Удаляем из активных генераций
