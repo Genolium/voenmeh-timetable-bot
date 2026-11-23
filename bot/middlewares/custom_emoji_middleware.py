@@ -11,6 +11,7 @@ from aiogram.methods import TelegramMethod
 from aiogram.methods.base import Response, TelegramType
 from aiogram.types import InlineKeyboardMarkup
 
+from bot.middlewares.network_retry_middleware import NetworkRetryRequestMiddleware
 from core.config import settings
 from core.custom_emojis import replace_emojis_html, transform_inline_keyboard
 
@@ -85,9 +86,10 @@ class CustomEmojiRequestMiddleware(BaseRequestMiddleware):
 
 
 def attach_custom_emoji_middleware(bot: Bot) -> Bot:
-    """Регистрирует CustomEmojiRequestMiddleware на сессии бота."""
+    """Регистрирует middleware кастомных эмодзи и сетевых ретраев на сессии бота."""
     session = getattr(bot, "session", None)
     middleware = getattr(session, "middleware", None)
     if callable(middleware):
         middleware(CustomEmojiRequestMiddleware())
+        middleware(NetworkRetryRequestMiddleware())
     return bot

@@ -8,7 +8,6 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.redis import RedisStorage
@@ -44,6 +43,7 @@ from bot.handlers.inline_handlers import inline_query_handler
 from bot.middlewares.i18n_middleware import I18nMiddleware
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
+from bot.middlewares.network_retry_middleware import FastConnectAiohttpSession as AiohttpSession
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.subscription_filter_middleware import SubscriptionFilterMiddleware
