@@ -10,10 +10,11 @@ from typing import Any, Dict
 import aiohttp
 import dramatiq
 from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from dramatiq import Broker
 from dramatiq.errors import RateLimitExceeded
+
+from bot.middlewares.network_retry_middleware import FastConnectAiohttpSession as AiohttpSession
 
 # Compatibility layer for RetryAfter across aiogram versions
 try:

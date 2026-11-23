@@ -203,12 +203,15 @@ async def test_middleware_disabled(monkeypatch):
 
 
 def test_attach_custom_emoji_middleware():
+    from bot.middlewares.network_retry_middleware import NetworkRetryRequestMiddleware
+
     bot_with_session = MagicMock(spec=Bot)
     bot_with_session.session = MagicMock()
     bot_with_session.session.middleware = MagicMock()
     assert attach_custom_emoji_middleware(bot_with_session) is bot_with_session
-    bot_with_session.session.middleware.assert_called_once()
-    assert isinstance(bot_with_session.session.middleware.call_args[0][0], CustomEmojiRequestMiddleware)
+    assert bot_with_session.session.middleware.call_count == 2
+    assert isinstance(bot_with_session.session.middleware.call_args_list[0][0][0], CustomEmojiRequestMiddleware)
+    assert isinstance(bot_with_session.session.middleware.call_args_list[1][0][0], NetworkRetryRequestMiddleware)
 
     bot_without_session = MagicMock(spec=Bot)
     bot_without_session.session = None
