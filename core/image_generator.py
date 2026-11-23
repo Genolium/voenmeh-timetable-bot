@@ -147,12 +147,11 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
         first = ""
         if lessons:
             try:
-                first = sorted(
+                lessons = sorted(
                     lessons,
                     key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
-                )[
-                    0
-                ].get("start_time_raw", "")
+                )
+                first = lessons[0].get("start_time_raw", "")
             except Exception:
                 first = ""
         else:
