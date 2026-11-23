@@ -302,7 +302,6 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_help": _("btn_help"),
         "btn_feedback": _("btn_feedback"),
         "btn_text_week": _("btn_text_week"),
-        "btn_report_error": _("btn_report_error"),
         "btn_back": _("btn_back"),
         "more_title": _("more_title"),
     }
@@ -777,19 +776,19 @@ async def on_help_click(callback: CallbackQuery, button: Button, manager: Dialog
 
 
 async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(Feedback.enter_feedback, mode=StartMode.NORMAL)
-
-
-async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     ctx = manager.current_context()
-    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
-    target_date = ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO, "")
-    context = f"Жалоба на расписание: {group}, {target_date}"
-    await manager.start(
-        Feedback.enter_feedback,
-        data={"feedback_context": context},
-        mode=StartMode.NORMAL,
-    )
+    dialog_data = ctx.dialog_data if isinstance(getattr(ctx, "dialog_data", None), dict) else {}
+    group = dialog_data.get(DialogDataKeys.GROUP)
+    target_date = dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO, "")
+    if group:
+        context = f"{group}, {target_date}".strip(", ")
+        await manager.start(
+            Feedback.enter_feedback,
+            data={"feedback_context": context},
+            mode=StartMode.NORMAL,
+        )
+        return
+    await manager.start(Feedback.enter_feedback, mode=StartMode.NORMAL)
 
 
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -969,7 +968,6 @@ schedul_dialog_windows = [
             Url(Format("{btn_news}"), Format("{news_url}"), id="news_url"),
             Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
             Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),
-            Button(Format("{btn_report_error}"), id="report_error_btn", on_click=on_report_error_click),
             Button(
                 Format("{btn_settings}"),
                 id=WidgetIds.SETTINGS,
