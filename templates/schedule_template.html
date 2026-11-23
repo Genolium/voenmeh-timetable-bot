@@ -864,15 +864,12 @@
 
     /* --- 5. Стилизация компонентов --- */
 
-    /* Стили самой карточки: фон, скругления, отступы. */
-    /* position: relative; — нужно, чтобы абсолютно позиционировать плашку с временем. */
-    /* display: flex; flex-direction: column; — выстраивает контент карточки в колонку. */
-    /* justify-content: center; — ВЕРТИКАЛЬНО ЦЕНТРИРУЕТ контент, если его мало (как во Вторник). */
+    /* Стили самой карточки: фон, скругления, симметричные отступы. */
     .day-card {
       position: relative;
       background: var(--color-card-bg);
       border-radius: 4rem;
-      padding: 4.8rem 7.5rem;
+      padding: 5.2rem 7rem;
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
@@ -883,22 +880,32 @@
       -webkit-backdrop-filter: var(--card-backdrop-filter, none);
     }
 
+    /* Шапка карточки: название дня слева и плашка первой пары справа в одном потоке. */
+    .day-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 3rem;
+      margin-bottom: 3.4rem;
+    }
+
     /* Заголовок дня недели (Понедельник, Вторник и т.д.). */
-    /* margin-bottom добавляет нужный отступ до списка пар. */
+    /* Высота строки совпадает с высотой плашки времени, чтобы заголовок и бейдж были строго на одной оси. */
     .day-title {
       font-weight: 700;
       font-size: 6.4rem;
+      line-height: 6.4rem;
       letter-spacing: 0.096rem;
       color: var(--card-day-title);
-      margin-bottom: 2.6rem;
-      padding-right: 18rem;
+      margin: 0;
+      padding: 0;
     }
 
     /* Контейнер для всех строк с парами. */
     .lessons-list {
       display: flex;
       flex-direction: column;
-      gap: 1.6rem;
+      gap: 1.8rem;
     }
 
     /* Ключевой элемент: строка с информацией о паре. */
@@ -909,12 +916,12 @@
       align-items: center;
       column-gap: 2rem;
       font-size: 3.6rem;
-      min-height: 5.2rem;
+      min-height: 5.4rem;
     }
 
     .lesson-row + .lesson-row {
       border-top: 1px solid var(--row-divider, rgba(128, 128, 128, 0.16));
-      padding-top: 1.6rem;
+      padding-top: 1.8rem;
     }
 
     /* Левый блок: предмет + преподаватель (колонки 1-8 без смещения аудитории и времени) */
@@ -985,17 +992,12 @@
       margin-top: 0.8rem;
     }
 
-    /* Плашка с временем первой пары. */
-    /* position: absolute; — "вырывает" плашку из общего потока и позволяет разместить её в углу карточки. */
-    /* top: 4.5rem; right: 6rem; — координаты относительно родительского .day-card. */
+    /* Плашка с временем первой пары (в потоке .day-header, по правому краю колонки времени). */
     .badge-first-lesson {
-      position: absolute;
-      top: 4.5rem;
-      right: 6rem;
       display: flex;
-      width: 16rem;
       flex-direction: column;
       align-items: center;
+      flex-shrink: 0;
     }
 
     /* Верхняя часть плашки с цифрами времени. */
@@ -1003,21 +1005,29 @@
       background-color: var(--color-badge-bg);
       color: var(--badge-time-color);
       border-radius: 2rem;
-      padding: 1.5rem 3rem;
+      height: 6.4rem;
+      min-width: 16rem;
+      padding: 0 2.8rem 0.25rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       font-family: 'Saira', sans-serif;
       font-weight: 700;
-      font-size: 4rem;
+      font-size: 3.9rem;
       line-height: 1;
+      font-variant-numeric: tabular-nums;
     }
 
     /* Нижняя часть плашки с текстом "первая пара". */
     .badge-text {
       font-family: 'Saira', sans-serif;
-      font-size: 2.3rem;
+      font-size: 2.2rem;
       font-weight: 700;
+      line-height: 1.1;
       color: var(--badge-caption-color, var(--color-badge-bg));
       text-transform: lowercase;
-      margin-top: 0.5rem;
+      margin-top: 0.9rem;
+      white-space: nowrap;
     }
 
     .hidden {
@@ -1256,15 +1266,20 @@
         padding: 3rem;
       }
 
-      /* Плашка с временем становится частью потока, а не висит сбоку. */
-      .badge-first-lesson {
-        position: static;
-        margin-bottom: 2rem;
-        align-self: flex-start;
+      /* На узких экранах шапка карточки складывается вертикально. */
+      .day-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1.6rem;
+        margin-bottom: 2.4rem;
       }
 
       .day-title {
-        padding-right: 0;
+        line-height: 1.1;
+      }
+
+      .badge-first-lesson {
+        align-items: flex-start;
       }
 
       /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
@@ -1315,31 +1330,31 @@
     <section class="days-grid">
       {% for day in schedule_days %}
       <article class="day-card">
-        <div class="badge-first-lesson {% if not day.lessons %}hidden{% endif %}">
-          <div class="badge-time">{{ day.firstStart }}</div>
-          <div class="badge-text">{{ i18n_first_lesson }}</div>
-        </div>
-        <div>
+        <div class="day-header">
           <h2 class="day-title">{{ day.name }}</h2>
-          {% if day.lessons %}
-          <div class="lessons-list">
-            {% for l in day.lessons %}
-            <div class="lesson-row">
-              <div class="lesson-main">
-                <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
-                {% if l.teacher %}<div class="lesson-teacher">{{ l.teacher }}</div>{% endif %}
-              </div>
-              <div class="lesson-room">{{ l.room }}</div>
-              <div class="lesson-time">{{ l.time }}</div>
-            </div>
-            {% endfor %}
+          <div class="badge-first-lesson {% if not day.lessons %}hidden{% endif %}">
+            <div class="badge-time">{{ day.firstStart }}</div>
+            <div class="badge-text">{{ i18n_first_lesson }}</div>
           </div>
-          {% else %}
-          <p class="holiday-text">
-            {{ i18n_no_lessons }}
-          </p>
-          {% endif %}
         </div>
+        {% if day.lessons %}
+        <div class="lessons-list">
+          {% for l in day.lessons %}
+          <div class="lesson-row">
+            <div class="lesson-main">
+              <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
+              {% if l.teacher %}<div class="lesson-teacher">{{ l.teacher }}</div>{% endif %}
+            </div>
+            <div class="lesson-room">{{ l.room }}</div>
+            <div class="lesson-time">{{ l.time }}</div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <p class="holiday-text">
+          {{ i18n_no_lessons }}
+        </p>
+        {% endif %}
       </article>
       {% endfor %}
     </section>
