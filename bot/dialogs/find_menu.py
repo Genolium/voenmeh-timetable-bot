@@ -49,6 +49,9 @@ async def get_find_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[st
             "find_enter_classroom": _("find_enter_classroom"),
             "find_select_match": _("find_select_match"),
             "find_new_search": _("find_new_search"),
+            "found_items_indexed": [
+                (str(idx), item) for idx, item in enumerate(dialog_manager.dialog_data.get(DialogDataKeys.FOUND_ITEMS, []))
+            ],
         }
     )
 
@@ -69,12 +72,16 @@ async def get_history_data(dialog_manager: DialogManager, **kwargs: Any) -> dict
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     items = []
+    lookup = []
     labels = {"group": "🎓", "teacher": "🧑‍🏫", "room": "🚪"}
     if user_data_manager:
         for item_type in ("group", "teacher", "room"):
             for value in await user_data_manager.get_history(user_id, item_type):
                 prefix = labels.get(item_type, "")
-                items.append((f"{item_type}:{value}", f"{prefix} {value}".strip()))
+                idx = str(len(lookup))
+                lookup.append((item_type, value))
+                items.append((idx, f"{prefix} {value}".strip()))
+    dialog_manager.dialog_data["_history_lookup"] = lookup
     return {
         "history_items": items,
         "find_history_title": _("find_history_title"),
@@ -84,14 +91,20 @@ async def get_history_data(dialog_manager: DialogManager, **kwargs: Any) -> dict
 
 
 async def on_history_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
-    item_type, value = item_id.split(":", 1)
+    lookup = manager.dialog_data.get("_history_lookup") or []
+    if item_id.isdigit() and int(item_id) < len(lookup):
+        item_type, value = lookup[int(item_id)]
+    else:
+        item_type, value = item_id.split(":", 1)
     if item_type == "group":
         await manager.start(Schedule.view, data={DialogDataKeys.GROUP: value}, mode=StartMode.RESET_STACK)
     elif item_type == "teacher":
         manager.dialog_data[DialogDataKeys.TEACHER_NAME] = value
+        manager.dialog_data.pop(DialogDataKeys.CLASSROOM_NUMBER, None)
         await manager.switch_to(FindMenu.view_result)
     elif item_type == "room":
         manager.dialog_data[DialogDataKeys.CLASSROOM_NUMBER] = value
+        manager.dialog_data.pop(DialogDataKeys.TEACHER_NAME, None)
         await manager.switch_to(FindMenu.view_result)
 
 
@@ -132,7 +145,10 @@ async def on_teacher_input(message: Message, message_input: MessageInput, manage
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
 
-    query = message.text.strip()
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer(_("find_teacher_not_found"))
+        return
 
     # 1. Поиск "в лоб"
     found_teachers = timetable_manager.find_teachers(query)
@@ -173,7 +189,10 @@ async def on_classroom_input(message: Message, message_input: MessageInput, mana
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
-    query = message.text.strip()
+    query = (message.text or "").strip()
+    if not query:
+        await message.answer(_("find_classroom_not_found"))
+        return
     # Normalize classroom (e.g. convert cyrillic letters if used, mainly number based though)
     # Most classrooms are numbers, but some have letters (e.g. 521a)
     found_classrooms = timetable_manager.find_classrooms(query)
@@ -206,24 +225,28 @@ async def on_classroom_input(message: Message, message_input: MessageInput, mana
 
 
 async def on_item_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
+    found_items = manager.dialog_data.get(DialogDataKeys.FOUND_ITEMS) or []
+    resolved = found_items[int(item_id)] if item_id.isdigit() and int(item_id) < len(found_items) else item_id
     search_type = manager.dialog_data.get(DialogDataKeys.SEARCH_TYPE)
 
     if search_type == "group":
         user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
         if user_data_manager and callback.from_user:
-            await user_data_manager.add_to_history(callback.from_user.id, "group", item_id)
+            await user_data_manager.add_to_history(callback.from_user.id, "group", resolved)
         await manager.start(
             Schedule.view,
-            data={DialogDataKeys.GROUP: item_id},
+            data={DialogDataKeys.GROUP: resolved},
             mode=StartMode.RESET_STACK,
         )
         return
 
     if search_type == "teacher":
-        manager.dialog_data[DialogDataKeys.TEACHER_NAME] = item_id
+        manager.dialog_data[DialogDataKeys.TEACHER_NAME] = resolved
+        manager.dialog_data.pop(DialogDataKeys.CLASSROOM_NUMBER, None)
         history_type = "teacher"
     elif search_type == "classroom":
-        manager.dialog_data[DialogDataKeys.CLASSROOM_NUMBER] = item_id
+        manager.dialog_data[DialogDataKeys.CLASSROOM_NUMBER] = resolved
+        manager.dialog_data.pop(DialogDataKeys.TEACHER_NAME, None)
         history_type = "room"
     else:
         history_type = None
@@ -232,7 +255,7 @@ async def on_item_selected(callback: CallbackQuery, widget: Any, manager: Dialog
     if history_type:
         user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
         if user_data_manager and callback.from_user:
-            await user_data_manager.add_to_history(callback.from_user.id, history_type, item_id)
+            await user_data_manager.add_to_history(callback.from_user.id, history_type, resolved)
 
     await manager.switch_to(FindMenu.view_result)
 
@@ -294,6 +317,7 @@ find_dialog = Dialog(
         SwitchTo(Format("{btn_back}"), id="history_back", state=FindMenu.choice),
         state=FindMenu.history,
         getter=get_history_data,
+        parse_mode="HTML",
     ),
     Window(
         StaticMedia(path=SEARCH_IMAGE_PATH),
@@ -326,12 +350,18 @@ find_dialog = Dialog(
         Format("{find_select_match}"),
         Column(
             Select(
-                Format("{item}"),
+                Format("{item[1]}"),
                 id=WidgetIds.SELECT_FOUND_ITEM,
-                item_id_getter=lambda item: item,
-                items=DialogDataKeys.FOUND_ITEMS,
+                item_id_getter=lambda item: item[0],
+                items="found_items_indexed",
                 on_click=on_item_selected,
             )
+        ),
+        SwitchTo(
+            Format("{btn_back}"),
+            id=f"{WidgetIds.BACK_TO_CHOICE}_group",
+            when=lambda data, w, m: m.dialog_data.get(DialogDataKeys.SEARCH_TYPE) == "group",
+            state=FindMenu.enter_group,
         ),
         SwitchTo(
             Format("{btn_back}"),

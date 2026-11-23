@@ -128,5 +128,6 @@ feedback_dialog = Dialog(
         Button(Format("{btn_cancel}"), id="feedback_cancel", on_click=on_feedback_cancel),
         state=Feedback.enter_feedback,
         getter=get_feedback_data,
+        parse_mode="HTML",
     )
 )

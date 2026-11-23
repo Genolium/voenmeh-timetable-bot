@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ru">
+<html lang="{{ lang | default('ru') }}">
 
 <head>
   <meta charset="utf-8" />
@@ -237,73 +237,88 @@
 
       /* 📐 BLUEPRINT */
       --blueprint-odd-bg: #0c2340;
-      --blueprint-odd-accent: #00d4ff;
-      --blueprint-odd-badge-bg: #00d4ff;
-      --blueprint-odd-card-bg: #122e54;
-      --blueprint-odd-card-accent: #00d4ff;
-      --blueprint-odd-card-day-title: #00d4ff;
-      --blueprint-odd-card-border: 2px solid rgba(0, 212, 255, 0.45);
-      --blueprint-odd-card-shadow: 0 0 25px rgba(0, 212, 255, 0.1);
+      --blueprint-odd-accent: #38e2ff;
+      --blueprint-odd-badge-bg: #00c8f8;
+      --blueprint-odd-badge-time: #06182c;
+      --blueprint-odd-badge-caption: #5ce8ff;
+      --blueprint-odd-card-bg: rgba(14, 39, 72, 0.72);
+      --blueprint-odd-card-accent: #38e2ff;
+      --blueprint-odd-card-day-title: #38e2ff;
+      --blueprint-odd-card-border: 1.5px solid rgba(0, 212, 255, 0.42);
+      --blueprint-odd-card-shadow: 0 18px 40px rgba(3, 12, 26, 0.55), inset 0 1px 0 rgba(125, 226, 255, 0.22);
 
       --blueprint-even-bg: #081a30;
-      --blueprint-even-accent: #38bdf8;
-      --blueprint-even-badge-bg: #0284c7;
-      --blueprint-even-card-bg: #0f233d;
-      --blueprint-even-card-accent: #38bdf8;
-      --blueprint-even-card-day-title: #38bdf8;
-      --blueprint-even-card-border: 2px solid rgba(56, 189, 248, 0.45);
-      --blueprint-even-card-shadow: 0 0 25px rgba(2, 132, 199, 0.12);
+      --blueprint-even-accent: #60a5fa;
+      --blueprint-even-badge-bg: #0369a1;
+      --blueprint-even-badge-time: #ffffff;
+      --blueprint-even-badge-caption: #7dd3fc;
+      --blueprint-even-card-bg: rgba(10, 27, 52, 0.74);
+      --blueprint-even-card-accent: #7dd3fc;
+      --blueprint-even-card-day-title: #60a5fa;
+      --blueprint-even-card-border: 1.5px solid rgba(96, 165, 250, 0.42);
+      --blueprint-even-card-shadow: 0 18px 40px rgba(2, 9, 22, 0.6), inset 0 1px 0 rgba(147, 197, 253, 0.20);
 
+      --blueprint-card-backdrop: blur(12px);
       --blueprint-text-main: #ffffff;
-      --blueprint-text-light: #94b5d6;
+      --blueprint-text-light: #b8d3ee;
       --blueprint-card-text: #ffffff;
-      --blueprint-card-text-light: #94b5d6;
-      --blueprint-badge-time: #081a30;
+      --blueprint-card-text-light: #b5cfe8;
+      --blueprint-badge-time: #06182c;
 
       /* 🌌 SPACE */
       --space-odd-bg: #060913;
       --space-odd-accent: #66fcf1;
-      --space-odd-badge-bg: #00b4d8;
-      --space-odd-card-bg: #0f1629;
+      --space-odd-badge-bg: #22d3ee;
+      --space-odd-badge-time: #04111f;
+      --space-odd-badge-caption: #67e8f9;
+      --space-odd-card-bg: rgba(12, 20, 42, 0.66);
       --space-odd-card-accent: #66fcf1;
       --space-odd-card-day-title: #66fcf1;
-      --space-odd-card-border: 1px solid rgba(102, 252, 241, 0.35);
-      --space-odd-card-shadow: 0 0 25px rgba(102, 252, 241, 0.08);
+      --space-odd-card-border: 1px solid rgba(102, 252, 241, 0.34);
+      --space-odd-card-shadow: 0 20px 44px rgba(2, 4, 12, 0.62), inset 0 1px 0 rgba(102, 252, 241, 0.20);
 
       --space-even-bg: #090616;
       --space-even-accent: #e879f9;
-      --space-even-badge-bg: #9333ea;
-      --space-even-card-bg: #150f26;
-      --space-even-card-accent: #e879f9;
+      --space-even-badge-bg: #7e22ce;
+      --space-even-badge-time: #ffffff;
+      --space-even-badge-caption: #f0abfc;
+      --space-even-card-bg: rgba(22, 13, 44, 0.68);
+      --space-even-card-accent: #f0abfc;
       --space-even-card-day-title: #e879f9;
-      --space-even-card-border: 1px solid rgba(232, 121, 249, 0.35);
-      --space-even-card-shadow: 0 0 25px rgba(147, 51, 234, 0.12);
+      --space-even-card-border: 1px solid rgba(232, 121, 249, 0.34);
+      --space-even-card-shadow: 0 20px 44px rgba(4, 2, 14, 0.64), inset 0 1px 0 rgba(232, 121, 249, 0.20);
 
+      --space-card-backdrop: blur(14px);
       --space-text-main: #ffffff;
-      --space-text-light: #c5c6c7;
+      --space-text-light: #cbd5e1;
       --space-card-text: #ffffff;
-      --space-card-text-light: #a3b1c6;
+      --space-card-text-light: #bcc8dc;
       --space-badge-time: #ffffff;
 
       /* ❄️ NORD */
       --nord-odd-bg: #2e3440;
       --nord-odd-accent: #88c0d0;
-      --nord-odd-badge-bg: #5e81ac;
-      --nord-odd-card-bg: #3b4252;
+      --nord-odd-badge-bg: #4c6b94;
+      --nord-odd-badge-time: #eceff4;
+      --nord-odd-badge-caption: #88c0d0;
+      --nord-odd-card-bg: rgba(59, 66, 82, 0.76);
       --nord-odd-card-accent: #88c0d0;
       --nord-odd-card-day-title: #88c0d0;
-      --nord-odd-card-border: 1px solid rgba(136, 192, 208, 0.25);
-      --nord-odd-card-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      --nord-odd-card-border: 1px solid rgba(136, 192, 208, 0.28);
+      --nord-odd-card-shadow: 0 16px 36px rgba(15, 19, 26, 0.42), inset 0 1px 0 rgba(236, 239, 244, 0.14);
 
-      --nord-even-bg: #29313d;
+      --nord-even-bg: #25313b;
       --nord-even-accent: #a3be8c;
       --nord-even-badge-bg: #8fbcbb;
-      --nord-even-card-bg: #384353;
+      --nord-even-badge-time: #1b222a;
+      --nord-even-badge-caption: #a3be8c;
+      --nord-even-card-bg: rgba(46, 61, 70, 0.76);
       --nord-even-card-accent: #a3be8c;
       --nord-even-card-day-title: #a3be8c;
-      --nord-even-card-border: 1px solid rgba(163, 190, 140, 0.25);
-      --nord-even-card-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      --nord-even-card-border: 1px solid rgba(163, 190, 140, 0.30);
+      --nord-even-card-shadow: 0 16px 36px rgba(12, 18, 22, 0.44), inset 0 1px 0 rgba(216, 222, 233, 0.14);
 
+      --nord-card-backdrop: blur(12px);
       --nord-text-main: #eceff4;
       --nord-text-light: #d8dee9;
       --nord-card-text: #eceff4;
@@ -312,202 +327,261 @@
 
       /* 🌆 CYBERPUNK */
       --cyberpunk-odd-bg: #0b0217;
+      --cyberpunk-odd-bg-overlay: linear-gradient(160deg, rgba(255, 0, 127, 0.08), rgba(11, 2, 23, 0.18));
       --cyberpunk-odd-accent: #00f0ff;
-      --cyberpunk-odd-badge-bg: #ff007f;
-      --cyberpunk-odd-card-bg: #1a0c2e;
+      --cyberpunk-odd-badge-bg: #db2777;
+      --cyberpunk-odd-badge-time: #ffffff;
+      --cyberpunk-odd-badge-caption: #ff6bb5;
+      --cyberpunk-odd-card-bg: rgba(24, 10, 44, 0.72);
       --cyberpunk-odd-card-accent: #00f0ff;
-      --cyberpunk-odd-card-day-title: #ff007f;
-      --cyberpunk-odd-card-border: 2px solid rgba(255, 0, 127, 0.45);
-      --cyberpunk-odd-card-shadow: 0 0 30px rgba(255, 0, 127, 0.15);
+      --cyberpunk-odd-card-day-title: #ff4da6;
+      --cyberpunk-odd-card-border: 1.5px solid rgba(255, 46, 147, 0.46);
+      --cyberpunk-odd-card-shadow: 0 20px 44px rgba(8, 2, 18, 0.65), inset 0 1px 0 rgba(255, 92, 168, 0.22);
+      --cyberpunk-odd-text-light: #f472b6;
 
-      --cyberpunk-even-bg: #0b0217;
-      --cyberpunk-even-accent: #00f0ff;
-      --cyberpunk-even-badge-bg: #ff007f;
-      --cyberpunk-even-card-bg: #1a0c2e;
-      --cyberpunk-even-card-accent: #00f0ff;
-      --cyberpunk-even-card-day-title: #ff007f;
-      --cyberpunk-even-card-border: 2px solid rgba(255, 0, 127, 0.45);
-      --cyberpunk-even-card-shadow: 0 0 30px rgba(255, 0, 127, 0.15);
+      --cyberpunk-even-bg: #061124;
+      --cyberpunk-even-bg-overlay: linear-gradient(160deg, rgba(0, 240, 255, 0.10), rgba(6, 18, 38, 0.32));
+      --cyberpunk-even-accent: #fde047;
+      --cyberpunk-even-badge-bg: #00e5ff;
+      --cyberpunk-even-badge-time: #061326;
+      --cyberpunk-even-badge-caption: #38f5ff;
+      --cyberpunk-even-card-bg: rgba(10, 22, 46, 0.74);
+      --cyberpunk-even-card-accent: #fde047;
+      --cyberpunk-even-card-day-title: #00f0ff;
+      --cyberpunk-even-card-border: 1.5px solid rgba(0, 240, 255, 0.46);
+      --cyberpunk-even-card-shadow: 0 20px 44px rgba(2, 8, 20, 0.65), inset 0 1px 0 rgba(0, 240, 255, 0.22);
+      --cyberpunk-even-text-light: #38f5ff;
 
+      --cyberpunk-card-backdrop: blur(12px);
       --cyberpunk-text-main: #ffffff;
       --cyberpunk-text-light: #00f0ff;
       --cyberpunk-card-text: #ffffff;
-      --cyberpunk-card-text-light: #d8c7ee;
+      --cyberpunk-card-text-light: #d6c8eb;
       --cyberpunk-badge-time: #ffffff;
 
       /* 📟 MATRIX */
       --matrix-odd-bg: #030a04;
       --matrix-odd-accent: #00ff66;
       --matrix-odd-badge-bg: #00ff66;
-      --matrix-odd-card-bg: #0a170c;
+      --matrix-odd-badge-time: #031206;
+      --matrix-odd-badge-caption: #4ade80;
+      --matrix-odd-card-bg: rgba(7, 21, 10, 0.74);
       --matrix-odd-card-accent: #00ff66;
       --matrix-odd-card-day-title: #00ff66;
-      --matrix-odd-card-border: 2px solid rgba(0, 255, 102, 0.4);
-      --matrix-odd-card-shadow: 0 0 25px rgba(0, 255, 102, 0.12);
+      --matrix-odd-card-border: 1.5px solid rgba(0, 255, 102, 0.42);
+      --matrix-odd-card-shadow: 0 18px 38px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(0, 255, 102, 0.22);
+      --matrix-odd-text-main: #00ff66;
+      --matrix-odd-text-light: #86efac;
+      --matrix-odd-card-text: #ecfdf5;
+      --matrix-odd-card-text-light: #86efac;
 
-      --matrix-even-bg: #030a04;
-      --matrix-even-accent: #00ff66;
-      --matrix-even-badge-bg: #00ff66;
-      --matrix-even-card-bg: #0a170c;
-      --matrix-even-card-accent: #00ff66;
-      --matrix-even-card-day-title: #00ff66;
-      --matrix-even-card-border: 2px solid rgba(0, 255, 102, 0.4);
-      --matrix-even-card-shadow: 0 0 25px rgba(0, 255, 102, 0.12);
+      --matrix-even-bg: #041217;
+      --matrix-even-bg-overlay: linear-gradient(180deg, rgba(6, 78, 59, 0.22), rgba(4, 24, 34, 0.45));
+      --matrix-even-accent: #5eead4;
+      --matrix-even-badge-bg: #2dd4bf;
+      --matrix-even-badge-time: #04171a;
+      --matrix-even-badge-caption: #5eead4;
+      --matrix-even-card-bg: rgba(6, 22, 28, 0.76);
+      --matrix-even-card-accent: #5eead4;
+      --matrix-even-card-day-title: #2dd4bf;
+      --matrix-even-card-border: 1.5px solid rgba(45, 212, 191, 0.46);
+      --matrix-even-card-shadow: 0 18px 38px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(45, 212, 191, 0.22);
+      --matrix-even-text-main: #5eead4;
+      --matrix-even-text-light: #99f6e4;
+      --matrix-even-card-text: #f0fdfa;
+      --matrix-even-card-text-light: #99f6e4;
 
+      --matrix-card-backdrop: blur(8px);
       --matrix-text-main: #00ff66;
-      --matrix-text-light: #73e699;
-      --matrix-card-text: #e6ffe6;
-      --matrix-card-text-light: #80e69d;
-      --matrix-badge-time: #000000;
+      --matrix-text-light: #86efac;
+      --matrix-card-text: #ecfdf5;
+      --matrix-card-text-light: #86efac;
+      --matrix-badge-time: #031206;
 
       /* 🍵 MATCHA */
       --matcha-odd-bg: #4f614d;
-      --matcha-odd-accent: #3a4b38;
-      --matcha-odd-badge-bg: #5a6e57;
-      --matcha-odd-card-bg: #f7f5f0;
-      --matcha-odd-card-accent: #4f614d;
-      --matcha-odd-card-day-title: #3a4b38;
-      --matcha-odd-card-border: 1px solid rgba(79, 97, 77, 0.15);
-      --matcha-odd-card-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+      --matcha-odd-accent: #3d5a3a;
+      --matcha-odd-badge-bg: #3d5a3a;
+      --matcha-odd-badge-time: #ffffff;
+      --matcha-odd-badge-caption: #3d5a3a;
+      --matcha-odd-card-bg: rgba(249, 247, 241, 0.88);
+      --matcha-odd-card-accent: #3d5a3a;
+      --matcha-odd-card-day-title: #2f452d;
+      --matcha-odd-card-border: 1px solid rgba(255, 255, 255, 0.55);
+      --matcha-odd-card-shadow: 0 16px 34px rgba(24, 34, 23, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 
       --matcha-even-bg: #435443;
-      --matcha-even-accent: #6b7c62;
-      --matcha-even-badge-bg: #7c8f73;
-      --matcha-even-card-bg: #f5f2ea;
-      --matcha-even-card-accent: #6b7c62;
-      --matcha-even-card-day-title: #313f31;
-      --matcha-even-card-border: 1px solid rgba(107, 124, 98, 0.2);
-      --matcha-even-card-shadow: 0 12px 28px rgba(0, 0, 0, 0.08);
+      --matcha-even-bg-overlay: linear-gradient(155deg, rgba(120, 74, 38, 0.18), rgba(42, 54, 41, 0.20));
+      --matcha-even-accent: #8c5027;
+      --matcha-even-badge-bg: #8c5027;
+      --matcha-even-badge-time: #ffffff;
+      --matcha-even-badge-caption: #7c4420;
+      --matcha-even-card-bg: rgba(247, 241, 232, 0.88);
+      --matcha-even-card-accent: #8c5027;
+      --matcha-even-card-day-title: #7c4420;
+      --matcha-even-card-border: 1px solid rgba(255, 248, 238, 0.55);
+      --matcha-even-card-shadow: 0 16px 34px rgba(28, 22, 16, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 
+      --matcha-card-backdrop: blur(12px);
       --matcha-text-main: #ffffff;
-      --matcha-text-light: #e5e2d8;
-      --matcha-card-text: #283327;
-      --matcha-card-text-light: #526351;
+      --matcha-text-light: #e8e5dc;
+      --matcha-card-text: #222b21;
+      --matcha-card-text-light: #495948;
       --matcha-badge-time: #ffffff;
 
       /* 🌇 SUNSET (Переработанный: теплый золотой закат vs сумеречный розово-фиолетовый) */
       --sunset-odd-bg: #1c0e2a;
-      --sunset-odd-accent: #f59e0b;
-      --sunset-odd-badge-bg: #ea580c;
-      --sunset-odd-card-bg: #271233;
-      --sunset-odd-card-accent: #f59e0b;
+      --sunset-odd-accent: #fbbf24;
+      --sunset-odd-badge-bg: #c2410c;
+      --sunset-odd-badge-time: #ffffff;
+      --sunset-odd-badge-caption: #fdba74;
+      --sunset-odd-card-bg: rgba(38, 15, 48, 0.66);
+      --sunset-odd-card-accent: #fbbf24;
       --sunset-odd-card-day-title: #fb923c;
-      --sunset-odd-card-border: 2px solid rgba(251, 146, 60, 0.4);
-      --sunset-odd-card-shadow: 0 15px 35px rgba(0, 0, 0, 0.35);
+      --sunset-odd-card-border: 1.5px solid rgba(251, 146, 60, 0.42);
+      --sunset-odd-card-shadow: 0 20px 44px rgba(10, 4, 18, 0.54), inset 0 1px 0 rgba(254, 215, 170, 0.22);
+      --sunset-odd-text-light: #fed7aa;
 
       --sunset-even-bg: #0e0c26;
-      --sunset-even-accent: #f472b6;
-      --sunset-even-badge-bg: #c026d3;
-      --sunset-even-card-bg: #1c1538;
-      --sunset-even-card-accent: #f472b6;
+      --sunset-even-accent: #f9a8d4;
+      --sunset-even-badge-bg: #a21caf;
+      --sunset-even-badge-time: #ffffff;
+      --sunset-even-badge-caption: #f9a8d4;
+      --sunset-even-card-bg: rgba(22, 16, 52, 0.68);
+      --sunset-even-card-accent: #f9a8d4;
       --sunset-even-card-day-title: #f472b6;
-      --sunset-even-card-border: 2px solid rgba(217, 70, 239, 0.4);
-      --sunset-even-card-shadow: 0 15px 35px rgba(0, 0, 0, 0.35);
+      --sunset-even-card-border: 1.5px solid rgba(244, 114, 182, 0.42);
+      --sunset-even-card-shadow: 0 20px 44px rgba(6, 4, 20, 0.56), inset 0 1px 0 rgba(244, 114, 182, 0.22);
+      --sunset-even-text-light: #f5d0fe;
 
+      --sunset-card-backdrop: blur(14px);
       --sunset-text-main: #ffffff;
       --sunset-text-light: #fed7aa;
       --sunset-card-text: #ffffff;
-      --sunset-card-text-light: #e2d9f3;
+      --sunset-card-text-light: #e5dcf5;
       --sunset-badge-time: #ffffff;
 
       /* 🪻 LAVENDER */
       --lavender-odd-bg: #170f24;
-      --lavender-odd-accent: #d5c7e8;
-      --lavender-odd-badge-bg: #845ec2;
-      --lavender-odd-card-bg: #261b36;
-      --lavender-odd-card-accent: #d5c7e8;
-      --lavender-odd-card-day-title: #c4b5fd;
-      --lavender-odd-card-border: 1px solid rgba(196, 181, 253, 0.25);
-      --lavender-odd-card-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+      --lavender-odd-bg-overlay: linear-gradient(145deg, rgba(99, 102, 241, 0.14), rgba(15, 23, 42, 0.18));
+      --lavender-odd-accent: #c7d2fe;
+      --lavender-odd-badge-bg: #4f46e5;
+      --lavender-odd-badge-time: #ffffff;
+      --lavender-odd-badge-caption: #a5b4fc;
+      --lavender-odd-card-bg: rgba(34, 26, 62, 0.72);
+      --lavender-odd-card-accent: #c7d2fe;
+      --lavender-odd-card-day-title: #a5b4fc;
+      --lavender-odd-card-border: 1px solid rgba(165, 180, 252, 0.34);
+      --lavender-odd-card-shadow: 0 18px 38px rgba(8, 5, 22, 0.48), inset 0 1px 0 rgba(199, 210, 254, 0.18);
 
       --lavender-even-bg: #1b1029;
-      --lavender-even-accent: #e0aaff;
-      --lavender-even-badge-bg: #9d4edd;
-      --lavender-even-card-bg: #2c1a42;
-      --lavender-even-card-accent: #e0aaff;
-      --lavender-even-card-day-title: #e0aaff;
-      --lavender-even-card-border: 1px solid rgba(224, 170, 255, 0.25);
-      --lavender-even-card-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+      --lavender-even-bg-overlay: linear-gradient(145deg, rgba(192, 38, 211, 0.14), rgba(27, 16, 41, 0.15));
+      --lavender-even-accent: #f5d0fe;
+      --lavender-even-badge-bg: #a21caf;
+      --lavender-even-badge-time: #ffffff;
+      --lavender-even-badge-caption: #f0abfc;
+      --lavender-even-card-bg: rgba(48, 22, 64, 0.72);
+      --lavender-even-card-accent: #f5d0fe;
+      --lavender-even-card-day-title: #f0abfc;
+      --lavender-even-card-border: 1px solid rgba(240, 171, 252, 0.34);
+      --lavender-even-card-shadow: 0 18px 38px rgba(12, 4, 22, 0.48), inset 0 1px 0 rgba(245, 208, 254, 0.18);
 
+      --lavender-card-backdrop: blur(12px);
       --lavender-text-main: #ffffff;
-      --lavender-text-light: #d5c7e8;
+      --lavender-text-light: #ddd6fe;
       --lavender-card-text: #ffffff;
-      --lavender-card-text-light: #bcaecf;
+      --lavender-card-text-light: #cfc4e6;
       --lavender-badge-time: #ffffff;
 
       /* ⬛ OLED */
       --oled-odd-bg: #000000;
       --oled-odd-accent: #ffffff;
-      --oled-odd-badge-bg: #262626;
-      --oled-odd-card-bg: #0d0d0d;
+      --oled-odd-badge-bg: #ffffff;
+      --oled-odd-badge-time: #000000;
+      --oled-odd-badge-caption: #d4d4d8;
+      --oled-odd-card-bg: rgba(14, 14, 16, 0.94);
       --oled-odd-card-accent: #ffffff;
       --oled-odd-card-day-title: #ffffff;
-      --oled-odd-card-border: 2px solid #282828;
-      --oled-odd-card-shadow: none;
+      --oled-odd-card-border: 1.5px solid #2e2e34;
+      --oled-odd-card-shadow: 0 12px 30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+      --oled-odd-text-light: #b4b4bc;
 
       --oled-even-bg: #000000;
-      --oled-even-accent: #ffffff;
-      --oled-even-badge-bg: #262626;
-      --oled-even-card-bg: #0d0d0d;
-      --oled-even-card-accent: #ffffff;
-      --oled-even-card-day-title: #ffffff;
-      --oled-even-card-border: 2px solid #282828;
-      --oled-even-card-shadow: none;
+      --oled-even-accent: #7dd3fc;
+      --oled-even-badge-bg: #38bdf8;
+      --oled-even-badge-time: #04101a;
+      --oled-even-badge-caption: #7dd3fc;
+      --oled-even-card-bg: rgba(10, 14, 20, 0.94);
+      --oled-even-card-accent: #7dd3fc;
+      --oled-even-card-day-title: #38bdf8;
+      --oled-even-card-border: 1.5px solid rgba(56, 189, 248, 0.36);
+      --oled-even-card-shadow: 0 12px 30px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(56, 189, 248, 0.16);
+      --oled-even-text-light: #7dd3fc;
 
       --oled-text-main: #ffffff;
-      --oled-text-light: #a3a3a3;
+      --oled-text-light: #b4b4bc;
       --oled-card-text: #ffffff;
-      --oled-card-text-light: #a3a3a3;
-      --oled-badge-time: #ffffff;
+      --oled-card-text-light: #b4b4bc;
+      --oled-badge-time: #000000;
 
       /* 📖 PAPER */
       --paper-odd-bg: #ede4d4;
       --paper-odd-accent: #b84228;
       --paper-odd-badge-bg: #b84228;
-      --paper-odd-card-bg: #fffefb;
+      --paper-odd-badge-time: #ffffff;
+      --paper-odd-badge-caption: #8b3a2b;
+      --paper-odd-card-bg: rgba(255, 254, 251, 0.90);
       --paper-odd-card-accent: #b84228;
       --paper-odd-card-day-title: #8b3a2b;
       --paper-odd-card-border: 1.5px solid #dcd1be;
-      --paper-odd-card-shadow: 0 12px 30px rgba(100, 80, 50, 0.09);
+      --paper-odd-card-shadow: 0 14px 32px rgba(92, 72, 44, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
 
       --paper-even-bg: #e6e2d8;
       --paper-even-accent: #1e4a7a;
       --paper-even-badge-bg: #1e4a7a;
-      --paper-even-card-bg: #fcfbfa;
+      --paper-even-badge-time: #ffffff;
+      --paper-even-badge-caption: #1e4a7a;
+      --paper-even-card-bg: rgba(252, 251, 250, 0.90);
       --paper-even-card-accent: #1e4a7a;
       --paper-even-card-day-title: #1e4a7a;
-      --paper-even-card-border: 1.5px solid #cbd5de;
-      --paper-even-card-shadow: 0 12px 30px rgba(40, 60, 85, 0.09);
+      --paper-even-card-border: 1.5px solid #c9d4de;
+      --paper-even-card-shadow: 0 14px 32px rgba(36, 54, 78, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.95);
 
+      --paper-card-backdrop: blur(8px);
       --paper-text-main: #1e1915;
       --paper-text-light: #5c4e3f;
       --paper-card-text: #1e1915;
-      --paper-card-text-light: #5c4e3f;
+      --paper-card-text-light: #574a3c;
       --paper-badge-time: #ffffff;
 
       /* 🌧️ RAIN (Переработанный: выраженный дождевой стиль, мокрый асфальт и капли) */
       --rain-odd-bg: #0e1722;
-      --rain-odd-accent: #38bdf8;
-      --rain-odd-badge-bg: #0284c7;
-      --rain-odd-card-bg: #142232;
-      --rain-odd-card-accent: #38bdf8;
+      --rain-odd-accent: #7dd3fc;
+      --rain-odd-badge-bg: #0369a1;
+      --rain-odd-badge-time: #ffffff;
+      --rain-odd-badge-caption: #7dd3fc;
+      --rain-odd-card-bg: rgba(14, 26, 40, 0.64);
+      --rain-odd-card-accent: #7dd3fc;
       --rain-odd-card-day-title: #38bdf8;
-      --rain-odd-card-border: 2px solid rgba(56, 189, 248, 0.35);
-      --rain-odd-card-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      --rain-odd-card-border: 1.5px solid rgba(56, 189, 248, 0.36);
+      --rain-odd-card-shadow: 0 20px 44px rgba(3, 8, 16, 0.56), inset 0 1px 0 rgba(186, 230, 253, 0.18);
 
       --rain-even-bg: #0b111a;
-      --rain-even-accent: #06b6d4;
-      --rain-even-badge-bg: #6366f1;
-      --rain-even-card-bg: #101928;
-      --rain-even-card-accent: #06b6d4;
-      --rain-even-card-day-title: #818cf8;
-      --rain-even-card-border: 2px solid rgba(99, 102, 241, 0.4);
-      --rain-even-card-shadow: 0 10px 30px rgba(99, 102, 241, 0.12);
+      --rain-even-accent: #67e8f9;
+      --rain-even-badge-bg: #4f46e5;
+      --rain-even-badge-time: #ffffff;
+      --rain-even-badge-caption: #a5b4fc;
+      --rain-even-card-bg: rgba(14, 20, 40, 0.66);
+      --rain-even-card-accent: #67e8f9;
+      --rain-even-card-day-title: #a5b4fc;
+      --rain-even-card-border: 1.5px solid rgba(129, 140, 248, 0.38);
+      --rain-even-card-shadow: 0 20px 44px rgba(4, 6, 18, 0.58), inset 0 1px 0 rgba(199, 210, 254, 0.18);
 
+      --rain-card-backdrop: blur(14px);
       --rain-text-main: #ffffff;
-      --rain-text-light: #94a3b8;
+      --rain-text-light: #cbd5e1;
       --rain-card-text: #ffffff;
-      --rain-card-text-light: #94a3b8;
+      --rain-card-text-light: #b8c7da;
       --rain-badge-time: #ffffff;
 
       /* Выбор темы на основе пользовательской настройки */
@@ -551,73 +625,73 @@
       /* Это позволяет менять всю тему сайта, просто меняя 'week_slug' в данных. */
       --color-bg: {{
           'var(--'+odd_bg+')' if week_slug=='odd' else 'var(--'+even_bg+')'
-        }}
+        }};
 
-      ;
+      --bg-overlay: {{
+          'var(--'+theme_prefix+'-odd-bg-overlay, var(--'+theme_prefix+'-bg-overlay, linear-gradient(transparent, transparent)))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-bg-overlay, var(--'+theme_prefix+'-bg-overlay, linear-gradient(transparent, transparent)))'
+        }};
 
       --color-accent: {{
           'var(--'+odd_accent+')' if week_slug=='odd' else 'var(--'+even_accent+')'
-        }}
-
-      ;
+        }};
 
       --color-badge-bg: {{
           'var(--'+odd_badge+')' if week_slug=='odd' else 'var(--'+even_badge+')'
-        }}
-
-      ;
+        }};
 
       --color-card-bg: {{
           'var(--'+odd_card_bg+')' if week_slug=='odd' else 'var(--'+even_card_bg+')'
-        }}
+        }};
 
-      ;
-
-      /* Переменные для текстовых цветов (зависят от темы) */
+      /* Переменные для текстовых цветов (зависят от темы и недели) */
       --text-main: {{
-          'var(--'+text_main_key+')'
-        }}
-
-      ;
+          'var(--'+theme_prefix+'-odd-text-main, var(--'+text_main_key+'))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-text-main, var(--'+text_main_key+'))'
+        }};
 
       --text-light: {{
-          'var(--'+text_light_key+')'
-        }}
-
-      ;
+          'var(--'+theme_prefix+'-odd-text-light, var(--'+text_light_key+'))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-text-light, var(--'+text_light_key+'))'
+        }};
       --text-white: #fffffe;
       /* White */
 
       /* Цвета текста внутри карточек (зависят от темы И недели) */
       --card-text-main: {{
-          'var(--'+card_text_key+')'
-        }}
-
-      ;
+          'var(--'+theme_prefix+'-odd-card-text, var(--'+card_text_key+'))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-card-text, var(--'+card_text_key+'))'
+        }};
 
       --card-text-light: {{
-          'var(--'+card_text_light_key+')'
-        }}
-
-      ;
+          'var(--'+theme_prefix+'-odd-card-text-light, var(--'+card_text_light_key+'))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-card-text-light, var(--'+card_text_light_key+'))'
+        }};
 
       --card-text-accent: {{
           'var(--'+odd_card_accent_key+')' if week_slug=='odd' else 'var(--'+even_card_accent_key+')'
-        }}
-
-      ;
+        }};
 
       --card-day-title: {{
           'var(--'+odd_card_day_title_key+')' if week_slug=='odd' else 'var(--'+even_card_day_title_key+')'
-        }}
-
-      ;
+        }};
 
       --badge-time-color: {{
-          'var(--'+badge_time_key+')'
-        }}
+          'var(--'+theme_prefix+'-odd-badge-time, var(--'+badge_time_key+'))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-badge-time, var(--'+badge_time_key+'))'
+        }};
 
-      ;
+      --badge-caption-color: {{
+          'var(--'+theme_prefix+'-odd-badge-caption, var(--'+theme_prefix+'-badge-caption, var(--color-badge-bg)))'
+          if week_slug=='odd' else
+          'var(--'+theme_prefix+'-even-badge-caption, var(--'+theme_prefix+'-badge-caption, var(--color-badge-bg)))'
+        }};
 
       --card-border: {{
           'var(--'+theme_prefix+'-odd-card-border, var(--'+theme_prefix+'-card-border, transparent))'
@@ -628,6 +702,11 @@
           'var(--'+theme_prefix+'-odd-card-shadow, var(--'+theme_prefix+'-card-shadow, none))'
           if week_slug == 'odd' else
           'var(--'+theme_prefix+'-even-card-shadow, var(--'+theme_prefix+'-card-shadow, none))'
+        }};
+      --card-backdrop-filter: {{
+          'var(--'+theme_prefix+'-odd-card-backdrop, var(--'+theme_prefix+'-card-backdrop, none))'
+          if week_slug == 'odd' else
+          'var(--'+theme_prefix+'-even-card-backdrop, var(--'+theme_prefix+'-card-backdrop, none))'
         }};
     }
 
@@ -654,7 +733,7 @@
       ;
       background-color: var(--color-bg);
       {% if bg_image %}
-        background-image: url('{{ bg_image }}');
+        background-image: var(--bg-overlay, linear-gradient(transparent, transparent)), url('{{ bg_image }}');
         background-position: center;
         background-size: cover;
         background-repeat: no-repeat;
@@ -760,6 +839,8 @@
       min-height: 52rem;
       border: var(--card-border, transparent);
       box-shadow: var(--card-box-shadow, none);
+      backdrop-filter: var(--card-backdrop-filter, none);
+      -webkit-backdrop-filter: var(--card-backdrop-filter, none);
     }
 
     /* Заголовок дня недели (Понедельник, Вторник и т.д.). */
@@ -776,7 +857,7 @@
     .lessons-list {
       display: flex;
       flex-direction: column;
-      gap: 2rem;
+      gap: 2.1rem;
     }
 
     /* Ключевой элемент: строка с информацией о паре. */
@@ -785,38 +866,53 @@
       display: grid;
       grid-template-columns: repeat(12, 1fr);
       align-items: center;
-      gap: 0.5rem;
-      font-size: 3.8rem;
-      height: 4.7rem;
+      column-gap: 2rem;
+      font-size: 3.6rem;
+      min-height: 5.2rem;
+    }
+
+    /* Левый блок: предмет + преподаватель (колонки 1-8 без смещения аудитории и времени) */
+    .lesson-main {
+      grid-column: 1 / 9;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      min-width: 0;
     }
 
     /* Название предмета */
     .lesson-title {
-      grid-column: 1 / 9;
       font-weight: 400;
+      line-height: 1.18;
       color: var(--card-text-main);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
 
-    /* Номер аудитории */
+    /* Преподаватель (под названием предмета внутри .lesson-main) */
     .lesson-teacher {
-      font-size: 10px;
-      opacity: 0.72;
+      font-size: 2.2rem;
+      font-weight: 400;
+      color: var(--card-text-light);
+      opacity: 0.84;
       line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
+    /* Номер аудитории (колонки 9-10) */
     .lesson-room {
-      grid-column: 9 / 10;
-      font-weight: 400;
+      grid-column: 9 / 11;
+      font-weight: 600;
       color: var(--card-text-accent);
       text-align: left;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
       justify-self: start;
-      font-size: 3rem;
+      font-size: 3.1rem;
     }
 
     /* Временной интервал пары */
@@ -824,6 +920,8 @@
       grid-column: 11 / 13;
       font-family: 'Segoe UI Light', 'Segoe UI', sans-serif;
       font-weight: 300;
+      font-size: 3.4rem;
+      font-variant-numeric: tabular-nums;
       color: var(--card-text-light);
       white-space: nowrap;
       overflow: hidden;
@@ -868,9 +966,13 @@
       font-family: 'Saira', sans-serif;
       font-size: 2.3rem;
       font-weight: 700;
-      color: var(--color-badge-bg);
+      color: var(--badge-caption-color, var(--color-badge-bg));
       text-transform: lowercase;
       margin-top: 0.5rem;
+    }
+
+    .hidden {
+      display: none !important;
     }
 
     /* --- 6. Адаптивность (Responsive Design) --- */
@@ -895,7 +997,13 @@
       }
 
       .content-wrapper {
+        padding: 3rem;
         gap: 5rem;
+      }
+
+      .days-grid {
+        grid-template-columns: 1fr;
+        gap: 4rem;
       }
 
       .day-card {
@@ -908,6 +1016,14 @@
         flex-direction: column;
         align-items: flex-start;
         gap: 2rem;
+      }
+
+      .schedule-header h1 {
+        font-size: 10rem;
+      }
+
+      .schedule-header p {
+        font-size: 4.5rem;
       }
 
       .bot-credit {
@@ -926,6 +1042,11 @@
         padding: 2rem;
       }
 
+      .content-wrapper {
+        padding: 2rem;
+        gap: 3.5rem;
+      }
+
       .day-card {
         padding: 3rem;
       }
@@ -938,28 +1059,30 @@
       }
 
       /* В строке с парой скрываем кабинет, чтобы не ломать вёрстку. */
-      .lesson-teacher {
-      font-size: 10px;
-      opacity: 0.72;
-      line-height: 1.2;
-    }
-
-    .lesson-room {
+      .lesson-room {
         display: none;
       }
 
-      .lesson-title {
-        grid-column: 1 / 11;
+      .lesson-main {
+        grid-column: 1 / 9;
       }
 
       .lesson-time {
-        grid-column: 11 / 13;
+        grid-column: 9 / 13;
       }
 
       .schedule-header {
         flex-direction: column;
         align-items: flex-start;
         gap: 1.5rem;
+      }
+
+      .schedule-header h1 {
+        font-size: 8.5rem;
+      }
+
+      .schedule-header p {
+        font-size: 4rem;
       }
 
       .bot-credit {
@@ -993,8 +1116,10 @@
           <div class="lessons-list">
             {% for l in day.lessons %}
             <div class="lesson-row">
-              <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
-              {% if l.teacher %}<div class="lesson-teacher">{{ l.teacher }}</div>{% endif %}
+              <div class="lesson-main">
+                <div class="lesson-title" title="{{ l.title }}">{{ l.title }}</div>
+                {% if l.teacher %}<div class="lesson-teacher">{{ l.teacher }}</div>{% endif %}
+              </div>
               <div class="lesson-room">{{ l.room }}</div>
               <div class="lesson-time">{{ l.time }}</div>
             </div>
@@ -1010,11 +1135,6 @@
       {% endfor %}
     </section>
   </div>
-  <style>
-    .hidden {
-      display: none;
-    }
-  </style>
   <script>
     (function () {
       function setRem(el, value) { el.style.fontSize = value.toFixed(2) + 'rem'; }

@@ -49,10 +49,11 @@ class RateLimitMiddleware(BaseMiddleware):
         self.redis = redis_client
         self.limits = {**self.DEFAULT_LIMITS, **(limits or {})}
         self.window = window_seconds
+        self._last_notified: Dict[int, float] = {}
 
     def _get_event_type(self, update: Update) -> str:
         """Определяет тип события."""
-        if update.message:
+        if update.message or getattr(update, "edited_message", None):
             return "message"
         elif update.callback_query:
             return "callback_query"
@@ -63,12 +64,15 @@ class RateLimitMiddleware(BaseMiddleware):
 
     def _get_user_id(self, update: Update) -> Optional[int]:
         """Извлекает user_id из события."""
-        if update.message and update.message.from_user:
-            return update.message.from_user.id
-        elif update.callback_query and update.callback_query.from_user:
-            return update.callback_query.from_user.id
-        elif update.inline_query and update.inline_query.from_user:
-            return update.inline_query.from_user.id
+        msg = getattr(update, "message", None) or getattr(update, "edited_message", None)
+        if msg and getattr(msg, "from_user", None):
+            return int(msg.from_user.id)
+        cb = getattr(update, "callback_query", None)
+        if cb and getattr(cb, "from_user", None):
+            return int(cb.from_user.id)
+        iq = getattr(update, "inline_query", None)
+        if iq and getattr(iq, "from_user", None):
+            return int(iq.from_user.id)
         return None
 
     async def _is_rate_limited(self, key: str, limit: float) -> bool:
@@ -109,8 +113,18 @@ class RateLimitMiddleware(BaseMiddleware):
             return False  # При ошибках пропускаем
 
     async def _notify_user(self, update: Update, data: Dict[str, Any]) -> None:
-        """Уведомляет пользователя о превышении лимита."""
+        """Уведомляет пользователя о превышении лимита (с троттлингом уведомлений)."""
         try:
+            user_id = self._get_user_id(update)
+            now = time.time()
+            if user_id is not None:
+                last_sent = self._last_notified.get(user_id, 0.0)
+                if now - last_sent < 5.0 and not update.callback_query:
+                    return
+                if len(self._last_notified) > 5000:
+                    self._last_notified.clear()
+                self._last_notified[user_id] = now
+
             i18n = data.get("i18n")
             lang = data.get("lang", "ru")
 

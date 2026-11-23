@@ -855,36 +855,22 @@ class TestSubFilter:
 class TestSegments:
     async def test_build_segment_users_with_filters(self):
         udm = make_udm()
-
-        async def all_ids():
-            return list(range(1, 102))
-
-        async def info(uid):
-            if uid == 999:
-                return None
-            obj = MagicMock()
-            obj.group = "О7" if uid % 2 == 0 else "ИУ5"
-            obj.last_active_date = datetime.now() if uid % 3 else None
-            return obj
-
-        udm.get_all_user_ids = AsyncMock(side_effect=all_ids)
-        udm.get_full_user_info = AsyncMock(side_effect=info)
+        udm.get_segment_user_ids = AsyncMock(return_value=[2, 4])
 
         result = await build_segment_users(udm, "о7", 7)
-        assert result  # часть пользователей прошла фильтр
-        assert all(uid % 2 == 0 for uid in result)
+        assert result == [2, 4]
+        udm.get_segment_user_ids.assert_awaited_once_with(group_prefix="о7", days_active=7, user_type=None)
 
     async def test_build_segment_users_no_filters(self):
         udm = make_udm()
-        udm.get_all_user_ids = AsyncMock(return_value=[1, 2])
-        udm.get_full_user_info = AsyncMock(return_value=make_user_info())
+        udm.get_segment_user_ids = AsyncMock(return_value=[1, 2])
         result = await build_segment_users(udm, None, None)
         assert result == [1, 2]
+        udm.get_segment_user_ids.assert_awaited_once_with(group_prefix=None, days_active=None, user_type=None)
 
-    async def test_build_segment_users_skips_none_info(self):
+    async def test_build_segment_users_empty(self):
         udm = make_udm()
-        udm.get_all_user_ids = AsyncMock(return_value=[1])
-        udm.get_full_user_info = AsyncMock(return_value=None)
+        udm.get_segment_user_ids = AsyncMock(return_value=[])
         result = await build_segment_users(udm, None, None)
         assert result == []
 
@@ -1320,6 +1306,28 @@ class TestBroadcast:
         mgr = make_manager(dialog_data={"broadcast_payload": {"kind": "weird"}})
         data = await get_broadcast_confirm_data(mgr)
         assert data["kind_label"] == "weird"
+        assert data["target_label"] == "Всем пользователям"
+
+    async def test_on_broadcast_target_selected_and_filtered_receive(self):
+        from bot.dialogs.admin_menu import on_broadcast_target_selected
+
+        cb = make_callback()
+        mgr = make_manager(dialog_data={})
+        btn = MagicMock()
+        btn.widget_id = "go_broadcast_teachers"
+        await on_broadcast_target_selected(cb, btn, mgr)
+        assert mgr.dialog_data["broadcast_target"] == "teacher"
+        mgr.switch_to.assert_awaited_once_with(Admin.broadcast)
+
+        msg = make_message(text="Для преподавателей", content_type=ContentType.TEXT)
+        udm = make_udm()
+        udm.get_segment_user_ids = AsyncMock(return_value=[77, 88])
+        mgr_t = make_manager({"user_data_manager": udm}, dialog_data={"broadcast_target": "teacher"})
+        await on_broadcast_received(msg, mgr_t)
+        udm.get_segment_user_ids.assert_awaited_once_with(user_type="teacher")
+        assert mgr_t.dialog_data["broadcast_user_ids"] == [77, 88]
+        confirm = await get_broadcast_confirm_data(mgr_t)
+        assert confirm["target_label"] == "Только преподавателям"
 
     async def test_on_broadcast_received_text_two_args_does_not_send(self):
         msg = make_message(text="Hi {user_id}", content_type=ContentType.TEXT)
@@ -1580,12 +1588,14 @@ class TestUserManagement:
         timetable = MagicMock()
         timetable._schedules = {"О7": {}}
         udm = make_udm()
+        udm.set_user_type = AsyncMock()
         mgr = make_manager(
             {"manager": timetable, "user_data_manager": udm},
             dialog_data={"found_user_info": {"user_id": 123, "group": "ИУ5"}},
         )
         await on_new_group_input(msg, MagicMock(), mgr, data="о7")
         udm.set_user_group.assert_awaited_once_with(123, "О7")
+        udm.set_user_type.assert_awaited_once_with(123, "student")
         assert mgr.dialog_data["found_user_info"]["group"] == "О7"
         mgr.switch_to.assert_awaited_once_with(Admin.user_manage)
 

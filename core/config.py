@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     OTEL_EXPORTER_OTLP_HEADERS: str | None = None
     OTEL_ENABLED: bool = True
+    CUSTOM_EMOJIS_ENABLED: bool = True
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

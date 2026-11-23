@@ -175,25 +175,23 @@ class FeedbackManager:
 
     async def get_feedback_stats(self) -> dict:
         """
-        Получает статистику по фидбекам.
+        Получает статистику по фидбекам через SQL COUNT (без загрузки всех строк в память).
         """
+        from sqlalchemy import func
+
         async with self.session_factory() as session:
-            # Общее количество фидбеков
-            total_result = await session.execute(select(Feedback))
-            total = len(total_result.fetchall())
-
-            # Неотвеченные фидбеки
-            unanswered_result = await session.execute(select(Feedback).where(Feedback.is_answered == False))
-            unanswered = len(unanswered_result.fetchall())
-
-            # Фидбеки за последние 7 дней
+            total = (await session.execute(select(func.count(Feedback.id)))).scalar() or 0
+            unanswered = (
+                await session.execute(select(func.count(Feedback.id)).where(Feedback.is_answered == False))
+            ).scalar() or 0
             week_ago = now_msk_naive() - timedelta(days=7)
-            recent_result = await session.execute(select(Feedback).where(Feedback.created_at >= week_ago))
-            recent = len(recent_result.fetchall())
+            recent = (
+                await session.execute(select(func.count(Feedback.id)).where(Feedback.created_at >= week_ago))
+            ).scalar() or 0
 
             return {
-                "total": total,
-                "unanswered": unanswered,
-                "answered": total - unanswered,
-                "recent_7_days": recent,
+                "total": int(total),
+                "unanswered": int(unanswered),
+                "answered": int(total - unanswered),
+                "recent_7_days": int(recent),
             }

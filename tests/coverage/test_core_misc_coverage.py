@@ -394,9 +394,10 @@ def test_format_group_diff_branches():
     empty = GroupScheduleDiff("G1", date(2026, 9, 1), [])
     assert ScheduleDiffFormatter.format_group_diff(empty) is None
 
-    # Only SUBJECT_CHANGED: has_changes() is True but no formatter branch -> None.
+    # SUBJECT_CHANGED is now formatted instead of dropped.
     subject_only = GroupScheduleDiff("G1", date(2026, 9, 1), [LessonChange(ChangeType.SUBJECT_CHANGED, "id", "Math")])
-    assert ScheduleDiffFormatter.format_group_diff(subject_only) is None
+    formatted_subject = ScheduleDiffFormatter.format_group_diff(subject_only)
+    assert formatted_subject is not None and "Math" in formatted_subject
 
     rich = GroupScheduleDiff(
         "G1",

@@ -1,11 +1,11 @@
 import asyncio
 import logging
-from datetime import datetime, time, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, cast
 
 import aiohttp
 
-from core.config import MOSCOW_TZ, OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS
+from core.config import MOSCOW_TZ
 from core.metrics import ERRORS_TOTAL, RETRIES_TOTAL
 
 
@@ -30,18 +30,24 @@ class WeatherAPI:
         """
         if not self.api_key:
             return None
-        # Формируем ключ кэша на основе даты, часа и языка прогноза
-        target_utc_dt = target_datetime.astimezone(timezone.utc)
+        # Формируем ключ кэша на основе даты, часа, города, единиц и языка прогноза
+        if target_datetime.tzinfo is None:
+            target_utc_dt = MOSCOW_TZ.localize(target_datetime).astimezone(timezone.utc)
+        else:
+            target_utc_dt = target_datetime.astimezone(timezone.utc)
         target_hour_rounded = (target_utc_dt.hour // 3) * 3
-        cache_key = f"{target_utc_dt.date().isoformat()}_{target_hour_rounded:02d}h_{lang}"
+        cache_key = f"{self.city_id}_{self.units}_{target_utc_dt.date().isoformat()}_{target_hour_rounded:02d}h_{lang}"
+
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        max_age = timedelta(hours=self.CACHE_DURATION_HOURS)
+        expired_keys = [k for k, v in self._cache.items() if now_utc - v["timestamp"] >= max_age]
+        for k in expired_keys:
+            self._cache.pop(k, None)
 
         cached_entry = self._cache.get(cache_key)
         if cached_entry:
-            cache_timestamp = cached_entry["timestamp"]
-            # Если кэш свежий (младше CACHE_DURATION_HOURS часов)
-            if datetime.now(timezone.utc).replace(tzinfo=None) - cache_timestamp < timedelta(hours=self.CACHE_DURATION_HOURS):
-                logging.info(f"Использую кэшированный прогноз для {cache_key}.")
-                return cast(dict[str, Any] | None, cached_entry["data"])
+            logging.info(f"Использую кэшированный прогноз для {cache_key}.")
+            return cast(dict[str, Any] | None, cached_entry["data"])
 
         params = {
             "id": self.city_id,

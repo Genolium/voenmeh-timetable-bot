@@ -261,7 +261,7 @@ async def test_send_edit_not_modified_falls_back(service, bot, tmp_path):
     with patch("core.image_service.get_telegram_safe_image_path", return_value=str(image)):
         result = await service._send_image_to_user(str(image), 1, 99, "caption")
     assert result is True
-    bot.send_photo.assert_awaited_once()
+    bot.send_photo.assert_not_awaited()
 
 
 async def test_send_edit_other_error_falls_back(service, bot, tmp_path):

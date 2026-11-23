@@ -8,6 +8,7 @@ import logging
 import os
 import signal
 import subprocess
+import sys
 import time
 from typing import List
 
@@ -94,7 +95,7 @@ class GracefulShutdown:
             logger.info("Очищаем Docker ресурсы...")
 
             # Останавливаем все контейнеры проекта
-            subprocess.run(["docker-compose", "stop"], capture_output=True, text=True, timeout=30)
+            subprocess.run(["docker", "compose", "stop"], capture_output=True, text=True, timeout=30)
 
             # Удаляем остановленные контейнеры
             subprocess.run(["docker", "container", "prune", "-f"], capture_output=True, text=True, timeout=30)
@@ -137,7 +138,7 @@ def signal_handler(signum, frame):
     logger.info(f"Получен сигнал {signum}, начинаем graceful shutdown...")
     shutdown = GracefulShutdown()
     shutdown.graceful_shutdown()
-    exit(0)
+    sys.exit(0)
 
 
 def main():

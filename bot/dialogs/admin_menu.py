@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import tempfile
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
@@ -22,7 +22,6 @@ from bot.tasks import copy_message_task, send_media_task, send_message_task
 from bot.text_formatters import generate_reminder_text
 from core.config import ADMIN_IDS, MOSCOW_TZ
 from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
-from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.semester_settings import SemesterSettingsManager
@@ -192,8 +191,6 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
     timetable_manager = manager.middleware_data.get("manager")
 
     # Создаем правильный Redis-клиент
-    import os
-
     from redis.asyncio import Redis
 
     redis_url = os.getenv("REDIS_URL")
@@ -211,10 +208,11 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
         await handle_graduated_groups(user_data_manager, timetable_manager, redis_client)
         await bot.send_message(admin_id, "✅ Проверка выпустившихся групп завершена!")
     except Exception as e:
-        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {e}")
+        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {html.escape(str(e))}")
         import traceback
 
-        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{traceback.format_exc()}</code>")
+        tb_text = html.escape(traceback.format_exc()[-3500:])
+        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{tb_text}</code>")
     finally:
         try:
             if redis_client is not None:
@@ -372,9 +370,9 @@ async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     if channels:
         lines = []
         for i, ch in enumerate(channels, 1):
-            title = ch.get("title", "Без названия")
-            link = ch.get("invite_link") or ""
-            cid = ch.get("channel_id", "")
+            title = html.escape(str(ch.get("title", "Без названия")))
+            link = html.escape(str(ch.get("invite_link") or ""), quote=True)
+            cid = html.escape(str(ch.get("channel_id", "")))
             lines.append(f"{i}. <a href='{link}'>{title}</a> (<code>{cid}</code>)")
         channels_text = "\n".join(lines)
     else:
@@ -488,10 +486,8 @@ async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manag
 async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты осеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -520,10 +516,8 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
 async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты весеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -554,41 +548,19 @@ async def build_segment_users(
     user_data_manager: UserDataManager,
     group_prefix: str | None,
     days_active: int | None,
-) -> Any:
-    """Строит список пользователей для сегментированной рассылки с оптимизацией."""
-    group_prefix_up = (group_prefix or "").upper().strip()
-    all_ids = await user_data_manager.get_all_user_ids()
-    selected_ids: list[int] = []
-    from datetime import datetime as dt
-
-    threshold = None
-    if days_active and days_active > 0:
-        threshold = dt.now(MOSCOW_TZ).replace(tzinfo=None) - timedelta(days=days_active)
-
-    processed_count = 0
-    for uid in all_ids:
-        processed_count += 1
-        info = await user_data_manager.get_full_user_info(uid)
-        if not info:
-            continue
-        if group_prefix_up and not (info.group or "").upper().startswith(group_prefix_up):
-            continue
-        if threshold and (not info.last_active_date or info.last_active_date < threshold):
-            continue
-        selected_ids.append(uid)
-
-        # Периодически освобождаем event loop для обработки других событий
-        if processed_count % 100 == 0:
-            await asyncio.sleep(0)
-
-    return selected_ids
+    user_type: str | None = None,
+) -> list[int]:
+    """Строит список пользователей для сегментированной рассылки одним SQL-запросом."""
+    return await user_data_manager.get_segment_user_ids(
+        group_prefix=group_prefix, days_active=days_active, user_type=user_type
+    )
 
 
 def render_template(template_text: str, user_info: Any) -> str:
     placeholders = {
         "user_id": str(user_info.user_id),
-        "username": user_info.username or "N/A",
-        "group": user_info.group or "N/A",
+        "username": html.escape(str(user_info.username or "N/A")),
+        "group": html.escape(str(user_info.group or "N/A")),
         "last_active": (user_info.last_active_date.strftime("%d.%m.%Y") if user_info.last_active_date else "N/A"),
     }
     text = template_text
@@ -951,13 +923,36 @@ def _parse_broadcast_handler_args(*args, **kwargs):
     return kwargs.get("message"), kwargs.get("manager")
 
 
+_BROADCAST_TARGET_LABELS: dict[str, str] = {
+    "all": "Всем пользователям",
+    "student": "Только студентам (группам)",
+    "teacher": "Только преподавателям",
+}
+
+_BROADCAST_TARGET_BY_WIDGET: dict[str, str] = {
+    "go_broadcast_all": "all",
+    "go_broadcast_students": "student",
+    "go_broadcast_teachers": "teacher",
+}
+
+
+async def on_broadcast_target_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    target = _BROADCAST_TARGET_BY_WIDGET.get(button.widget_id or "", "all")
+    manager.dialog_data["broadcast_target"] = target
+    await manager.switch_to(Admin.broadcast)
+
+
 async def on_broadcast_received(*args, **kwargs):
     # Support both aiogram-dialog callback signature (message, message_input, manager)
     # and test signature (message, manager)
     message, manager = _parse_broadcast_handler_args(*args, **kwargs)
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = extract_broadcast_payload(message)
-    all_users = await user_data_manager.get_all_user_ids()
+    target = manager.dialog_data.get("broadcast_target", "all")
+    if target in ("student", "teacher"):
+        all_users = await user_data_manager.get_segment_user_ids(user_type=target)
+    else:
+        all_users = await user_data_manager.get_all_user_ids()
     manager.dialog_data["broadcast_payload"] = payload
     manager.dialog_data["broadcast_user_ids"] = all_users
 
@@ -985,9 +980,11 @@ async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: An
     payload = dialog_manager.dialog_data.get("broadcast_payload") or {}
     user_ids = dialog_manager.dialog_data.get("broadcast_user_ids") or []
     kind = payload.get("kind") or "text"
+    target = dialog_manager.dialog_data.get("broadcast_target") or "all"
     return {
         "recipient_count": len(user_ids),
         "kind_label": _BROADCAST_KIND_LABELS.get(kind, kind),
+        "target_label": _BROADCAST_TARGET_LABELS.get(target, target),
     }
 
 
@@ -1074,8 +1071,8 @@ async def on_user_id_input(message: Message, widget: TextInput, manager: DialogM
         "user_id": user_info.user_id,
         "username": user_info.username,
         "group": user_info.group,
-        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M"),
-        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M"),
+        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M") if user_info.registration_date else "N/A",
+        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M") if user_info.last_active_date else "N/A",
     }
     await manager.switch_to(Admin.user_manage)
 
@@ -1085,14 +1082,17 @@ async def on_new_group_input(message: Message, widget: TextInput, manager: Dialo
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
     if new_group not in timetable_manager._schedules:
-        await message.answer(f"❌ Группа <b>{new_group}</b> не найдена в расписании.")
+        await message.answer(f"❌ Группа <b>{html.escape(new_group)}</b> не найдена в расписании.")
         return
 
     user_id = manager.dialog_data["found_user_info"]["user_id"]
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
 
     await user_data_manager.set_user_group(user_id, new_group)
-    await message.answer(f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{new_group}</b>.")
+    await user_data_manager.set_user_type(user_id, "student")
+    await message.answer(
+        f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{html.escape(new_group)}</b>."
+    )
 
     manager.dialog_data["found_user_info"]["group"] = new_group
     await manager.switch_to(Admin.user_manage)
@@ -1185,15 +1185,12 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 
     # Формируем список файлов для отображения (ограничиваем до 5 файлов)
     files_before = cache_info_before.get("files", [])
-    files_after = cache_info_after.get("files", [])
 
     # Показываем только первые 5 файлов
     files_to_show = files_before[:5]
     files_text_before = "\n".join([f"   • {f}" for f in files_to_show]) if files_to_show else "   • Нет файлов"
     if len(files_before) > 5:
         files_text_before += f"\n   ... и еще {len(files_before) - 5} файлов"
-
-    files_text_after = "\n".join([f"   • {f}" for f in files_after]) if files_after else "   • Нет файлов"
 
     # Добавляем информацию о Redis кэше
     redis_before = cache_info_before.get("redis_keys", 0)
@@ -1230,12 +1227,11 @@ async def on_cancel_generation(callback: CallbackQuery) -> None:
 
         # Обновляем сообщение
         try:
-            status_msg_id = active_generations[admin_id]["status_msg_id"]
             await callback.message.edit_text(
                 "⏹️ <b>Генерация отменена</b>\n\n" "Процесс остановлен пользователем.",
                 parse_mode="HTML",
             )
-        except:
+        except Exception:
             pass
 
         # Удаляем из активных генераций
@@ -1320,11 +1316,14 @@ admin_dialog = Dialog(
             SwitchTo(Const("📢 Обязательная подписка"), id="section_sub_filter", state=Admin.sub_filter_menu),
         ),
         state=Admin.menu,
+        parse_mode="HTML",
     ),
     # Раздел: Рассылки
     Window(
         Const("📬 Раздел ‘Рассылки’"),
-        SwitchTo(Const("📣 Массовая рассылка"), id="go_broadcast", state=Admin.broadcast),
+        Button(Const("📣 Всем пользователям"), id="go_broadcast_all", on_click=on_broadcast_target_selected),
+        Button(Const("🎓 Только студентам (группам)"), id="go_broadcast_students", on_click=on_broadcast_target_selected),
+        Button(Const("🧑‍🏫 Только преподавателям"), id="go_broadcast_teachers", on_click=on_broadcast_target_selected),
         SwitchTo(Const("🎯 Сегментированная"), id="go_segment", state=Admin.segment_menu),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_broadcasts", state=Admin.menu),
         state=Admin.broadcast_menu,
@@ -1421,7 +1420,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите шаблон сообщения. Доступные плейсхолдеры: {user_id}, {username}, {group}"),
-        MessageInput(on_template_input_message, content_types=[ContentType.TEXT]),
+        MessageInput(on_template_input_message, content_types=[ContentType.ANY]),
         SwitchTo(Const("◀️ Назад"), id="template_back", state=Admin.segment_menu),
         state=Admin.template_input,
     ),
@@ -1454,13 +1453,14 @@ admin_dialog = Dialog(
     Window(
         Format(
             "⚠️ <b>Подтверждение рассылки</b>\n\n"
+            "Аудитория: <b>{target_label}</b>\n"
             "Тип: {kind_label}\n"
             "Получателей: <b>{recipient_count}</b>\n\n"
             "Превью уже отправлено сообщением выше — так это увидят пользователи.\n"
-            "Если HTML выглядит правильно, нажмите «Отправить всем»."
+            "Если HTML выглядит правильно, нажмите «Отправить»."
         ),
         Button(
-            Const("✅ Отправить всем"),
+            Const("✅ Отправить"),
             id="confirm_broadcast_send",
             on_click=on_confirm_broadcast_send,
         ),

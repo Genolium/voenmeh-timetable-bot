@@ -154,7 +154,7 @@ def transliterate_schedule_data(schedule_data: dict, lang: str = "en") -> dict:
                 if isinstance(lesson, dict):
                     new_lesson = lesson.copy()
                     # Transliterate common lesson fields
-                    for field in ["subject", "title", "teacher", "room", "type", "name"]:
+                    for field in ["subject", "title", "teacher", "teachers", "room", "type", "name"]:
                         if field in new_lesson and isinstance(new_lesson[field], str):
                             new_lesson[field] = transliterate(new_lesson[field], lang)
                     new_lessons.append(new_lesson)
@@ -205,6 +205,10 @@ def get_day_name(russian_day: str, lang: str = "ru") -> str:
     if lang == "ru":
         return russian_day
     elif lang == "zh":
-        return DAY_NAMES_ZH.get(russian_day, transliterate(russian_day, lang))
+        return DAY_NAMES_ZH[russian_day] if russian_day in DAY_NAMES_ZH else (transliterate(russian_day, lang) or russian_day)
     else:
-        return DAY_NAMES_TRANSLIT.get(russian_day, transliterate(russian_day, lang))
+        return (
+            DAY_NAMES_TRANSLIT[russian_day]
+            if russian_day in DAY_NAMES_TRANSLIT
+            else (transliterate(russian_day, lang) or russian_day)
+        )

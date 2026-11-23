@@ -367,6 +367,8 @@
     "btn_report_error": "⚠️ Report",
     "btn_more": "⚙️ More",
     "btn_my_group": "🏠 Mine",
+    "btn_make_my_group": "⭐ Set as mine",
+    "group_saved_as_mine": "✅ {group} saved as your primary!",
     "nav_today": "Today",
     "more_title": "⚙️ <b>More</b>",
     "btn_cancel": "❌ Cancel",

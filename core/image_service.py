@@ -61,11 +61,11 @@ class ImageService:
         Returns:
             Tuple[success, file_path]
         """
-        # Ключ кэша: для пользовательских тем учитываем тему
-        # Приводим группу к верхнему регистру для консистентности имен файлов
-        safe_group = group.upper()
-        if user_theme and user_theme != "standard":
-            cache_key = f"{safe_group}_{week_key}_{user_theme}_{lang}"
+        # Ключ кэша: для пользовательских тем учитываем тему (в нижнем регистре), защищаем от path traversal
+        safe_group = group.upper().replace("/", "_").replace("\\", "_").replace("..", "_")
+        normalized_theme = user_theme.lower() if user_theme else "standard"
+        if normalized_theme != "standard":
+            cache_key = f"{safe_group}_{week_key}_{normalized_theme}_{lang}"
         else:
             cache_key = f"{safe_group}_{week_key}_{lang}"
 
@@ -87,7 +87,7 @@ class ImageService:
                         file_path, user_id, placeholder_msg_id, final_caption, lang=lang
                     )
                     if not send_success:
-                        logger.warning(f"⚠️ Failed to send cached image, will regenerate")
+                        logger.warning("⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
                         await self.cache_manager.invalidate_cache(cache_key)
                     else:
@@ -194,6 +194,7 @@ class ImageService:
                         placeholder_msg_id=placeholder_msg_id,
                         final_caption=final_caption,
                         lang=lang,
+                        user_theme=user_theme,
                     )
 
                     # Метрика отправки в очередь
@@ -314,8 +315,8 @@ class ImageService:
 
             logger.info(f"📁 Sending file: {file_path} ({file_size} bytes)")
 
-            # Сжимаем изображение для Telegram если нужно
-            safe_image_path = get_telegram_safe_image_path(file_path)
+            # Сжимаем изображение для Telegram если нужно (в отдельном потоке, чтобы не блокировать event loop)
+            safe_image_path = await asyncio.to_thread(get_telegram_safe_image_path, file_path)
             safe_path_obj = Path(safe_image_path)
 
             if not safe_path_obj.exists():
@@ -358,10 +359,12 @@ class ImageService:
                     return True
 
                 except Exception as e:
-                    # Фолбэк при сетевых таймаутах и несущественных ошибках: отправим как новое
-                    if "message is not modified" not in str(e).lower():
-                        logger.warning(f"Failed to edit message for user {user_id}: {e}")
-                        # Продолжаем с отправкой нового сообщения
+                    # Если сообщение не изменилось — фото уже актуально, не шлём дубликат
+                    if "message is not modified" in str(e).lower():
+                        logger.info(f"Image message not modified for user {user_id}")
+                        return True
+                    logger.warning(f"Failed to edit message for user {user_id}: {e}")
+                    # Продолжаем с отправкой нового сообщения
 
             # Отправляем новое сообщение
             try:

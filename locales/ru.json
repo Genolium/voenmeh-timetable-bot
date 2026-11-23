@@ -367,6 +367,8 @@
     "btn_report_error": "⚠️ Ошибка",
     "btn_more": "⚙️ Ещё",
     "btn_my_group": "🏠 Моя",
+    "btn_make_my_group": "⭐ Сделать моей",
+    "group_saved_as_mine": "✅ {group} сохранена как основная!",
     "nav_today": "Сегодня",
     "more_title": "⚙️ <b>Ещё</b>",
     "btn_cancel": "❌ Отмена",

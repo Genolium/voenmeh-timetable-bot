@@ -30,8 +30,12 @@ def basic_manager():
 async def test_restore_from_backup_real_logic():
     # Test the ACTUAL _restore_from_backup method (not mocked)
     redis = AsyncMock()
-    # Setup keys
-    redis.keys.return_value = ["timetable:backup:2024-01-01", "timetable:backup:2024-01-02"]
+
+    async def _scan_iter(match=None):
+        for k in ["timetable:backup:2024-01-01", "timetable:backup:2024-01-02"]:
+            yield k
+
+    redis.scan_iter = _scan_iter
 
     # Setup get
     # It gets latest key: 2024-01-02
@@ -47,7 +51,12 @@ async def test_restore_from_backup_real_logic():
 @pytest.mark.asyncio
 async def test_restore_from_backup_date_sort():
     redis = AsyncMock()
-    redis.keys.return_value = ["timetable:backup:2024-01-01", "timetable:backup:2024-01-10", "timetable:backup:2024-01-05"]
+
+    async def _scan_iter(match=None):
+        for k in ["timetable:backup:2024-01-01", "timetable:backup:2024-01-10", "timetable:backup:2024-01-05"]:
+            yield k
+
+    redis.scan_iter = _scan_iter
 
     redis.get.return_value = gzip.compress(json.dumps({"target": "latest"}).encode("utf-8"))
 
@@ -60,7 +69,12 @@ async def test_restore_from_backup_date_sort():
 @pytest.mark.asyncio
 async def test_restore_from_backup_empty_keys():
     redis = AsyncMock()
-    redis.keys.return_value = []
+
+    async def _scan_iter(match=None):
+        if False:
+            yield ""
+
+    redis.scan_iter = _scan_iter
     res = await TimetableManager._restore_from_backup(redis)
     assert res is None
 

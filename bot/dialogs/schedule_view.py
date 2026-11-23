@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import os
 from datetime import date, datetime, timedelta
@@ -200,6 +201,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
     else:
         # Mocks / incomplete managers: keep the previous role-based lookup.
         is_group_target = user_type != "teacher"
+    ctx.dialog_data["is_group_target"] = is_group_target
     # Поиск чужой группы всегда идёт через групповое расписание, даже если
     # в профиле пользователь — преподаватель.
     if is_group_target:
@@ -292,6 +294,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_settings": _("btn_settings"),
         "btn_more": _("btn_more"),
         "btn_my_group": _("btn_my_group"),
+        "btn_make_my_group": _("btn_make_my_group"),
         "btn_search": _("btn_search"),
         "btn_news": _("btn_news"),
         "full_quality_gate_text": _("full_quality_gate_text"),
@@ -752,18 +755,29 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     title = i18n.get(
         "schedule_group_title" if is_group_target else "schedule_teacher_title",
         lang=lang,
-        group=group,
+        group=html.escape(str(group)),
     )
     text = f"{title}\n\n{format_full_week_text(week_schedule, week_name or i18n.get('week_even', lang), lang=lang)}"
-    await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+    if len(text) <= 4096:
+        await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        return
+    chunk = ""
+    for line in text.split("\n"):
+        candidate = f"{chunk}\n{line}" if chunk else line
+        if len(candidate) > 4096 and chunk:
+            await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
+            chunk = line
+        else:
+            chunk = candidate
+    await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(About.page_1, mode=StartMode.RESET_STACK)
+    await manager.start(About.page_1, mode=StartMode.NORMAL)
 
 
 async def on_feedback_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    await manager.start(Feedback.enter_feedback, mode=StartMode.RESET_STACK)
+    await manager.start(Feedback.enter_feedback, mode=StartMode.NORMAL)
 
 
 async def on_report_error_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -774,16 +788,27 @@ async def on_report_error_click(callback: CallbackQuery, button: Button, manager
     await manager.start(
         Feedback.enter_feedback,
         data={"feedback_context": context},
-        mode=StartMode.RESET_STACK,
+        mode=StartMode.NORMAL,
     )
 
 
 async def on_change_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    user_type = manager.current_context().dialog_data.get("user_type", "student")
-    if user_type == "teacher":
-        await manager.start(MainMenu.enter_teacher, mode=StartMode.RESET_STACK)
-    else:
-        await manager.start(MainMenu.enter_group, mode=StartMode.RESET_STACK)
+    await manager.start(MainMenu.choose_user_type, mode=StartMode.RESET_STACK)
+
+
+async def on_make_my_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id if callback.from_user else None
+    ctx = manager.current_context()
+    group = ctx.dialog_data.get(DialogDataKeys.GROUP)
+    is_group_target = ctx.dialog_data.get("is_group_target", True)
+    if user_data_manager and user_id and group and group != "N/A":
+        await user_data_manager.set_user_group(user_id=user_id, group=group)
+        await user_data_manager.set_user_type(user_id=user_id, user_type="student" if is_group_target else "teacher")
+        lang = await user_data_manager.get_user_language(user_id)
+        await callback.answer(i18n.get("group_saved_as_mine", lang=lang, group=group))
+        return
+    await callback.answer()
 
 
 async def on_my_group_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -910,10 +935,17 @@ schedul_dialog_windows = [
                 on_click=on_more_click,
             ),
         ),
-        Button(
-            Format("{btn_my_group}"),
-            id=WidgetIds.MY_GROUP,
-            on_click=on_my_group_click,
+        Row(
+            Button(
+                Format("{btn_my_group}"),
+                id=WidgetIds.MY_GROUP,
+                on_click=on_my_group_click,
+            ),
+            Button(
+                Format("{btn_make_my_group}"),
+                id="make_my_group",
+                on_click=on_make_my_group_click,
+            ),
             when=_when_show_my_group,
         ),
         LinkPreview(is_disabled=True),

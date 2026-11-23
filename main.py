@@ -404,10 +404,14 @@ async def main():
     # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
     # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
     http_session = AiohttpSession(timeout=180)
-    bot = Bot(
-        token=bot_token or "",
-        default=default_properties,
-        session=http_session,
+    from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
+
+    bot = attach_custom_emoji_middleware(
+        Bot(
+            token=bot_token or "",
+            default=default_properties,
+            session=http_session,
+        )
     )
     dp = Dispatcher(storage=storage)
 
@@ -419,6 +423,7 @@ async def main():
     )
 
     # Подключение Middleware
+    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд (до БД и телеметрии)
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
@@ -428,7 +433,6 @@ async def main():
     dp.update.middleware(LoggingMiddleware())  # Middleware для сбора метрик и логов
     # Автоочистка чатов полностью отключена
     dp.update.middleware(I18nMiddleware())  # Интернационализация (после UserData!)
-    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд
     dp.update.middleware(
         lambda handler, event, data: handler(
             event,
@@ -459,7 +463,9 @@ async def main():
     for dialog in all_dialogs:
         dp.include_router(dialog)
     setup_dialogs(dp)
-    dp.update.middleware(AdminDialogGuardMiddleware())
+    admin_guard = AdminDialogGuardMiddleware()
+    dp.message.middleware(admin_guard)
+    dp.callback_query.middleware(admin_guard)
 
     dp.message.register(start_command_handler, CommandStart())
     dp.message.register(about_command_handler, Command("about"))
@@ -478,6 +484,7 @@ async def main():
     # Времено отключено: кнопки "полное качество" и проверка подписки
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
+    background_tasks: list[asyncio.Task[Any]] = []
     try:
         # На всякий случай удаляем webhook, чтобы polling получал апдейты
         try:
@@ -499,17 +506,21 @@ async def main():
 
         # Сначала запускаем фоновые сервисы, затем начинаем polling
         logging.info("Starting background services...")
-        asyncio.create_task(run_metrics_server())
-        asyncio.create_task(
-            run_alert_webhook_server(
-                bot,
-                ADMIN_IDS,
-                redis_client=redis_client,
-                db_session_maker=user_data_manager.async_session_maker,
-            )
+        background_tasks.extend(
+            [
+                asyncio.create_task(run_metrics_server()),
+                asyncio.create_task(
+                    run_alert_webhook_server(
+                        bot,
+                        ADMIN_IDS,
+                        redis_client=redis_client,
+                        db_session_maker=user_data_manager.async_session_maker,
+                    )
+                ),
+                asyncio.create_task(start_business_monitoring()),
+                asyncio.create_task(_notify_admins_start()),
+            ]
         )
-        asyncio.create_task(start_business_monitoring())
-        asyncio.create_task(_notify_admins_start())
 
         # Запускаем бота отдельно для лучшего контроля
         logging.info("Starting bot polling...")
@@ -519,6 +530,11 @@ async def main():
             logging.error(f"Bot polling failed: {e}")
             raise
     finally:
+        for task in background_tasks:
+            if not task.done():
+                task.cancel()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
         # Корректно останавливаем планировщик и ресурсы
         try:
             scheduler.shutdown()
@@ -530,6 +546,10 @@ async def main():
             pass
         try:
             await bot.session.close()
+        except Exception:
+            pass
+        try:
+            await user_data_manager.engine.dispose()
         except Exception:
             pass
         # Закрываем Playwright/Chromium, чтобы избежать утечек

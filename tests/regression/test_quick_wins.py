@@ -68,11 +68,11 @@ async def test_help_and_feedback_callbacks_open_dialogs():
     dm = MagicMock()
     dm.start = AsyncMock()
     await schedule_view.on_help_click(MagicMock(), MagicMock(), dm)
-    dm.start.assert_awaited_with(About.page_1, mode=schedule_view.StartMode.RESET_STACK)
+    dm.start.assert_awaited_with(About.page_1, mode=schedule_view.StartMode.NORMAL)
 
     dm.start.reset_mock()
     await schedule_view.on_feedback_click(MagicMock(), MagicMock(), dm)
-    dm.start.assert_awaited_with(Feedback.enter_feedback, mode=schedule_view.StartMode.RESET_STACK)
+    dm.start.assert_awaited_with(Feedback.enter_feedback, mode=schedule_view.StartMode.NORMAL)
 
 
 def test_tutorial_has_exit_on_every_page_and_honest_onboarding():
@@ -95,18 +95,19 @@ async def test_history_ui_reads_and_routes_entries():
     }[kind]
     dm = MagicMock()
     dm.event.from_user.id = 1
+    dm.dialog_data = {}
     dm.middleware_data = {"user_data_manager": udm}
 
     data = await get_history_data(dm)
     ids = {item[0] for item in data["history_items"]}
     labels = {item[1] for item in data["history_items"]}
-    assert "group:О735Б" in ids
+    assert "0" in ids
     assert "🎓 О735Б" in labels
     assert not any(str(label).startswith("group:") for label in labels)
 
     dm.start = AsyncMock()
     dm.switch_to = AsyncMock()
-    await on_history_selected(MagicMock(), MagicMock(), dm, "group:О735Б")
+    await on_history_selected(MagicMock(), MagicMock(), dm, "0")
     dm.start.assert_awaited_with(
         Schedule.view,
         data={"group": "О735Б"},

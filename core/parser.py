@@ -4,13 +4,13 @@ import json
 import logging
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
 
 import aiohttp
+import defusedxml.ElementTree as ET
 
 from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT, VOENMEH_SU_API_URL
 from core.metrics import ERRORS_TOTAL, EXTERNAL_SERVICE_STATUS, PARSER_DURATION, PARSER_STATS, RETRIES_TOTAL
@@ -37,7 +37,8 @@ def resolve_lesson_end(start_dt: datetime, item: dict | None = None) -> str:
     if item:
         raw_end = item.get("end") or item.get("end_time")
         if raw_end:
-            token = str(raw_end).split()[0]
+            parts = str(raw_end).split()
+            token = parts[0] if parts else ""
             try:
                 return datetime.strptime(token, "%H:%M").strftime("%H:%M")
             except ValueError:
@@ -156,7 +157,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             logging.error("voenmeh.su вернул пустой список групп")
             return None
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -199,7 +200,8 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
                 week = item.get("week")
                 time_raw = item.get("time", "N/A")
-                start_time_token = time_raw.split()[0] if time_raw else "N/A"
+                time_parts = str(time_raw).split() if time_raw else []
+                start_time_token = time_parts[0] if time_parts else "N/A"
                 try:
                     start_dt = datetime.strptime(start_time_token, "%H:%M")
                     start_time_str = start_dt.strftime("%H:%M")
@@ -402,7 +404,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         current_hash = hashlib.md5(xml_bytes).hexdigest()
         root = ET.fromstring(xml_data)
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -413,7 +415,10 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if API_URL == "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml":
             now = datetime.now(MOSCOW_TZ)
             current_academic_year = now.year if now.month >= 8 else now.year - 1
-            xml_start_year = int(period_meta.get("StartYear", 0))
+            try:
+                xml_start_year = int(period_meta.get("StartYear", 0))
+            except (TypeError, ValueError):
+                xml_start_year = 0
             if xml_start_year and xml_start_year < current_academic_year:
                 logging.warning(
                     f"XML с {API_URL} содержит устаревшее расписание за {xml_start_year} год "
@@ -594,7 +599,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if voenmeh_su_data:
             logging.info("Расписание успешно получено с основного API voenmeh.su.")
-            save_fallback_schedule(voenmeh_su_data)
+            save_fallback_schedule(cast(dict[str, Any], voenmeh_su_data))
             return voenmeh_su_data
         logging.warning("voenmeh.su не вернул данные. Переход к резервному источнику XML...")
     except Exception as e:
@@ -609,7 +614,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if xml_data:
             logging.info("Расписание успешно получено с резервного XML источника.")
-            save_fallback_schedule(xml_data)
+            save_fallback_schedule(cast(dict[str, Any], xml_data))
             return xml_data
     except Exception as e:
         ERRORS_TOTAL.labels(source="parser_xml").inc()

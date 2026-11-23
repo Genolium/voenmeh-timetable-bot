@@ -67,6 +67,10 @@ NAME_TRANSLIT_TABLE = {
     "t": "т",
     "u": "у",
     "f": "ф",
+    "h": "х",
+    "c": "ц",
+    "q": "к",
+    "x": "кс",
     "w": "в",
     "y": "ы",
     "'": "ь",
@@ -95,7 +99,7 @@ def normalize_group_name(group_name: str) -> str:
     normalized = "".join(chars)
 
     # Оставляем только допустимые символы (буквы и цифры, дефис)
-    normalized = re.sub(r"[^А-Я0-9\-\.]", "", normalized)
+    normalized = re.sub(r"[^А-ЯЁ0-9\-\.]", "", normalized)
 
     return normalized
 
@@ -105,6 +109,8 @@ def transliterate_failed_search(text: str) -> str:
     Пытается транслитерировать поисковый запрос (например, фамилию) с латиницы на кириллицу.
     Ivanov -> Иванов
     """
+    if not text:
+        return ""
     text = text.lower()
 
     # Сначала заменяем многобуквенные сочетания

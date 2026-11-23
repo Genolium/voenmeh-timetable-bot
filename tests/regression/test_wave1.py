@@ -295,7 +295,7 @@ async def test_change_group_goes_to_group_entry_not_role():
     dm.current_context = MagicMock(return_value=ctx)
     await on_change_group_click(MagicMock(), MagicMock(), dm)
     dm.start.assert_awaited_once()
-    assert dm.start.await_args.args[0] == MainMenu.enter_group
+    assert dm.start.await_args.args[0] == MainMenu.choose_user_type
 
 
 @pytest.mark.asyncio

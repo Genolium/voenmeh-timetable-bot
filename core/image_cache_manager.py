@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, cast
 
-from PIL import Image
 from redis.asyncio.client import Redis
 
 from core.config import MEDIA_PATH, MOSCOW_TZ
@@ -167,11 +166,13 @@ class ImageCacheManager:
             except Exception as e:
                 logger.warning(f"Failed to save metadata for {cache_key} to Redis: {e}")
 
-            # Сохраняем в файловую систему
+            # Сохраняем в файловую систему атомарно
             try:
                 file_path = self.cache_dir / f"{cache_key}.png"
-                with open(file_path, "wb") as f:
+                tmp_path = self.cache_dir / f".{cache_key}.png.tmp"
+                with open(tmp_path, "wb") as f:
                     f.write(image_bytes)
+                tmp_path.replace(file_path)
 
                 success_count += 1
                 logger.info(f"Saved {cache_key} to file cache ({len(image_bytes)} bytes)")
@@ -403,6 +404,10 @@ class ImageCacheManager:
                 try:
                     size = fpath.stat().st_size
                     fpath.unlink()
+                    try:
+                        await self.redis.delete(f"{self.cache_metadata_prefix}{fpath.stem}")
+                    except Exception:
+                        pass
                     total_size -= size
                     IMAGE_CACHE_OPERATIONS.labels(operation="cleanup").inc()
                     if total_size <= max_bytes:
@@ -523,8 +528,9 @@ async def invalidate_generated_images_for_groups(redis_client: Redis | None, gro
     if redis_client is not None:
         for group in normalized:
             try:
-                async for key in redis_client.scan_iter(f"image_cache:*{group}_*"):
-                    await redis_client.delete(key)
+                for prefix in ("image_cache:meta:", "image_cache:data:"):
+                    async for key in redis_client.scan_iter(f"{prefix}{group}_*"):
+                        await redis_client.delete(key)
             except Exception as e:
                 logger.warning(f"Failed to clear image cache keys for {group}: {e}")
     logger.info(f"Invalidated image cache for {len(normalized)} groups: {removed} files removed")

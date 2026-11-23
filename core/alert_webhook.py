@@ -1,10 +1,13 @@
+import hmac
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from aiohttp import web
 from sqlalchemy import text
+
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 
 
 def format_alertmanager_message(payload: Dict[str, Any]) -> str:
@@ -55,7 +58,7 @@ def create_alert_app(
             {
                 "status": "ok",
                 "service": "voenmeh-timetable-bot",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
         )
 
@@ -70,7 +73,8 @@ def create_alert_app(
                 await redis_client.ping()
                 checks["redis"] = True
             except Exception as e:
-                details["redis_error"] = str(e)
+                logger.warning("Readiness Redis check failed: %s", e)
+                details["redis_error"] = "unavailable"
         else:
             details["redis_error"] = "Redis client not provided"
 
@@ -81,17 +85,18 @@ def create_alert_app(
                     await session.execute(text("SELECT 1"))
                 checks["database"] = True
             except Exception as e:
-                details["database_error"] = str(e)
+                logger.warning("Readiness DB check failed: %s", e)
+                details["database_error"] = "unavailable"
         else:
             details["database_error"] = "Database session maker not provided"
 
         all_ok = all(checks.values())
         status_code = 200 if all_ok else 503
 
-        response_data = {
+        response_data: Dict[str, Any] = {
             "status": "ready" if all_ok else "not_ready",
             "checks": checks,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         if details:
             response_data["details"] = details
@@ -101,11 +106,12 @@ def create_alert_app(
     # --- Alertmanager Webhook ---
 
     async def handle_alert(request: web.Request) -> web.Response:
-        # Простая авторизация по ключу: Header "Authorization: Bearer <ALERT_WEBHOOK_API_KEY>"
+        # Авторизация по ключу: Header "Authorization: Bearer <ALERT_WEBHOOK_API_KEY>"
         expected_key = os.getenv("ALERT_WEBHOOK_API_KEY")
         if expected_key:
             auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer ") or auth_header.split(" ", 1)[1] != expected_key:
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            if not token or not hmac.compare_digest(token, expected_key):
                 return web.Response(status=401, text="unauthorized")
 
         try:
@@ -113,7 +119,12 @@ def create_alert_app(
         except Exception:
             return web.Response(status=400, text="invalid json")
 
+        if not isinstance(payload, dict):
+            return web.Response(status=400, text="invalid json")
+
         text_msg = format_alertmanager_message(payload)
+        if len(text_msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
+            text_msg = text_msg[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
 
         # fan-out to admins sequentially (простая и надежная доставка)
         for admin_id in admin_ids:
@@ -150,6 +161,7 @@ async def run_alert_webhook_server(
     )
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
+    host = os.getenv("ALERT_WEBHOOK_HOST", "127.0.0.1")
+    site = web.TCPSite(runner, host, port)
     await site.start()
-    logging.info(f"Health check server started on http://0.0.0.0:{port}/health")
+    logging.info(f"Health check server started on http://{host}:{port}/health")

@@ -134,7 +134,7 @@ class SystemMonitor:
                 try:
                     # Проверяем процессы старше 30 минут с высокой нагрузкой CPU
                     if (
-                        proc.info["name"] == "python"
+                        "python" in (proc.info["name"] or "").lower()
                         and proc.info["cpu_percent"] > 80
                         and time.time() - proc.info["create_time"] > 1800
                     ):  # 30 минут

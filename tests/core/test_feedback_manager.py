@@ -397,7 +397,7 @@ class TestFeedbackManager:
         """Тест получения статистики при отсутствии фидбеков."""
         # Мокаем пустые результаты
         mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
+        mock_result.scalar.return_value = 0
         mock_session.execute = AsyncMock(return_value=mock_result)
 
         # Создаем менеджер

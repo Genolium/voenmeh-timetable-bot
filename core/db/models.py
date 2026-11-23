@@ -52,6 +52,13 @@ class User(Base):
             "morning_summary",
             "lesson_reminders",
         ),  # Для рассылок
+        Index(
+            "idx_user_notifications_active",
+            "is_blocked",
+            "evening_notify",
+            "morning_summary",
+            "lesson_reminders",
+        ),  # Для рассылок активным пользователям
         Index("idx_user_theme", "theme"),  # Для поиска по теме
     )
 
@@ -133,6 +140,7 @@ class FailedMessage(Base):
         Index("idx_failed_msg_user", "user_id"),
         Index("idx_failed_msg_status", "status"),
         Index("idx_failed_msg_created", "created_at"),
+        Index("idx_failed_msg_status_created", "status", "created_at"),
     )
 
 

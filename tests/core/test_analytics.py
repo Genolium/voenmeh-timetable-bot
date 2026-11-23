@@ -28,12 +28,19 @@ class TestAnalytics:
 
     @pytest.mark.asyncio
     async def test_get_top_features_with_data(self):
-        """Тест получения топа фич из Redis."""
+        """Тест получения топа фич из Redis через pipeline."""
+        from unittest.mock import MagicMock
+
         mock_redis = AsyncMock()
-        mock_redis.hgetall.side_effect = [
-            {"inline_teacher": b"10", "day_nav": b"25"},
-            {"image_export": b"5"},
-        ] + [{}] * 10
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock(
+            return_value=[
+                {"inline_teacher": b"10", "day_nav": b"25"},
+                {"image_export": b"5"},
+                {},
+            ]
+        )
+        mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
 
         top = await get_top_features(mock_redis, days=3, limit=3)
         assert len(top) == 3
@@ -41,11 +48,18 @@ class TestAnalytics:
         assert top[0][0] == "day_nav"
         assert top[0][2] == 25
         assert "Переход по дням" in top[0][1]
+        assert mock_pipeline.hgetall.call_count == 3
+        mock_pipeline.execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_get_top_features_empty(self):
         """Тест получения топа фич при отсутствии данных."""
+        from unittest.mock import MagicMock
+
         mock_redis = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock(return_value=[{}] * 7)
+        mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
         mock_redis.hgetall.return_value = {}
 
         top = await get_top_features(mock_redis, days=7)

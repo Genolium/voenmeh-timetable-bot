@@ -94,7 +94,7 @@ class TimetableManager:
                 print("Кэш в Redis не найден. Загрузка с сервера...")
                 from core.parser import NOT_MODIFIED, fetch_and_parse_all_schedules
 
-                new_data = await fetch_and_parse_all_schedules()
+                new_data = await fetch_and_parse_all_schedules(force=True)
                 if new_data is NOT_MODIFIED:
                     new_data = None
                 if new_data:
@@ -158,9 +158,12 @@ class TimetableManager:
             dict: Данные расписания или None если резервных копий нет
         """
         try:
-            # Ищем все резервные копии
+            # Ищем все резервные копии без блокирующего KEYS
             backup_pattern = "timetable:backup:*"
-            backup_keys = await redis_client.keys(backup_pattern)
+            if hasattr(redis_client, "scan_iter"):
+                backup_keys = [key async for key in redis_client.scan_iter(match=backup_pattern)]
+            else:
+                backup_keys = await redis_client.keys(backup_pattern)
 
             if not backup_keys:
                 print("Резервные копии в Redis не найдены")
@@ -440,10 +443,11 @@ class TimetableManager:
         }
 
     def find_classrooms(self, query: str) -> list[str]:
-        """Находит аудитории, номер которых начинается с поискового запроса."""
+        """Находит аудитории, номер которых начинается с поискового запроса (регистронезависимо)."""
         if not query:
             return []
-        return sorted([number for number in self._classrooms_index if number.startswith(query)])
+        q = query.strip().lower()
+        return sorted([number for number in self._classrooms_index if number.lower().startswith(q)])
 
     def find_classrooms_fuzzy(self, query: str, limit: int = 5, score_cutoff: int = 75) -> list[str]:
         """Нечёткий поиск аудитории (по номеру/строке), полезно для опечаток."""
@@ -506,7 +510,7 @@ class TimetableManager:
 
     async def get_semester_settings_manager(self):
         """Получает менеджер настроек семестров."""
-        return self._semester_settings_manager
+        return getattr(self, "_semester_settings_manager", None)
 
     def _compress_data(self, data: dict) -> bytes:
         """Сжимает данные для сохранения в Redis."""

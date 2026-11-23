@@ -119,6 +119,13 @@ def _available_groups(manager: TimetableManager) -> list[str]:
     return [group for group in manager._schedules if not group.startswith("__")]
 
 
+async def _safe_answer(query: InlineQuery, results: list, **kwargs) -> None:
+    try:
+        await query.answer(results, **kwargs)
+    except Exception as e:
+        logging.debug(f"Failed to answer inline query: {e}")
+
+
 async def inline_query_handler(query: InlineQuery, manager: TimetableManager) -> None:
     """
     Обработчик inline-запросов для быстрого получения расписания.
@@ -131,7 +138,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
     try:
         from core.analytics import track_feature_click
 
-        await track_feature_click(getattr(manager, "redis", None), "inline_teacher")
+        await track_feature_click(getattr(manager, "redis", None), "inline_group")
     except Exception:
         pass
 
@@ -147,7 +154,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 ),
             )
         ]
-        await query.answer(results, cache_time=300, is_personal=False)
+        await _safe_answer(query, results, cache_time=300, is_personal=False)
         return
 
     # Разделяем запрос на части
@@ -169,7 +176,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
             )
             for g in popular_groups
         ]
-        await query.answer(results, cache_time=60, is_personal=False)
+        await _safe_answer(query, results, cache_time=60, is_personal=False)
         return
 
     # Нормализуем группу
@@ -205,7 +212,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                     input_message_content=InputTextMessageContent(message_text=f"{bot_mention()} {match_name}"),
                 )
             )
-        await query.answer(results, cache_time=30, is_personal=True)
+        await _safe_answer(query, results, cache_time=30, is_personal=True)
     else:
         # Ничего не найдено
         result = InlineQueryResultArticle(
@@ -217,7 +224,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 parse_mode="HTML",
             ),
         )
-        await query.answer([result], cache_time=10, is_personal=True)
+        await _safe_answer(query, [result], cache_time=10, is_personal=True)
 
 
 async def _send_schedule_result(

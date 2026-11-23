@@ -127,13 +127,19 @@ class AlertSender:
 
     async def _send_telegram(self, alert_data: Dict[str, Any]) -> bool:
         try:
+            import html as html_lib
+
             chat_id = self.settings.get("TELEGRAM_ALERT_CHAT_ID")
             if not chat_id:
                 return False
-            emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
-            text = f"{emoji} <b>{alert_data.get('title', 'Alert')}</b>\n\n{alert_data.get('message', '')}"
+            emoji = {"info": "ℹ️", "warning": "⚠️", "error": "❗", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
+            title = html_lib.escape(str(alert_data.get("title", "Alert")))
+            message = html_lib.escape(str(alert_data.get("message", "")))
+            text = f"{emoji} <b>{title}</b>\n\n{message}"
             if alert_data.get("tags"):
-                text += "\n\n" + "\n".join([f"• {k}: {v}" for k, v in alert_data["tags"].items()])
+                text += "\n\n" + "\n".join(
+                    [f"• {html_lib.escape(str(k))}: {html_lib.escape(str(v))}" for k, v in alert_data["tags"].items()]
+                )
             url = f"https://api.telegram.org/bot{self.webhooks['telegram']}/sendMessage"
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
             cm = await self._normalize_ctx(self.session.post(url, json=payload))

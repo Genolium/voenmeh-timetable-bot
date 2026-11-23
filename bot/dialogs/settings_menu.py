@@ -3,7 +3,7 @@ from typing import Any, cast
 
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram_dialog import Dialog, DialogManager, Window
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Back, Button, Column, Group, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from core.i18n import i18n
@@ -99,7 +99,6 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "lang_zh": _("lang_zh"),
         "btn_news": _("btn_news"),
         "btn_back": _("btn_back"),
-        "btn_time": _("btn_time"),
         "settings_reminder_select_title": _("settings_reminder_select_title"),
         "current_lang_code": user_lang,
         "ru_checked": "✅" if user_lang == "ru" else "",
@@ -110,7 +109,6 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "theme_gate_title": _("theme_gate_title"),
         "theme_btn_check": _("theme_btn_check"),
         "theme_select_title": _("theme_select_title"),
-        "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
         "theme_current_fmt": _("theme_current_fmt", current_theme=current_theme_name),
         "theme_available_label": _("theme_available_label"),
         "theme_button_text": _("menu_btn_theme", theme=current_theme_name),
@@ -410,7 +408,7 @@ settings_dialog = Dialog(
     ),
     Window(
         Format("{settings_reminder_select_title}"),
-        Row(
+        Group(
             Select(
                 Jinja(
                     "{% if item == current_reminder_time %}✅ {{ item }} {{ settings_minutes_short }}{% else %}{{ item }} {{ settings_minutes_short }}{% endif %}"
@@ -419,7 +417,8 @@ settings_dialog = Dialog(
                 item_id_getter=lambda item: str(item),
                 items="reminder_times",
                 on_click=on_time_selected,
-            )
+            ),
+            width=4,
         ),
         SwitchTo(Format("{btn_back}"), id="back_from_reminders", state=SettingsMenu.main),
         state=SettingsMenu.reminders_time,
@@ -427,14 +426,15 @@ settings_dialog = Dialog(
     ),
     Window(
         Format("{settings_morning_time_title}"),
-        Row(
+        Group(
             Select(
                 Jinja("{% if item == current_morning_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"),
                 id="select_morning_time",
                 item_id_getter=lambda item: str(item),
                 items="morning_times",
                 on_click=on_morning_time_selected,
-            )
+            ),
+            width=4,
         ),
         SwitchTo(Format("{btn_back}"), id="back_from_morning", state=SettingsMenu.main),
         state=SettingsMenu.morning_time,
@@ -442,14 +442,15 @@ settings_dialog = Dialog(
     ),
     Window(
         Format("{settings_evening_time_title}"),
-        Row(
+        Group(
             Select(
                 Jinja("{% if item == current_evening_time %}✅ {{ item }}{% else %}{{ item }}{% endif %}"),
                 id="select_evening_time",
                 item_id_getter=lambda item: str(item),
                 items="evening_times",
                 on_click=on_evening_time_selected,
-            )
+            ),
+            width=4,
         ),
         SwitchTo(Format("{btn_back}"), id="back_from_evening", state=SettingsMenu.main),
         state=SettingsMenu.evening_time,

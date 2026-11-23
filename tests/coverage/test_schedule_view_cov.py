@@ -869,7 +869,31 @@ class TestMoreMenuAndOwnGroup:
     async def test_on_change_group_click_teacher(self):
         dm = sched_dm(dialog_data={"user_type": "teacher"})
         await sv.on_change_group_click(make_callback(), MagicMock(), dm)
-        assert dm.start.await_args.args[0] == MainMenu.enter_teacher
+        assert dm.start.await_args.args[0] == MainMenu.choose_user_type
+
+    async def test_on_make_my_group_click_saves_student_group(self):
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(udm=udm, dialog_data={"group": "О735Б", "is_group_target": True})
+        callback = make_callback()
+        await sv.on_make_my_group_click(callback, MagicMock(), dm)
+        udm.set_user_group.assert_awaited_once_with(user_id=123, group="О735Б")
+        udm.set_user_type.assert_awaited_once_with(user_id=123, user_type="student")
+        callback.answer.assert_awaited_once()
+        assert "О735Б" in callback.answer.await_args.args[0]
+
+    async def test_on_make_my_group_click_saves_teacher_and_handles_missing(self):
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(udm=udm, dialog_data={"group": "Иванов И.И.", "is_group_target": False})
+        callback = make_callback()
+        await sv.on_make_my_group_click(callback, MagicMock(), dm)
+        udm.set_user_type.assert_awaited_once_with(user_id=123, user_type="teacher")
+
+        dm_empty = sched_dm(udm=udm, dialog_data={"group": "N/A"})
+        cb_empty = make_callback()
+        await sv.on_make_my_group_click(cb_empty, MagicMock(), dm_empty)
+        cb_empty.answer.assert_awaited_once_with()
 
     async def test_teacher_searching_group_uses_group_lookup(self):
         tm = make_timetable_manager()

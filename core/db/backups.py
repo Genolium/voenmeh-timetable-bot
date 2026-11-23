@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlalchemy.engine import make_url
 from core.config import MOSCOW_TZ
 
 DEFAULT_TIMEOUT_SECONDS = 300
-DEFAULT_OUTPUT_DIR = Path("/tmp")
+DEFAULT_OUTPUT_DIR = Path(tempfile.gettempdir())
 UNSUPPORTED_SETTINGS = {"transaction_timeout"}
 
 
@@ -176,7 +177,9 @@ async def restore_db_backup(
 def maybe_decompress_gzip(source: Path) -> Path:
     if source.suffix.lower() != ".gz":
         return source
+    import shutil
+
     target = source.with_suffix("")
     with gzip.open(source, "rb") as src, open(target, "wb") as dst:
-        dst.write(src.read())
+        shutil.copyfileobj(src, dst)
     return target

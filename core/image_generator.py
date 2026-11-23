@@ -47,6 +47,8 @@ def print_progress_bar(
         suffix: Суффикс сообщения
         length: Длина прогресс-бара
     """
+    if total <= 0:
+        return
     filled_length = int(length * current // total)
     bar = "█" * filled_length + "-" * (length - filled_length)
     percent = f"{100 * current // total}%"
@@ -284,6 +286,10 @@ async def generate_schedule_image(
             font_family_body = "'Segoe UI', sans-serif"
             font_family_header = "'Saira', sans-serif"
 
+        from core.themes import get_theme_meta
+
+        safe_theme = get_theme_meta(user_theme).id
+
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
@@ -291,7 +297,8 @@ async def generate_schedule_image(
             schedule_days=_prepare_days(schedule_data, lang=current_lang),
             bg_image=bg_image_data,
             assets_base=(project_root / "assets").as_uri(),
-            user_theme=user_theme,
+            user_theme=safe_theme,
+            lang=current_lang,
             i18n_week_type=i18n_week_type,
             i18n_schedule_title=i18n_schedule_title,
             i18n_credits=i18n_credits,
@@ -369,6 +376,7 @@ async def generate_schedule_image(
             # Используем лок для обслуживания
             async with state.lock:
                 # Еще раз проверяем тайминг под локом (double check)
+                now = time.time()
                 if now - state.last_check_at < 30:
                     return state
 
@@ -411,6 +419,7 @@ async def generate_schedule_image(
                             state.pages_made = 0
                             logging.info(f"Browser pool rotated successfully (loop: {id(loop)})")
                         except Exception:
+                            state.last_check_at = 0.0
                             await new_ctx.stop()
                             raise
                 return state
@@ -540,20 +549,22 @@ async def generate_schedule_image(
                             await page.close()
                         except Exception:
                             pass
-                        # Если целевой краш — перезапустим пул и повторим
+                        # Если целевой краш — перезапустим пул под локом и повторим
                         if attempt < max_attempts:
                             try:
-                                try:
-                                    await state.browser.close()
-                                except Exception:
-                                    pass
-                                try:
-                                    await state.ctx.stop()
-                                except Exception:
-                                    pass
+                                async with state.lock:
+                                    try:
+                                        await state.browser.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        await state.ctx.stop()
+                                    except Exception:
+                                        pass
+                                    state.last_check_at = 0.0
                             finally:
                                 state = await _ensure_browser()
-                                page = await state.browser.new_page()
+                                page = await asyncio.wait_for(state.browser.new_page(), timeout=15.0)
                                 page.set_default_timeout(60000)
                                 page.set_default_navigation_timeout(60000)
 

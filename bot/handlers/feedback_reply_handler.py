@@ -83,23 +83,27 @@ if FEEDBACK_CHAT_ID_INT is not None:
 
         # Отправляем ответ пользователю
         try:
+            import html as html_lib
+
             admin_response = message.text or message.caption or "Администратор прислал вам сообщение"
+            escaped_response = html_lib.escape(admin_response)
 
             if message.content_type == "text":
                 await bot.send_message(
                     chat_id=user_id,
                     text=(
                         "📬 <b>Ответ на ваш фидбек</b>\n\n"
-                        f"🔄 <b>Ответ администратора:</b>\n{admin_response}\n\n"
+                        f"🔄 <b>Ответ администратора:</b>\n{escaped_response}\n\n"
                         "Спасибо за обращение! Мы всегда рады помочь. 🤖"
                     ),
                     parse_mode="HTML",
                 )
             else:
                 # Копируем медиа-сообщение
+                escaped_caption = html_lib.escape(message.caption or "")
                 caption_text = (
                     "📬 <b>Ответ на ваш фидбек</b>\n\n"
-                    f"🔄 <b>Ответ администратора:</b>\n{message.caption or ''}\n\n"
+                    f"🔄 <b>Ответ администратора:</b>\n{escaped_caption}\n\n"
                     "Спасибо за обращение! Мы всегда рады помочь. 🤖"
                 )
                 await bot.copy_message(
@@ -127,7 +131,8 @@ if FEEDBACK_CHAT_ID_INT is not None:
                     feedback = result.scalar_one_or_none()
 
                     if feedback:
-                        await feedback_manager.answer_feedback(feedback.id, message.from_user.id, admin_response)
+                        responder_id = message.from_user.id if message.from_user else 0
+                        await feedback_manager.answer_feedback(feedback.id, responder_id, admin_response)
                         logger.info(f"Marked feedback #{feedback.id} as answered")
             except Exception as e:
                 logger.error(f"Error marking feedback as answered: {e}")
@@ -139,9 +144,13 @@ if FEEDBACK_CHAT_ID_INT is not None:
             )
 
         except Exception as e:
+            import html as html_lib
+
             logger.error(f"Error sending reply to user {user_id}: {e}")
             await message.reply(
-                f"❌ <b>Ошибка при отправке ответа</b>\n\n" f"User ID: <code>{user_id}</code>\n" f"Ошибка: {str(e)}",
+                f"❌ <b>Ошибка при отправке ответа</b>\n\n"
+                f"User ID: <code>{user_id}</code>\n"
+                f"Ошибка: {html_lib.escape(str(e))}",
                 parse_mode="HTML",
             )
 

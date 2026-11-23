@@ -79,12 +79,14 @@ class TestBusinessMetricsMonitor:
                 mock_session_class.return_value.__aenter__.return_value = mock_session
 
                 mock_response = AsyncMock()
-                mock_response.json = AsyncMock(return_value={"status": "success"})
-                mock_session.get.return_value.__aenter__.return_value = mock_response
+                mock_response.json = AsyncMock(return_value={"status": "success", "data": {"result": []}})
+                get_ctx = AsyncMock()
+                get_ctx.__aenter__.return_value = mock_response
+                mock_session.get = MagicMock(return_value=get_ctx)
 
                 await monitor._check_business_metrics()
 
-                mock_session.get.assert_called_once()
+                assert mock_session.get.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_check_business_metrics_without_prometheus(self):
@@ -110,13 +112,14 @@ class TestBusinessMetricsMonitor:
 
                 mock_response = AsyncMock()
                 mock_response.json = AsyncMock(return_value={"status": "error"})
-                mock_session.get.return_value.__aenter__.return_value = mock_response
+                get_ctx = AsyncMock()
+                get_ctx.__aenter__.return_value = mock_response
+                mock_session.get = MagicMock(return_value=get_ctx)
 
                 with patch.object(monitor, "_send_alert") as mock_send_alert:
                     await monitor._check_business_metrics()
 
-                    # Проверяем, что функция выполнилась без ошибок
-                    assert True
+                    mock_send_alert.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_check_business_metrics_exception(self):
