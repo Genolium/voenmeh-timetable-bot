@@ -72,6 +72,7 @@ SCREENSHOTS_PATH = Path(settings.SCREENSHOTS_PATH)
 # Основные медиа
 WELCOME_IMAGE_PATH = MEDIA_PATH / "welcome.png"
 NO_LESSONS_IMAGE_PATH = MEDIA_PATH / "no_lessons.png"
+THEMES_SHOWCASE_IMAGE_PATH = MEDIA_PATH / "themes_showcase.jpg"
 
 # Медиа для диалога поиска
 SEARCH_IMAGE_PATH = MEDIA_PATH / "search_main.png"

@@ -4,8 +4,10 @@ from typing import Any, cast
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.kbd import Back, Button, Column, Group, Row, Select, SwitchTo
+from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
+from core.config import THEMES_SHOWCASE_IMAGE_PATH
 from core.i18n import i18n
 from core.themes import DEFAULT_THEME, THEMES, get_theme_meta
 from core.user_data import UserDataManager
@@ -481,6 +483,7 @@ settings_dialog = Dialog(
         parse_mode="HTML",
     ),
     Window(
+        StaticMedia(path=THEMES_SHOWCASE_IMAGE_PATH),
         Format("{theme_gate_title}"),
         Button(
             Format("{theme_btn_check}"),
@@ -497,17 +500,19 @@ settings_dialog = Dialog(
         parse_mode="HTML",
     ),
     Window(
+        StaticMedia(path=THEMES_SHOWCASE_IMAGE_PATH),
         Format("{theme_select_title}"),
         Format("{theme_current_fmt}"),
         Format("{theme_available_label}"),
-        Column(
+        Group(
             Select(
                 Jinja("{% if item.is_current %}" "✅ {{ item.name }}" "{% else %}" "🔘 {{ item.name }}" "{% endif %}"),
                 id="select_theme",
                 item_id_getter=lambda item: item["id"],
                 items="themes",
                 on_click=on_theme_selected,
-            )
+            ),
+            width=2,
         ),
         Button(
             Format("{btn_back}"),

@@ -6,7 +6,15 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from aiogram import Bot
-from aiogram.types import CallbackQuery, ContentType, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ContentType,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaPhoto,
+)
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.kbd import Button, Column, Row, SwitchTo, Url
 from aiogram_dialog.widgets.link_preview import LinkPreview
@@ -28,6 +36,7 @@ from core.config import (
     news_channel_url,
 )
 from core.i18n import i18n
+from core.ics_exporter import build_ics_filename, collect_target_weeks, generate_schedule_ics
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
@@ -302,6 +311,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_help": _("btn_help"),
         "btn_feedback": _("btn_feedback"),
         "btn_text_week": _("btn_text_week"),
+        "btn_export_ics": _("btn_export_ics"),
         "btn_back": _("btn_back"),
         "more_title": _("more_title"),
     }
@@ -771,6 +781,41 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
 
 
+async def on_export_ics_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    ctx = manager.current_context()
+    raw_group = ctx.dialog_data.get(DialogDataKeys.GROUP)
+    is_group_target = bool(ctx.dialog_data.get("is_group_target", True))
+    timetable_manager: Any = manager.middleware_data.get("manager")
+    user_data_manager = manager.middleware_data.get("user_data_manager")
+    user_id = callback.from_user.id if callback.from_user else None
+    lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
+
+    if not raw_group or not timetable_manager:
+        await callback.answer(i18n.get("ics_export_empty", lang=lang), show_alert=True)
+        return
+
+    group = str(raw_group)
+    today = datetime.now(MOSCOW_TZ).date()
+    semester_info = await timetable_manager.get_semester_info_for(today)
+    weeks_data = collect_target_weeks(timetable_manager, group, is_group_target=is_group_target)
+    ics_bytes = generate_schedule_ics(
+        group,
+        weeks_data,
+        semester_info,
+        reference_date=today,
+        is_teacher=not is_group_target,
+    )
+    if not ics_bytes:
+        await callback.answer(i18n.get("ics_export_empty", lang=lang), show_alert=True)
+        return
+
+    await callback.answer()
+    doc = BufferedInputFile(ics_bytes, filename=build_ics_filename(group))
+    caption = i18n.get("ics_export_caption", lang=lang, target=html.escape(group))
+    msg: Any = callback.message
+    await msg.answer_document(document=doc, caption=caption, parse_mode="HTML")
+
+
 async def on_help_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(About.page_1, mode=StartMode.NORMAL)
 
@@ -959,6 +1004,11 @@ schedul_dialog_windows = [
                 Format("{btn_text_week}"),
                 id="week_as_text",
                 on_click=on_text_week_click,
+            ),
+            Button(
+                Format("{btn_export_ics}"),
+                id="export_ics",
+                on_click=on_export_ics_click,
             ),
             Button(
                 Format("{btn_change_group}"),

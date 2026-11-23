@@ -56,6 +56,7 @@ EMOJI_TO_CUSTOM_ID: Final[dict[str, str]] = {
     "🗓️": "5386376601116098709",  # бордовая закладка-календарь
     "🗓": "5386376601116098709",
     "📅": "5386376601116098709",
+    "📆": "5386376601116098709",
     "🎓": "5386786152017575672",  # бордовая звезда-значок студента
     "🧑‍🏫": "5386808752135484333",  # контурная закладка преподавателя
     "👨‍🏫": "5386808752135484333",
@@ -134,22 +135,78 @@ def replace_emojis_html(text: str) -> str:
     return "".join(parts) if changed else text
 
 
+_PRIMARY_WIDGET_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "today",
+        "week_as_image",
+        "make_my_group",
+        "export_ics",
+        "quality_gate_check",
+        "check_subscription",
+        "skip_tutorial",
+        "send_original_file",
+        "send_original_file_week",
+    }
+)
+
+_SUCCESS_WIDGET_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "confirm_broadcast_send",
+        "confirm_segment_send",
+    }
+)
+
+_DANGER_WIDGET_IDS: Final[frozenset[str]] = frozenset(
+    {
+        "cancel_broadcast_send",
+        "feedback_cancel",
+        "back_from_backup_status",
+    }
+)
+
+
+def resolve_button_style(button: InlineKeyboardButton) -> str | None:
+    """Подбирает Bot API 9.4 цветной стиль (primary/success/danger) для ключевых кнопок."""
+    if button.style:
+        return None
+
+    cb = button.callback_data or ""
+    widget_id = cb.rsplit("\x1d", 1)[-1] if cb else ""
+    if widget_id in _PRIMARY_WIDGET_IDS:
+        return "primary"
+    if widget_id in _SUCCESS_WIDGET_IDS:
+        return "success"
+    if widget_id in _DANGER_WIDGET_IDS:
+        return "danger"
+
+    text = button.text.lstrip()
+    if button.url and text.startswith("🔔"):
+        return "primary"
+    if text.startswith("❌"):
+        return "danger"
+    return None
+
+
 def transform_inline_button(button: InlineKeyboardButton) -> InlineKeyboardButton:
-    """Переносит ведущий эмодзи из текста inline-кнопки в icon_custom_emoji_id."""
-    if button.icon_custom_emoji_id:
-        return button
+    """Переносит ведущий эмодзи из текста inline-кнопки в icon_custom_emoji_id и задаёт style."""
+    updates: dict[str, str] = {}
 
-    match = _LEADING_EMOJI_PATTERN.match(button.text)
-    if not match:
-        return button
+    style = resolve_button_style(button)
+    if style:
+        updates["style"] = style
 
-    rest = button.text[match.end() :].lstrip()
-    if not rest:
-        # Telegram не позволяет пустой text на кнопке; не дублируем чисто символьные кнопки.
-        return button
+    if not button.icon_custom_emoji_id:
+        match = _LEADING_EMOJI_PATTERN.match(button.text)
+        if match:
+            rest = button.text[match.end() :].lstrip()
+            if rest:
+                # Telegram не позволяет пустой text на кнопке; не дублируем чисто символьные кнопки.
+                updates["text"] = rest
+                updates["icon_custom_emoji_id"] = EMOJI_TO_CUSTOM_ID[match.group(1)]
 
-    custom_id = EMOJI_TO_CUSTOM_ID[match.group(1)]
-    return button.model_copy(update={"text": rest, "icon_custom_emoji_id": custom_id})
+    if not updates:
+        return button
+    return button.model_copy(update=updates)
 
 
 def transform_inline_keyboard(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
