@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -16,6 +17,7 @@ from core.config import MOSCOW_TZ
 DEFAULT_TIMEOUT_SECONDS = 300
 DEFAULT_OUTPUT_DIR = Path(tempfile.gettempdir())
 UNSUPPORTED_SETTINGS = {"transaction_timeout"}
+UNSUPPORTED_META_PREFIXES = ("\\restrict ", "\\unrestrict ")
 
 
 class BackupError(RuntimeError):
@@ -88,10 +90,17 @@ def _sanitize_dump_file(sql_path: Path) -> None:
         line
         for line in lines
         if not any(line.strip().lower().startswith(f"set {setting}".lower()) for setting in UNSUPPORTED_SETTINGS)
+        and not any(line.lstrip().startswith(prefix) for prefix in UNSUPPORTED_META_PREFIXES)
     ]
 
     if filtered != lines:
         sql_path.write_text("".join(filtered), encoding="utf-8")
+
+
+def _needs_schema_reset(sql_path: Path) -> bool:
+    """Возвращает True, если дамп создаёт таблицы без предварительного DROP."""
+    text = sql_path.read_text(encoding="utf-8", errors="replace").upper()
+    return "CREATE TABLE" in text and "DROP TABLE" not in text and "DROP SCHEMA" not in text
 
 
 async def create_db_backup(
@@ -155,7 +164,7 @@ async def restore_db_backup(
 
     _sanitize_dump_file(sql_file)
 
-    cmd = [
+    psql_base = [
         "psql",
         "-h",
         conn.host,
@@ -167,11 +176,19 @@ async def restore_db_backup(
         conn.database,
         "-v",
         "ON_ERROR_STOP=1",
-        "-f",
-        str(sql_file),
     ]
 
-    await _run_subprocess(*cmd, env=env, timeout=timeout)
+    if _needs_schema_reset(sql_file):
+        await _run_subprocess(
+            *psql_base,
+            "-c",
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public;",
+            env=env,
+            timeout=timeout,
+        )
+
+    await _run_subprocess(*psql_base, "-f", str(sql_file), env=env, timeout=timeout)
+    await _run_subprocess(sys.executable, "-m", "core.db.migrate", env=env, timeout=timeout)
 
 
 def maybe_decompress_gzip(source: Path) -> Path:
