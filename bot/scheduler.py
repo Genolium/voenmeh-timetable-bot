@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from aiogram import Bot
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, FSInputFile
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from redis.asyncio.client import Redis
 
@@ -23,6 +23,7 @@ from bot.text_formatters import (
 )
 from core.admin_reports import send_daily_reports, send_monthly_reports, send_weekly_reports
 from core.config import (
+    ADMIN_IDS,
     CHECK_INTERVAL_MINUTES,
     MOSCOW_TZ,
     OPENWEATHERMAP_API_KEY,
@@ -32,7 +33,7 @@ from core.config import (
     REDIS_SCHEDULE_CACHE_KEY,
     REDIS_SCHEDULE_HASH_KEY,
 )
-from core.db.backups import create_db_backup
+from core.db.backups import compress_file_gzip, create_db_backup
 from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
@@ -537,7 +538,23 @@ async def cleanup_image_cache(redis_client: Redis) -> None:
 # Массовые функции генерации изображений удалены: теплый прогрев, полная генерация, pre-cache helper
 
 
-async def auto_backup(redis_client: Redis) -> None:
+async def _send_backup_to_telegram(bot: Bot, backup_path: Path) -> None:
+    """Сжимает дамп БД в .sql.gz и отправляет его в BACKUP_CHAT_ID или ADMIN_IDS."""
+    backup_chat = (os.getenv("BACKUP_CHAT_ID") or "").strip()
+    recipients: list[int | str] = [backup_chat] if backup_chat else list(ADMIN_IDS)
+    if not recipients:
+        return
+    gz_path = compress_file_gzip(backup_path)
+    size_kb = max(1, gz_path.stat().st_size // 1024)
+    caption = f"📎 Резервная копия БД: <code>{gz_path.name}</code> ({size_kb} KB)"
+    for chat_id in recipients:
+        try:
+            await bot.send_document(chat_id=chat_id, document=FSInputFile(gz_path), caption=caption, parse_mode="HTML")
+        except Exception as exc:
+            logger.warning("Не удалось отправить бэкап БД в чат %s: %s", chat_id, exc)
+
+
+async def auto_backup(redis_client: Redis, bot: Bot | None = None) -> None:
     try:
         backup_dir = Path("/app/data/backups") if Path("/app/data").exists() else Path("data/backups")
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -545,6 +562,8 @@ async def auto_backup(redis_client: Redis) -> None:
         try:
             backup_path = await create_db_backup(output_dir=backup_dir)
             logger.info("Database backup created: %s (сохраняется на %s дней)", backup_path, BACKUP_RETENTION_DAYS)
+            if bot is not None:
+                await _send_backup_to_telegram(bot, backup_path)
         except Exception as exc:
             logger.error("Exception during database backup: %s", exc)
             ERRORS_TOTAL.labels(source="db_backup").inc()
@@ -900,7 +919,7 @@ def setup_scheduler(
     scheduler.add_job(collect_db_metrics, "interval", minutes=5, args=[user_data_manager])
     scheduler.add_job(collect_system_metrics, "interval", minutes=1)
     scheduler.add_job(backup_current_schedule, "cron", hour="*/6", args=[redis_client])
-    scheduler.add_job(auto_backup, "cron", hour=2, args=[redis_client])
+    scheduler.add_job(auto_backup, "cron", hour=2, args=[redis_client, bot])
     scheduler.add_job(
         handle_graduated_groups,
         "cron",

@@ -191,6 +191,16 @@ async def restore_db_backup(
     await _run_subprocess(sys.executable, "-m", "core.db.migrate", env=env, timeout=timeout)
 
 
+def compress_file_gzip(source: Path) -> Path:
+    """Сжимает SQL-дамп в .gz и возвращает путь к архиву."""
+    import shutil
+
+    target = source.with_suffix(source.suffix + ".gz")
+    with open(source, "rb") as src, gzip.open(target, "wb", compresslevel=6) as dst:
+        shutil.copyfileobj(src, dst)
+    return target
+
+
 def maybe_decompress_gzip(source: Path) -> Path:
     if source.suffix.lower() != ".gz":
         return source

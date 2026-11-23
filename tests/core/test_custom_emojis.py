@@ -68,8 +68,8 @@ def test_transform_inline_button_and_keyboard():
     only_emoji = InlineKeyboardButton(text="✅", callback_data="ok")
     assert transform_inline_button(only_emoji) is only_emoji
 
-    # Кнопка без эмодзи из маппинга -> не трогаем
-    plain = InlineKeyboardButton(text="Сегодня", callback_data="today")
+    # Кнопка без эмодзи из маппинга и без особого стиля -> не трогаем
+    plain = InlineKeyboardButton(text="Обычная", callback_data="other")
     assert transform_inline_button(plain) is plain
 
     # Клавиатура без изменений возвращает тот же объект
@@ -83,6 +83,29 @@ def test_transform_inline_button_and_keyboard():
     assert updated_kb.inline_keyboard[0][0].text == "Неделя"
     assert updated_kb.inline_keyboard[0][0].icon_custom_emoji_id == EMOJI_TO_CUSTOM_ID["📅"]
     assert updated_kb.inline_keyboard[0][1] is plain
+
+    # Цветные стили Bot API 9.4 (primary / success / danger)
+    primary_btn = transform_inline_button(InlineKeyboardButton(text="Сегодня", callback_data="abc\x1dtoday"))
+    assert primary_btn.style == "primary"
+
+    success_btn = transform_inline_button(
+        InlineKeyboardButton(text="✅ Отправить", callback_data="abc\x1dconfirm_broadcast_send")
+    )
+    assert success_btn.style == "success"
+    assert success_btn.text == "Отправить"
+
+    danger_btn = transform_inline_button(InlineKeyboardButton(text="❌ Отмена", callback_data="abc\x1dfeedback_cancel"))
+    assert danger_btn.style == "danger"
+
+    danger_text_btn = transform_inline_button(InlineKeyboardButton(text="❌ Удалить", callback_data="custom_del"))
+    assert danger_text_btn.style == "danger"
+
+    url_sub_btn = transform_inline_button(InlineKeyboardButton(text="🔔 Подписаться", url="https://t.me/voenmeh404"))
+    assert url_sub_btn.style == "primary"
+
+    # Уже заданный стиль не перезаписывается
+    preset = InlineKeyboardButton(text="Сегодня", callback_data="abc\x1dtoday", style="success")
+    assert transform_inline_button(preset) is preset
 
 
 def test_is_html_parse_mode():

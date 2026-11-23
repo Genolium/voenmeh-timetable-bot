@@ -996,6 +996,39 @@ class TestMoreMenuAndOwnGroup:
         callback.answer.side_effect = RuntimeError("toast failed")
         await sv.on_my_group_click(callback, MagicMock(), dm)
 
+    async def test_on_export_ics_click_success_and_empty(self):
+        from core.semester_calendar import SemesterInfo
+
+        tm = make_timetable_manager()
+        tm._schedules = {
+            "О735Б": {
+                "odd": {"Понедельник": [{"subject": "НИР", "time": "14:55-16:25", "room": "219*а"}]},
+                "even": {},
+            }
+        }
+        tm.get_semester_info_for = AsyncMock(
+            return_value=SemesterInfo(semester="fall", semester_start=date(2026, 9, 1), week_number=13, week_key="odd")
+        )
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(tm=tm, udm=udm, dialog_data={DialogDataKeys.GROUP: "О735Б", "is_group_target": True})
+        cb = make_callback()
+        await sv.on_export_ics_click(cb, MagicMock(), dm)
+        cb.message.answer_document.assert_awaited_once()
+
+        # Пустое расписание
+        tm._schedules = {"О735Б": {"odd": {}, "even": {}}}
+        cb_empty = make_callback()
+        await sv.on_export_ics_click(cb_empty, MagicMock(), dm)
+        cb_empty.answer.assert_awaited_once()
+        assert cb_empty.answer.await_args.kwargs.get("show_alert") is True
+
+        # Нет группы
+        dm_no_group = sched_dm(tm=tm, udm=udm, dialog_data={})
+        cb_no_group = make_callback()
+        await sv.on_export_ics_click(cb_no_group, MagicMock(), dm_no_group)
+        cb_no_group.answer.assert_awaited_once()
+
 
 class TestDeadShims:
     async def test_auto_delete_old_messages(self):

@@ -206,3 +206,12 @@ def test_maybe_decompress_gzip_compressed(tmp_path):
     result = maybe_decompress_gzip(gz_path)
     assert result == tmp_path / "backup.sql"
     assert result.read_bytes() == b"SELECT 1;"
+
+
+def test_compress_file_gzip(tmp_path):
+    sql = tmp_path / "db_backup.sql"
+    sql.write_text("SELECT 42;\n", encoding="utf-8")
+    gz_path = backups.compress_file_gzip(sql)
+    assert gz_path == tmp_path / "db_backup.sql.gz"
+    with gzip.open(gz_path, "rb") as handle:
+        assert handle.read() == b"SELECT 42;\n"
