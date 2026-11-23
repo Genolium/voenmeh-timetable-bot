@@ -56,6 +56,8 @@ def test_get_theme_meta_all_branches():
 def test_get_all_theme_ids():
     ids = get_all_theme_ids()
     assert "standard" in ids
+    assert "vice" in ids
+    assert get_theme_meta("vice").bg_image_key == "vice"
     assert len(ids) == len(set(ids))
 
 

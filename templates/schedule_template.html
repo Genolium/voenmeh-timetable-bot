@@ -584,6 +584,46 @@
       --rain-card-text-light: #b8c7da;
       --rain-badge-time: #ffffff;
 
+      /* 🌴 VICE VI (Постерная эстетика GTA VI / Vice City / Leonida) */
+      --vice-odd-bg: #8f84c8;
+      --vice-odd-bg-overlay: linear-gradient(180deg, rgba(58, 44, 110, 0.22) 0%, rgba(164, 96, 152, 0.04) 28%, rgba(255, 255, 255, 0) 100%);
+      --vice-odd-accent: #d4445e;
+      --vice-odd-badge-bg: #d9458e;
+      --vice-odd-badge-time: #ffffff;
+      --vice-odd-badge-caption: #9e2f68;
+      --vice-odd-card-bg: rgba(255, 248, 244, 0.78);
+      --vice-odd-card-accent: #d4445e;
+      --vice-odd-card-day-title: #bf2b72;
+      --vice-odd-card-border: 1.5px solid rgba(255, 255, 255, 0.78);
+      --vice-odd-card-shadow: 0 22px 48px rgba(102, 40, 88, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+      --vice-odd-text-main: #ffffff;
+      --vice-odd-text-light: #fff3eb;
+      --vice-odd-card-text: #251336;
+      --vice-odd-card-text-light: #6a4d7c;
+
+      --vice-even-bg: #232b6e;
+      --vice-even-bg-overlay: linear-gradient(180deg, rgba(16, 14, 48, 0.22) 0%, rgba(16, 14, 48, 0) 32%, rgba(16, 14, 48, 0.08) 100%);
+      --vice-even-accent: #4df3e5;
+      --vice-even-badge-bg: #ff55a5;
+      --vice-even-badge-time: #ffffff;
+      --vice-even-badge-caption: #ffb8dc;
+      --vice-even-card-bg: rgba(24, 14, 48, 0.62);
+      --vice-even-card-accent: #4df3e5;
+      --vice-even-card-day-title: #ff7ec6;
+      --vice-even-card-border: 1.5px solid rgba(255, 134, 198, 0.36);
+      --vice-even-card-shadow: 0 24px 52px rgba(10, 5, 28, 0.52), inset 0 1px 0 rgba(255, 196, 228, 0.22);
+      --vice-even-text-main: #ffffff;
+      --vice-even-text-light: #ffd4eb;
+      --vice-even-card-text: #ffffff;
+      --vice-even-card-text-light: #dfc9ec;
+
+      --vice-card-backdrop: blur(18px) saturate(150%);
+      --vice-text-main: #ffffff;
+      --vice-text-light: #fff3eb;
+      --vice-card-text: #251336;
+      --vice-card-text-light: #6a4d7c;
+      --vice-badge-time: #ffffff;
+
       /* Выбор темы на основе пользовательской настройки */
         {% set theme_prefix=user_theme if user_theme else 'standard' %}
 
@@ -1085,6 +1125,58 @@
     body.theme-matcha .day-card {
       border-radius: 3.2rem;
       --row-divider: rgba(61, 90, 58, 0.15);
+    }
+
+    body.theme-vice .schedule-header h1 {
+      font-weight: 800;
+      letter-spacing: 0.3rem;
+      text-shadow: 0 6px 28px rgba(58, 22, 86, 0.42), 0 2px 6px rgba(34, 12, 54, 0.24);
+    }
+    body.theme-vice .schedule-header p,
+    body.theme-vice .bot-credit {
+      text-shadow: 0 3px 16px rgba(48, 18, 72, 0.36);
+    }
+    body.theme-vice .bot-credit {
+      opacity: 0.9;
+    }
+    body.theme-vice .day-card {
+      border-radius: 2.8rem;
+      overflow: hidden;
+      --row-divider: rgba(156, 66, 124, 0.16);
+    }
+    body.theme-vice .day-card::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 0.55rem;
+      background: linear-gradient(90deg, #5f6ad6 0%, #dd4a95 52%, #ffa25b 100%);
+      opacity: 0.92;
+    }
+    body.theme-vice.week-even .day-card {
+      --row-divider: rgba(255, 134, 198, 0.18);
+    }
+    body.theme-vice.week-even .day-card::before {
+      background: linear-gradient(90deg, #4df3e5 0%, #ff55a5 54%, #ff9358 100%);
+      opacity: 0.88;
+    }
+    body.theme-vice .badge-time {
+      border-radius: 1.8rem;
+      background: linear-gradient(135deg, #6552c9 0%, #d9458e 54%, #ff8e54 100%);
+      box-shadow: 0 10px 24px rgba(204, 62, 136, 0.32);
+    }
+    body.theme-vice.week-even .badge-time {
+      background: linear-gradient(135deg, #ff55a5 0%, #ff8e53 100%);
+      box-shadow: 0 10px 26px rgba(255, 85, 165, 0.38);
+    }
+    body.theme-vice .day-title {
+      font-family: 'Saira', sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.12rem;
+    }
+    body.theme-vice .lesson-room {
+      font-weight: 700;
     }
 
     /* --- 6. Адаптивность (Responsive Design) --- */

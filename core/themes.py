@@ -130,6 +130,13 @@ THEMES: tuple[ThemeMeta, ...] = (
         is_procedural=False,
         bg_image_key="rain",
     ),
+    ThemeMeta(
+        id="vice",
+        name_key="theme_vice_name",
+        desc_key="theme_vice_desc",
+        is_procedural=False,
+        bg_image_key="vice",
+    ),
 )
 
 THEME_BY_ID: Dict[str, ThemeMeta] = {t.id: t for t in THEMES}
