@@ -548,9 +548,12 @@ async def build_segment_users(
     user_data_manager: UserDataManager,
     group_prefix: str | None,
     days_active: int | None,
+    user_type: str | None = None,
 ) -> list[int]:
     """Строит список пользователей для сегментированной рассылки одним SQL-запросом."""
-    return await user_data_manager.get_segment_user_ids(group_prefix=group_prefix, days_active=days_active)
+    return await user_data_manager.get_segment_user_ids(
+        group_prefix=group_prefix, days_active=days_active, user_type=user_type
+    )
 
 
 def render_template(template_text: str, user_info: Any) -> str:
@@ -920,13 +923,36 @@ def _parse_broadcast_handler_args(*args, **kwargs):
     return kwargs.get("message"), kwargs.get("manager")
 
 
+_BROADCAST_TARGET_LABELS: dict[str, str] = {
+    "all": "Всем пользователям",
+    "student": "Только студентам (группам)",
+    "teacher": "Только преподавателям",
+}
+
+_BROADCAST_TARGET_BY_WIDGET: dict[str, str] = {
+    "go_broadcast_all": "all",
+    "go_broadcast_students": "student",
+    "go_broadcast_teachers": "teacher",
+}
+
+
+async def on_broadcast_target_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    target = _BROADCAST_TARGET_BY_WIDGET.get(button.widget_id or "", "all")
+    manager.dialog_data["broadcast_target"] = target
+    await manager.switch_to(Admin.broadcast)
+
+
 async def on_broadcast_received(*args, **kwargs):
     # Support both aiogram-dialog callback signature (message, message_input, manager)
     # and test signature (message, manager)
     message, manager = _parse_broadcast_handler_args(*args, **kwargs)
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = extract_broadcast_payload(message)
-    all_users = await user_data_manager.get_all_user_ids()
+    target = manager.dialog_data.get("broadcast_target", "all")
+    if target in ("student", "teacher"):
+        all_users = await user_data_manager.get_segment_user_ids(user_type=target)
+    else:
+        all_users = await user_data_manager.get_all_user_ids()
     manager.dialog_data["broadcast_payload"] = payload
     manager.dialog_data["broadcast_user_ids"] = all_users
 
@@ -954,9 +980,11 @@ async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: An
     payload = dialog_manager.dialog_data.get("broadcast_payload") or {}
     user_ids = dialog_manager.dialog_data.get("broadcast_user_ids") or []
     kind = payload.get("kind") or "text"
+    target = dialog_manager.dialog_data.get("broadcast_target") or "all"
     return {
         "recipient_count": len(user_ids),
         "kind_label": _BROADCAST_KIND_LABELS.get(kind, kind),
+        "target_label": _BROADCAST_TARGET_LABELS.get(target, target),
     }
 
 
@@ -1061,6 +1089,7 @@ async def on_new_group_input(message: Message, widget: TextInput, manager: Dialo
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
 
     await user_data_manager.set_user_group(user_id, new_group)
+    await user_data_manager.set_user_type(user_id, "student")
     await message.answer(
         f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{html.escape(new_group)}</b>."
     )
@@ -1292,7 +1321,9 @@ admin_dialog = Dialog(
     # Раздел: Рассылки
     Window(
         Const("📬 Раздел ‘Рассылки’"),
-        SwitchTo(Const("📣 Массовая рассылка"), id="go_broadcast", state=Admin.broadcast),
+        Button(Const("📣 Всем пользователям"), id="go_broadcast_all", on_click=on_broadcast_target_selected),
+        Button(Const("🎓 Только студентам (группам)"), id="go_broadcast_students", on_click=on_broadcast_target_selected),
+        Button(Const("🧑‍🏫 Только преподавателям"), id="go_broadcast_teachers", on_click=on_broadcast_target_selected),
         SwitchTo(Const("🎯 Сегментированная"), id="go_segment", state=Admin.segment_menu),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_broadcasts", state=Admin.menu),
         state=Admin.broadcast_menu,
@@ -1422,13 +1453,14 @@ admin_dialog = Dialog(
     Window(
         Format(
             "⚠️ <b>Подтверждение рассылки</b>\n\n"
+            "Аудитория: <b>{target_label}</b>\n"
             "Тип: {kind_label}\n"
             "Получателей: <b>{recipient_count}</b>\n\n"
             "Превью уже отправлено сообщением выше — так это увидят пользователи.\n"
-            "Если HTML выглядит правильно, нажмите «Отправить всем»."
+            "Если HTML выглядит правильно, нажмите «Отправить»."
         ),
         Button(
-            Const("✅ Отправить всем"),
+            Const("✅ Отправить"),
             id="confirm_broadcast_send",
             on_click=on_confirm_broadcast_send,
         ),

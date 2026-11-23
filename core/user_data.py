@@ -582,11 +582,16 @@ class UserDataManager:
         self,
         group_prefix: Optional[str] = None,
         days_active: Optional[int] = None,
+        user_type: Optional[str] = None,
     ) -> List[int]:
         """Возвращает ID пользователей сегмента одним SQL-запросом."""
         group_prefix_up = (group_prefix or "").upper().strip()
         async with self.async_session_maker() as session:
             stmt = select(User.user_id)
+            if user_type == "teacher":
+                stmt = stmt.where(User.user_type == "teacher")
+            elif user_type == "student":
+                stmt = stmt.where(or_(User.user_type != "teacher", User.user_type.is_(None)))
             if group_prefix_up:
                 stmt = stmt.where(
                     User.group.isnot(None),

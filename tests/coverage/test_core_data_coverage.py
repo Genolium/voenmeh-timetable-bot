@@ -469,13 +469,16 @@ async def test_get_segment_user_ids(mgr):
                 User(user_id=2102, group="О735А", last_active_date=datetime.now() - timedelta(days=20)),
                 User(user_id=2103, group="И101", last_active_date=datetime.now()),
                 User(user_id=2104, group=None, last_active_date=None),
+                User(user_id=2105, group="Скобеев Ю.С.", user_type="teacher", last_active_date=datetime.now()),
             ]
         )
         await session.commit()
 
-    assert set(await mgr.get_segment_user_ids()) == {2101, 2102, 2103, 2104}
+    assert set(await mgr.get_segment_user_ids()) == {2101, 2102, 2103, 2104, 2105}
     assert await mgr.get_segment_user_ids(group_prefix="о735", days_active=7) == [2101]
     assert set(await mgr.get_segment_user_ids(group_prefix="О7")) == {2101, 2102}
+    assert await mgr.get_segment_user_ids(user_type="teacher") == [2105]
+    assert set(await mgr.get_segment_user_ids(user_type="student")) == {2101, 2102, 2103, 2104}
 
 
 async def test_gather_stats(mgr):

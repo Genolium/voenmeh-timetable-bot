@@ -42,6 +42,7 @@ from dramatiq.results.backends import RedisBackend
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
+from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
 from bot.text_formatters import generate_reminder_text
 from bot.utils.image_compression import get_telegram_safe_image_path
 from bot.utils.worker_loop import run_async
@@ -59,7 +60,9 @@ load_dotenv()
 def _create_bot_with_timeout():
     """Create a Bot instance with proper HTTP client timeout settings."""
     session = AiohttpSession(timeout=60.0, limit=15)
-    return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+    return attach_custom_emoji_middleware(
+        Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+    )
 
 
 TELEMETRY_HANDLES = None
@@ -321,7 +324,9 @@ async def get_worker_bot() -> Bot:
     if _worker_bot is None or _worker_bot_loop is not current_loop:
         # limit=15 ограничивает количество одновременных TCP-соединений
         session = AiohttpSession(timeout=45.0, limit=15)
-        _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        _worker_bot = attach_custom_emoji_middleware(
+            Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        )
         _worker_bot_loop = current_loop
 
     return _worker_bot
@@ -563,7 +568,9 @@ def generate_week_image_task(
                 # Создаём бота в текущем лупе только если он действительно понадобится
                 bot_for_images: Bot | None = None
                 if not is_auto_generation:
-                    bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+                    bot_for_images = attach_custom_emoji_middleware(
+                        Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+                    )
                 image_service = ImageService(cache_manager, bot_for_images)
 
                 # week_key now passed explicitly

@@ -404,10 +404,14 @@ async def main():
     # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
     # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
     http_session = AiohttpSession(timeout=180)
-    bot = Bot(
-        token=bot_token or "",
-        default=default_properties,
-        session=http_session,
+    from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
+
+    bot = attach_custom_emoji_middleware(
+        Bot(
+            token=bot_token or "",
+            default=default_properties,
+            session=http_session,
+        )
     )
     dp = Dispatcher(storage=storage)
 
