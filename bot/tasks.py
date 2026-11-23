@@ -569,7 +569,11 @@ def generate_week_image_task(
                 bot_for_images: Bot | None = None
                 if not is_auto_generation:
                     bot_for_images = attach_custom_emoji_middleware(
-                        Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+                        Bot(
+                            token=BOT_TOKEN,
+                            default=DefaultBotProperties(parse_mode="HTML"),
+                            session=AiohttpSession(timeout=20.0),
+                        )
                     )
                 image_service = ImageService(cache_manager, bot_for_images)
 

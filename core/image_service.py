@@ -20,6 +20,13 @@ from core.metrics import SCHEDULE_GENERATION_TIME
 
 logger = logging.getLogger(__name__)
 
+_TRANSIENT_SEND_TOKENS = ("timeout", "connect", "network", "reset", "disconnected")
+
+
+def _is_transient_send_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(token in msg for token in _TRANSIENT_SEND_TOKENS)
+
 
 class ImageService:
     """
@@ -354,6 +361,7 @@ class ImageService:
                         message_id=placeholder_msg_id,
                         media=media,
                         reply_markup=kb,
+                        request_timeout=15,
                     )
                     logger.info(f"✅ Image edited for user {user_id}")
                     return True
@@ -366,17 +374,33 @@ class ImageService:
                     logger.warning(f"Failed to edit message for user {user_id}: {e}")
                     # Продолжаем с отправкой нового сообщения
 
-            # Отправляем новое сообщение
-            try:
-                await self.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo,
-                    caption=final_caption or "",
-                    reply_markup=kb,
-                )
-            except Exception as e:
+            # Отправляем новое сообщение с ретраями на транзиентных сетевых сбоях
+            last_error: Optional[Exception] = None
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    await self.bot.send_photo(
+                        chat_id=user_id,
+                        photo=FSInputFile(safe_image_path),
+                        caption=final_caption or "",
+                        reply_markup=kb,
+                        request_timeout=15,
+                    )
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    if not _is_transient_send_error(e):
+                        break
+                    if attempt < max_attempts:
+                        logger.warning(
+                            f"Photo send attempt {attempt}/{max_attempts} failed for user {user_id}: {e}; retrying..."
+                        )
+                        await asyncio.sleep(0.5 * attempt)
+
+            if last_error is not None:
                 # Если не удалось отправить фото — отправим текст и ссылку на оригинал (если есть)
-                logger.warning(f"Photo send failed for user {user_id}: {e}")
+                logger.warning(f"Photo send failed for user {user_id}: {last_error}")
                 fallback_text = (final_caption or "") + "\n\n⚠️ Не удалось отправить изображение. Попробуйте позже."
                 try:
                     await self.bot.send_message(chat_id=user_id, text=fallback_text, parse_mode="HTML")

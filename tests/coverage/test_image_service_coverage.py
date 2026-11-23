@@ -294,6 +294,35 @@ async def test_send_photo_and_text_fallback_fail(service, bot, tmp_path):
     assert result is False
 
 
+async def test_send_photo_retries_on_transient_timeout_and_succeeds(service, bot, tmp_path):
+    image = tmp_path / "img.png"
+    image.write_bytes(b"data")
+    bot.send_photo.side_effect = [Exception("Request timeout error"), None]
+    with (
+        patch("core.image_service.get_telegram_safe_image_path", return_value=str(image)),
+        patch("core.image_service.asyncio.sleep", AsyncMock()) as mock_sleep,
+    ):
+        result = await service._send_image_to_user(str(image), 1, None, "caption")
+    assert result is True
+    assert bot.send_photo.await_count == 2
+    mock_sleep.assert_awaited_once_with(0.5)
+
+
+async def test_send_photo_retries_exhausted_falls_back(service, bot, tmp_path):
+    image = tmp_path / "img.png"
+    image.write_bytes(b"data")
+    bot.send_photo.side_effect = Exception("Request timeout error")
+    with (
+        patch("core.image_service.get_telegram_safe_image_path", return_value=str(image)),
+        patch("core.image_service.asyncio.sleep", AsyncMock()) as mock_sleep,
+    ):
+        result = await service._send_image_to_user(str(image), 1, None, "caption")
+    assert result is False
+    assert bot.send_photo.await_count == 3
+    assert mock_sleep.await_count == 2
+    bot.send_message.assert_awaited_once()
+
+
 async def test_send_outer_exception(service, tmp_path):
     image = tmp_path / "img.png"
     image.write_bytes(b"data")
