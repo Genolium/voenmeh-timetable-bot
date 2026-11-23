@@ -972,8 +972,10 @@ class TestMoreMenuAndOwnGroup:
         dm = sched_dm(dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"})
         await sv.on_help_click(make_callback(), MagicMock(), dm)
         await sv.on_feedback_click(make_callback(), MagicMock(), dm)
-        await sv.on_report_error_click(make_callback(), MagicMock(), dm)
-        assert dm.start.await_count == 3
+        dm_no_group = sched_dm(dialog_data={})
+        await sv.on_feedback_click(make_callback(), MagicMock(), dm_no_group)
+        assert dm.start.await_count == 2
+        assert dm_no_group.start.await_count == 1
 
     async def test_check_subscription_button_delegates(self):
         bot = AsyncMock()
