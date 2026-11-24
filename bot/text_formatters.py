@@ -290,8 +290,40 @@ def format_full_week_text(week_schedule: dict, week_name: str, lang: str = "ru")
 # --- ДИНАМИЧЕСКИЕ ЗАГОЛОВКИ ---
 
 
+def _format_minutes_delta(total_minutes: int, lang: str) -> str:
+    total_minutes = max(1, total_minutes)
+    hours, mins = divmod(total_minutes, 60)
+    if lang == "en":
+        return f"{hours}h {mins}m" if hours else f"{mins} min"
+    if lang == "zh":
+        return f"{hours}小时{mins}分" if hours else f"{mins} 分钟"
+    if hours and mins:
+        return f"{hours} ч {mins} мин"
+    if hours:
+        return f"{hours} ч"
+    return f"{mins} мин"
+
+
+def _format_room_badge(room_raw: Any, lang: str) -> str:
+    room = str(room_raw or "").strip("; ")
+    if not room:
+        return ""
+    lower = room.lower()
+    if "кабинет" in lower and "не указан" in lower:
+        return ""
+    room_escaped = esc(transliterate(room, lang))
+    if "дист" in lower or "online" in lower:
+        return f" ({room_escaped})"
+    prefix = {"en": "rm. ", "zh": "教室 "}.get(lang, "ауд. ")
+    return f" ({prefix}{room_escaped})"
+
+
+def _minutes_between(t1: time, t2: time) -> int:
+    return (t2.hour * 60 + t2.minute) - (t1.hour * 60 + t1.minute)
+
+
 def generate_dynamic_header(lessons: list, target_date: date, lang: str = "ru") -> tuple[str, str]:
-    """Генерирует контекстный заголовок и прогресс-бар."""
+    """Генерирует живой статус пары/перерыва и прогресс-бар дня."""
     is_today = target_date == datetime.now(MOSCOW_TZ).date()
 
     if is_today and not lessons:
@@ -333,6 +365,17 @@ def generate_dynamic_header(lessons: list, target_date: date, lang: str = "ru") 
 
         if now_time < first_lesson_start:
             start_time_str, _ = get_safe_times(sorted_lessons[0]["time"])
+            until_mins = _minutes_between(now_time, first_lesson_start)
+            room_part = _format_room_badge(sorted_lessons[0].get("room"), lang)
+            if until_mins <= 180:
+                return (
+                    i18n.get("header_morning_countdown_template", lang).format(
+                        until=_format_minutes_delta(until_mins, lang),
+                        start_time=start_time_str,
+                        room_part=room_part,
+                    ),
+                    progress_bar,
+                )
             return (
                 i18n.get("header_morning_template", lang).format(start_time=start_time_str),
                 progress_bar,
@@ -344,14 +387,17 @@ def generate_dynamic_header(lessons: list, target_date: date, lang: str = "ru") 
         for i, lesson in enumerate(sorted_lessons):
             start_time = datetime.strptime(lesson["start_time_raw"], "%H:%M").time()
             end_time = datetime.strptime(lesson["end_time_raw"], "%H:%M").time()
-            _, lesson_end_time_str = get_safe_times(lesson["time"])
 
             if start_time <= now_time <= end_time:
-                end_text = (
-                    i18n.get("dynamic_header_lesson_end", lang).format(time=lesson_end_time_str) if lesson_end_time_str else ""
-                )
+                remaining_mins = _minutes_between(now_time, end_time)
+                room_part = _format_room_badge(lesson.get("room"), lang)
+                subject_fmt = esc(transliterate(lesson["subject"], lang))
                 return (
-                    i18n.get("header_lesson_now_template", lang).format(subject=esc(lesson["subject"]), end_text=end_text),
+                    i18n.get("header_lesson_now_live_template", lang).format(
+                        subject=subject_fmt,
+                        room_part=room_part,
+                        remaining=_format_minutes_delta(remaining_mins, lang),
+                    ),
                     progress_bar,
                 )
 
@@ -360,9 +406,15 @@ def generate_dynamic_header(lessons: list, target_date: date, lang: str = "ru") 
                 next_start_time_obj = datetime.strptime(next_lesson["start_time_raw"], "%H:%M").time()
                 next_start_time_str, _ = get_safe_times(next_lesson["time"])
                 if end_time < now_time < next_start_time_obj:
+                    break_mins = _minutes_between(now_time, next_start_time_obj)
+                    room_part = _format_room_badge(next_lesson.get("room"), lang)
+                    subject_fmt = esc(transliterate(next_lesson["subject"], lang))
                     return (
-                        i18n.get("header_break_template", lang).format(
-                            next_start=next_start_time_str, subject=esc(next_lesson["subject"])
+                        i18n.get("header_break_live_template", lang).format(
+                            duration=_format_minutes_delta(break_mins, lang),
+                            next_start=next_start_time_str,
+                            subject=subject_fmt,
+                            room_part=room_part,
                         ),
                         progress_bar,
                     )
@@ -469,7 +521,10 @@ def generate_evening_intro(
     target_date: datetime,
     user_type: str = "student",
     lang: str = "ru",
+    lessons: list[dict[str, Any]] | None = None,
 ) -> str:
+    from core.summary_advisor import build_schedule_briefing, build_weather_summary_block
+
     weekday = str(target_date.weekday())
 
     # Выбираем приветствие и контекст в зависимости от типа пользователя
@@ -480,11 +535,9 @@ def generate_evening_intro(
         greetings = i18n.get("evening_greetings", lang)
         context_map = i18n.get("day_context", lang)
 
-    # Ensure we have lists
     if not isinstance(greetings, list):
         greetings = [""]
 
-    # context_map might be a dict or string if something went wrong, need to handle
     day_context_list: list[str] = []
     if isinstance(context_map, dict):
         day_context_list = context_map.get(weekday, [""])
@@ -494,43 +547,28 @@ def generate_evening_intro(
     greeting_line = random.choice(greetings)
     day_context_line = random.choice(day_context_list)
 
-    weather_block = ""
-    if weather_forecast:
-        temp = int(weather_forecast["temperature"])
-        description = weather_forecast.get("description", "").lower()
+    weather_block = build_weather_summary_block(
+        weather_forecast,
+        target_date=target_date.date() if isinstance(target_date, datetime) else target_date,
+        user_type=user_type,
+        lang=lang,
+        is_morning=False,
+    )
+    briefing_block = build_schedule_briefing(lessons, user_type=user_type, lang=lang) if lessons else ""
 
-        # Для преподавателей используем более формальный стиль
-        if user_type == "teacher":
-            fmt = i18n.get("weather_forecast_teacher_fmt", lang)
-            weather_block = fmt.format(
-                emoji=weather_forecast.get("emoji", ""), description=description.capitalize(), temp=temp
-            )
-        else:
-            advice_list: list[str] = []
-            clothing_advice = i18n.get("clothing_advice", lang)
-            if isinstance(clothing_advice, dict):
-                if temp <= 0:
-                    advice_list = clothing_advice.get("cold", [])
-                elif 0 < temp <= 12:
-                    advice_list = clothing_advice.get("cool", [])
-                elif 12 < temp <= 20:
-                    advice_list = clothing_advice.get("warm", [])
-                else:
-                    advice_list = clothing_advice.get("hot", [])
-
-            advice_line = random.choice(advice_list) if advice_list else ""
-
-            fmt = i18n.get("weather_forecast_fmt", lang)
-            weather_block = fmt.format(
-                emoji=weather_forecast.get("emoji", ""), description=description.capitalize(), temp=temp, advice=advice_line
-            )
-
-    parts = [greeting_line, day_context_line, weather_block]
+    parts = [greeting_line, day_context_line, weather_block, briefing_block]
     return "\n\n".join(filter(None, parts)) + "\n\n"
 
 
-def generate_morning_intro(weather_forecast: Dict[str, Any] | None, user_type: str = "student", lang: str = "ru") -> str:
-    # Выбираем приветствие в зависимости от типа пользователя
+def generate_morning_intro(
+    weather_forecast: Dict[str, Any] | None,
+    user_type: str = "student",
+    lang: str = "ru",
+    lessons: list[dict[str, Any]] | None = None,
+    target_date: date | None = None,
+) -> str:
+    from core.summary_advisor import build_schedule_briefing, build_weather_summary_block
+
     if user_type == "teacher":
         greetings = i18n.get("morning_greetings_teacher", lang)
     else:
@@ -540,21 +578,18 @@ def generate_morning_intro(weather_forecast: Dict[str, Any] | None, user_type: s
         greetings = [""]
 
     greeting_line = random.choice(greetings)
+    ref_date = target_date or datetime.now(MOSCOW_TZ).date()
+    weather_block = build_weather_summary_block(
+        weather_forecast,
+        target_date=ref_date,
+        user_type=user_type,
+        lang=lang,
+        is_morning=True,
+    )
+    briefing_block = build_schedule_briefing(lessons, user_type=user_type, lang=lang) if lessons else ""
 
-    weather_block = ""
-    if weather_forecast:
-        temp = int(weather_forecast["temperature"])
-        description = weather_forecast.get("description", "").lower()
-
-        # Для преподавателей используем более формальный стиль
-        if user_type == "teacher":
-            fmt = i18n.get("weather_current_teacher_fmt", lang)
-        else:
-            fmt = i18n.get("weather_current_fmt", lang)
-
-        weather_block = fmt.format(description=description.capitalize(), temp=temp)
-
-    return f"{greeting_line}\n{weather_block}\n"
+    parts = [greeting_line, weather_block, briefing_block]
+    return "\n\n".join(filter(None, parts)) + "\n"
 
 
 def generate_reminder_text(

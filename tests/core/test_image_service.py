@@ -108,4 +108,19 @@ async def test_send_image_to_user_file_not_exists(image_service):
     assert not success
 
 
-# Add more tests for other methods in ImageService
+@pytest.mark.asyncio
+async def test_get_or_generate_week_image_with_rules_hash(image_service, tmp_path):
+    img = tmp_path / "cached.png"
+    img.write_bytes(b"png")
+    image_service.cache_manager.is_cached = AsyncMock(return_value=True)
+    image_service.cache_manager.get_file_path = MagicMock(return_value=img)
+    ok, path = await image_service.get_or_generate_week_image(
+        "О735Б",
+        "odd",
+        "Нечётная неделя",
+        {},
+        rules_hash="abc123",
+    )
+    assert ok is True
+    assert path == str(img)
+    image_service.cache_manager.is_cached.assert_awaited_with("О735Б_odd_ru_uabc123")

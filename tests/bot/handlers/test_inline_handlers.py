@@ -89,3 +89,38 @@ class TestInlineHandler:
 
         result_article = mock_query.answer.call_args[0][0][0]
         assert "Занятий нет, можно отдыхать!" in result_article.description
+
+    async def test_inline_query_teacher_search_and_empty(self, mock_query, mock_manager):
+        mock_manager.find_teachers_fuzzy = MagicMock(return_value=["Иванов И.И."])
+        mock_manager.get_teacher_schedule = AsyncMock(
+            return_value={
+                "teacher": "Иванов И.И.",
+                "date": date.today(),
+                "day_name": "Понедельник",
+                "week_name": "Нечётная неделя",
+                "lessons": [{"time": "09:00-10:30", "subject": "Физика", "type": "лек", "room": "322", "groups": ["О735Б"]}],
+            }
+        )
+        mock_query.query = "Иванов"
+        await inline_query_handler(mock_query, mock_manager)
+        result_article = mock_query.answer.call_args[0][0][0]
+        assert "Иванов И.И." in result_article.title
+
+        # Teacher error -> returns early without answering again
+        mock_query.answer.reset_mock()
+        mock_manager.get_teacher_schedule = AsyncMock(return_value={"error": "not found"})
+        await inline_query_handler(mock_query, mock_manager)
+        mock_query.answer.assert_not_called()
+
+        # Teacher no lessons
+        mock_manager.get_teacher_schedule = AsyncMock(
+            return_value={
+                "teacher": "Иванов И.И.",
+                "date": date.today(),
+                "day_name": "Понедельник",
+                "week_name": "Нечётная неделя",
+                "lessons": [],
+            }
+        )
+        await inline_query_handler(mock_query, mock_manager)
+        assert "Занятий нет" in mock_query.answer.call_args[0][0][0].description

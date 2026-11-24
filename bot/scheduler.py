@@ -113,97 +113,152 @@ def print_progress_bar(
         print()  # Новая строка в конце
 
 
+async def _safe_group_chat_rows(user_data_manager: Any, method_name: str, *args: Any) -> list[Any]:
+    session_factory = getattr(user_data_manager, "async_session_maker", None)
+    if not session_factory or not hasattr(session_factory, "__call__"):
+        return []
+    try:
+        from core.group_chat_manager import GroupChatManager
+
+        gcm = GroupChatManager(session_factory)
+        rows = await getattr(gcm, method_name)(*args)
+        return list(rows) if isinstance(rows, (list, tuple)) else []
+    except Exception as e:
+        logger.debug("GroupChatManager.%s skipped: %s", method_name, e)
+        return []
+
+
+async def _safe_apply_user_rules(
+    user_data_manager: Any,
+    timetable_manager: Any,
+    user_id: int,
+    group_name: str,
+    schedule_info: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if user_id < 0 or not schedule_info or schedule_info.get("error"):
+        return schedule_info
+    session_factory = getattr(user_data_manager, "async_session_maker", None)
+    if not session_factory:
+        return schedule_info
+    try:
+        from core.user_schedule_rules import UserScheduleRulesManager, apply_rules_to_lessons
+
+        redis_client = getattr(timetable_manager, "redis", None)
+        rules = await UserScheduleRulesManager(session_factory, redis_client).get_rules(user_id, group_name)
+        if not rules:
+            return schedule_info
+        updated = dict(schedule_info)
+        week_key = str(updated.get("week_key") or ("odd" if "Неч" in str(updated.get("week_name", "")) else "even"))
+        updated["lessons"] = apply_rules_to_lessons(
+            list(updated.get("lessons") or []),
+            rules,
+            day_name=str(updated.get("day_name") or ""),
+            week_key=week_key,
+        )
+        return updated
+    except Exception:
+        return schedule_info
+
+
+async def _fetch_window_weather(
+    weather_api: WeatherAPI,
+    target_dt: datetime,
+    lessons: list[dict[str, Any]],
+    lang: str,
+    cache: dict[tuple[int, int, str], dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    from core.summary_advisor import analyze_lessons_window
+
+    win = analyze_lessons_window(lessons)
+    start_h = int(win["start_hour"])
+    end_h = int(win["end_hour"])
+    key = (start_h // 3, end_h // 3, lang)
+    if key in cache:
+        return cache[key]
+    try:
+        if type(weather_api).__name__ == "WeatherAPI" and hasattr(weather_api, "get_day_weather_window"):
+            result = await weather_api.get_day_weather_window(
+                target_dt.date(),
+                start_hour=start_h,
+                end_hour=end_h,
+                lang=lang,
+            )
+        else:
+            fallback_dt = MOSCOW_TZ.localize(datetime.combine(target_dt.date(), time(start_h, 0)))
+            result = await weather_api.get_forecast_for_time(fallback_dt, lang=lang)
+    except Exception as e:
+        logger.warning(f"Weather forecast failed ({lang}, {start_h}-{end_h}): {e}")
+        result = None
+    cache[key] = result
+    return result
+
+
 async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager) -> None:
     timetable_manager = _resolve_manager(timetable_manager)
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
     logger.info(f"Начинаю постановку задач на вечернюю рассылку для даты {tomorrow.date().isoformat()}")
 
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
-    tomorrow_9am = MOSCOW_TZ.localize(datetime.combine(tomorrow.date(), time(9, 0)))
 
     now = datetime.now(MOSCOW_TZ)
     target_time = now.strftime("%H:%M")
-    users_to_notify = await user_data_manager.get_users_for_evening_notify(target_time=target_time)
-    if not users_to_notify:
+    users_to_notify = list(await user_data_manager.get_users_for_evening_notify(target_time=target_time) or [])
+    group_chats = await _safe_group_chat_rows(user_data_manager, "get_chats_for_evening", target_time)
+    targets = [*users_to_notify, *group_chats]
+    if not targets:
         logger.info(f"Вечерняя рассылка ({target_time}): нет пользователей для уведомления.")
         return
 
-    forecasts: dict[str, dict | None] = {}
-    for lang in {row[2] or "ru" for row in users_to_notify}:
-        try:
-            forecasts[lang] = await weather_api.get_forecast_for_time(tomorrow_9am, lang=lang)
-        except Exception as e:
-            logger.warning(f"Weather forecast failed for evening broadcast ({lang}): {e}")
-            forecasts[lang] = None
-    weather_forecast = forecasts.get("ru")
-
-    logger.info(f"Вечерняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
+    weather_cache: dict[tuple[int, int, str], dict[str, Any] | None] = {}
+    logger.info(f"Вечерняя рассылка ({target_time}): обработка {len(targets)} получателей")
     processed_count = 0
 
-    for user_id, group_name, lang, user_type in users_to_notify:
-        # user_type уже получен из базы в одном запросе
+    for user_id, group_name, lang, user_type in targets:
         if not user_type:
             user_type = "student"
 
-        # Генерируем intro с учетом типа пользователя и языка
-        user_forecast = forecasts.get(lang or "ru", weather_forecast)
-        intro_text = generate_evening_intro(user_forecast, target_date=tomorrow, user_type=user_type, lang=lang)
-
-        # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
             schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=tomorrow.date())
         else:
             schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=tomorrow.date())
 
-        has_lessons = bool(schedule_info and not schedule_info.get("error") and schedule_info.get("lessons"))
+        schedule_info = await _safe_apply_user_rules(user_data_manager, timetable_manager, user_id, group_name, schedule_info)
+        lessons = list((schedule_info or {}).get("lessons") or [])
+        has_lessons = bool(schedule_info and not schedule_info.get("error") and lessons)
 
-        # Форматируем расписание в зависимости от типа пользователя
-        if has_lessons:
+        user_forecast = await _fetch_window_weather(weather_api, tomorrow, lessons, lang or "ru", weather_cache)
+        intro_text = generate_evening_intro(
+            user_forecast,
+            target_date=tomorrow,
+            user_type=user_type,
+            lang=lang,
+            lessons=lessons if has_lessons else None,
+        )
+
+        if has_lessons and schedule_info:
             if user_type == "teacher":
-                schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
-                text_body = f"<b>{i18n.get('schedule_teacher_label', lang)}</b>\n\n{schedule_text}"  # TODO: Verify label usage or simply header
-                # Wait, "Ваше расписание на завтра:" is hardcoded above.
-                # I should replace "Ваше расписание на завтра:" with a localized string or just rely on the schedule header.
-                # Actually, looking at original code: text_body = f"<b>Ваше расписание на завтра:</b>\n\n{schedule_text}"
-                # I don't have a key for "Your schedule for tomorrow".
-                # I will use "day_context" or just a generic header if I have one.
-                # Let's add simple header or assume formatters handle it.
-                # Formatters return "Teacher Name\nDate..."
-                # The text_body wrapper: "Ваше расписание на завтра:" is extra.
-                # I will use a simple localized string or just remove it if redundant.
-                # Let's check existing locales. I don't have a specific key for this phrase.
-                # I'll use a hardcoded dict for now or add to i18n?
-                # Better to reuse existing mechanisms.
-                # I'll just use the schedule text directly or add a new key quickly?
-                # No, I should stick to what I have.
-                # I'll just remove the wrapper "Ваше расписание на завтра:" because `generate_evening_intro` + `schedule_text` (which has headers) is enough.
-                # Or I can use a generic "Here is schedule".
-                # Let's look at `evening_greetings_teacher`. It says "Informing about tomorrow schedule". So intro covers it.
-                text_body = schedule_text
+                text_body = format_teacher_schedule_text(schedule_info, lang=lang)
             else:
-                schedule_text = format_schedule_text(schedule_info, lang=lang)
-                text_body = schedule_text
+                text_body = format_schedule_text(schedule_info, lang=lang)
         else:
-            if user_type == "teacher":
-                text_body = i18n.get("fmt_no_lessons", lang)  # Using generic no lessons
-            else:
-                text_body = i18n.get("header_today_no_lessons", lang)  # Actually for tomorrow...
-                # "header_today_no_lessons" is "No lessons today".
-                # I need "No lessons tomorrow". I'll use "fmt_no_lessons" which is "No lessons!".
-                text_body = i18n.get("fmt_no_lessons", lang)
+            text_body = i18n.get("fmt_no_lessons", lang)
 
-        text = f"{intro_text}{text_body}{get_footer_with_promo(lang)}"
+        footer = (
+            "\n\n<tg-spoiler><i>Настроить рассылку чата: /group</i></tg-spoiler>"
+            if user_id < 0
+            else get_footer_with_promo(lang)
+        )
+        text = f"{intro_text}{text_body}{footer}"
 
         await asyncio.to_thread(send_message_task.send, user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
         processed_count += 1
 
-        # Периодически освобождаем event loop для обработки других событий
         if processed_count % 50 == 0:
             await asyncio.sleep(0)
-            logger.debug(f"Вечерняя рассылка: обработано {processed_count}/{len(users_to_notify)} пользователей")
+            logger.debug(f"Вечерняя рассылка: обработано {processed_count}/{len(targets)} получателей")
 
-    logger.info(f"Вечерняя рассылка: завершено. Обработано {processed_count} пользователей")
+    logger.info(f"Вечерняя рассылка: завершено. Обработано {processed_count} получателей")
 
 
 async def morning_summary_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager) -> None:
@@ -212,44 +267,41 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
     logger.info(f"Начинаю постановку задач на утреннюю рассылку для даты {today.date().isoformat()}")
 
     weather_api = WeatherAPI(OPENWEATHERMAP_API_KEY, OPENWEATHERMAP_CITY_ID, OPENWEATHERMAP_UNITS)
-    today_9am = MOSCOW_TZ.localize(datetime.combine(today.date(), time(9, 0)))
 
     now = datetime.now(MOSCOW_TZ)
     target_time = now.strftime("%H:%M")
-    users_to_notify = await user_data_manager.get_users_for_morning_summary(target_time=target_time)
-    if not users_to_notify:
+    users_to_notify = list(await user_data_manager.get_users_for_morning_summary(target_time=target_time) or [])
+    group_chats = await _safe_group_chat_rows(user_data_manager, "get_chats_for_morning", target_time)
+    targets = [*users_to_notify, *group_chats]
+    if not targets:
         logger.info(f"Утренняя рассылка ({target_time}): нет пользователей для уведомления.")
         return
 
-    forecasts: dict[str, dict | None] = {}
-    for lang in {row[2] or "ru" for row in users_to_notify}:
-        try:
-            forecasts[lang] = await weather_api.get_forecast_for_time(today_9am, lang=lang)
-        except Exception as e:
-            logger.warning(f"Weather forecast failed for morning broadcast ({lang}): {e}")
-            forecasts[lang] = None
-
-    logger.info(f"Утренняя рассылка ({target_time}): обработка {len(users_to_notify)} пользователей")
+    weather_cache: dict[tuple[int, int, str], dict[str, Any] | None] = {}
+    logger.info(f"Утренняя рассылка ({target_time}): обработка {len(targets)} получателей")
     processed_count = 0
 
-    for user_id, group_name, lang, user_type in users_to_notify:
-        # user_type уже получен из базы в одном запросе
+    for user_id, group_name, lang, user_type in targets:
         if not user_type:
             user_type = "student"
 
-        # Генерируем intro с учетом типа пользователя и языка
-        intro_text = generate_morning_intro(forecasts.get(lang or "ru"), user_type=user_type, lang=lang)
-
-        # Получаем расписание в зависимости от типа пользователя
         if user_type == "teacher":
             schedule_info = await timetable_manager.get_teacher_schedule(group_name, target_date=today.date())
         else:
             schedule_info = await timetable_manager.get_schedule_for_day(group_name, target_date=today.date())
 
+        schedule_info = await _safe_apply_user_rules(user_data_manager, timetable_manager, user_id, group_name, schedule_info)
+        lessons = list((schedule_info or {}).get("lessons") or [])
+        user_forecast = await _fetch_window_weather(weather_api, today, lessons, lang or "ru", weather_cache)
+        intro_text = generate_morning_intro(
+            user_forecast,
+            user_type=user_type,
+            lang=lang,
+            lessons=lessons or None,
+            target_date=today.date(),
+        )
+
         if schedule_info and not schedule_info.get("error"):
-            # Форматируем расписание в зависимости от типа пользователя.
-            # Форматтеры сами показывают «занятий нет», поэтому пустой день
-            # тоже отправляется — как в вечерней сводке.
             if user_type == "teacher":
                 schedule_text = format_teacher_schedule_text(schedule_info, lang=lang)
             else:
@@ -257,15 +309,19 @@ async def morning_summary_broadcast(user_data_manager: UserDataManager, timetabl
         else:
             schedule_text = i18n.get("fmt_no_lessons", lang)
 
-        text = f"{intro_text}\n{schedule_text}{get_footer_with_promo(lang)}"
+        footer = (
+            "\n\n<tg-spoiler><i>Настроить рассылку чата: /group</i></tg-spoiler>"
+            if user_id < 0
+            else get_footer_with_promo(lang)
+        )
+        text = f"{intro_text}\n{schedule_text}{footer}"
         await asyncio.to_thread(send_message_task.send, user_id, text)
         TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
         processed_count += 1
 
-        # Периодически освобождаем event loop для обработки других событий
         if processed_count % 50 == 0:
             await asyncio.sleep(0)
-            logger.debug(f"Утренняя рассылка: обработано {processed_count}/{len(users_to_notify)} пользователей")
+            logger.debug(f"Утренняя рассылка: обработано {processed_count}/{len(targets)} получателей")
 
     logger.info(f"Утренняя рассылка: завершено. Отправлено сообщений: {processed_count}")
 
@@ -293,12 +349,16 @@ async def minutely_reminders_checker(
             # Старые/мок-реализации могут не поддерживать расширенный метод.
             users = await user_data_manager.get_users_for_lesson_reminders()
         if not users:
+            users = []
+        group_chats = await _safe_group_chat_rows(user_data_manager, "get_chats_for_reminders")
+        all_targets = [*users, *group_chats]
+        if not all_targets:
             return
 
         # Группируем по (цель, тип), чтобы преподаватель и группа с одинаковым
         # именем не смешивались, а расписание считалось один раз на цель.
         groups_users: dict[tuple[str, str], list[tuple[int, int, str]]] = {}
-        for row in users:
+        for row in all_targets:
             user_id, group_name, reminder_time, lang, *rest = row
             user_type = rest[0] if rest else "student"
             if group_name:
@@ -646,12 +706,16 @@ async def send_schedule_diff_notifications(
         if not users_with_groups:
             users_with_groups = await user_data_manager.get_all_users_with_groups()
         if not users_with_groups:
+            users_with_groups = []
+        group_chats = await _safe_group_chat_rows(user_data_manager, "get_chats_for_diff")
+        all_diff_targets = [*users_with_groups, *group_chats]
+        if not all_diff_targets:
             logger.info("Нет пользователей для отправки дифф-уведомлений")
             return set()
 
         # Группируем по (группа, язык), чтобы отправить локализованный текст.
         groups_to_users: dict[tuple[str, str], list[int]] = {}
-        for row in users_with_groups:
+        for row in all_diff_targets:
             user_id, group_name, *rest = row
             lang = rest[0] if rest else "ru"
             if group_name:

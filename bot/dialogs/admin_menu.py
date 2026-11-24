@@ -3,6 +3,7 @@ import html
 import logging
 import os
 import random
+import re
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -10,7 +11,15 @@ from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ContentType,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
@@ -852,31 +861,93 @@ _BROADCAST_PREVIEW_METHODS = {
 }
 
 _BROADCAST_NO_CAPTION_KINDS = {"sticker", "video_note"}
+_URL_BTN_RE = re.compile(r"^\[([^|\]]+)\|\s*(https?://[^\s\]]+)\]\s*$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _plain_text_len(html_text: str) -> int:
+    if not html_text:
+        return 0
+    return len(html.unescape(_HTML_TAG_RE.sub("", html_text)))
+
+
+def _extract_rich_text(message: Message, *, is_caption: bool) -> str:
+    raw = (message.caption if is_caption else message.text) or ""
+    entities = getattr(message, "caption_entities" if is_caption else "entities", None)
+    if isinstance(entities, (list, tuple)) and len(entities) > 0:
+        html_val = getattr(message, "html_text", None)
+        if isinstance(html_val, str) and html_val:
+            return html_val
+    return raw
+
+
+def _split_inline_url_button(raw_text: str) -> tuple[str, dict[str, str] | None]:
+    if not raw_text:
+        return "", None
+    lines = raw_text.rstrip().splitlines()
+    if not lines:
+        return raw_text, None
+    match = _URL_BTN_RE.match(lines[-1].strip())
+    if not match:
+        return raw_text, None
+    body = "\n".join(lines[:-1]).rstrip()
+    return body, {"text": match.group(1).strip(), "url": match.group(2).strip()}
+
+
+def _build_broadcast_markup(button_data: dict[str, str] | None) -> InlineKeyboardMarkup | None:
+    if not button_data or not button_data.get("text") or not button_data.get("url"):
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=button_data["text"], url=button_data["url"])]])
+
+
+def _markup_json(button_data: dict[str, str] | None) -> str | None:
+    markup = _build_broadcast_markup(button_data)
+    return markup.model_dump_json() if markup else None
 
 
 def extract_broadcast_payload(message: Message) -> dict[str, Any]:
-    """Сериализует сообщение админа для повторной HTML-отправки, а не copy_message."""
-    caption = message.caption or ""
+    """Сериализует сообщение админа для повторной HTML-отправки с поддержкой длинных подписей и URL-кнопки."""
     content_type = message.content_type
     if content_type == ContentType.TEXT:
-        return {"kind": "text", "text": message.text or ""}
+        rich_text = _extract_rich_text(message, is_caption=False)
+        body, btn = _split_inline_url_button(rich_text)
+        payload: dict[str, Any] = {"kind": "text", "text": body}
+        if btn:
+            payload["button"] = btn
+        return payload
+
+    rich_caption = _extract_rich_text(message, is_caption=True)
+    caption, btn = _split_inline_url_button(rich_caption)
+    followup_text = ""
+    if caption and _plain_text_len(caption) > 1024:
+        followup_text = caption
+        caption = ""
+
+    def _media_payload(kind: str, file_id: str) -> dict[str, Any]:
+        res: dict[str, Any] = {"kind": kind, "file_id": file_id, "caption": caption}
+        if followup_text:
+            res["followup_text"] = followup_text
+        if btn:
+            res["button"] = btn
+        return res
+
     if content_type == ContentType.PHOTO and message.photo:
-        return {"kind": "photo", "file_id": message.photo[-1].file_id, "caption": caption}
+        return _media_payload("photo", message.photo[-1].file_id)
     video = message.video
     if content_type == ContentType.VIDEO and video:
-        return {"kind": "video", "file_id": video.file_id, "caption": caption}
+        return _media_payload("video", video.file_id)
     animation = message.animation
     if content_type == ContentType.ANIMATION and animation:
-        return {"kind": "animation", "file_id": animation.file_id, "caption": caption}
+        return _media_payload("animation", animation.file_id)
     document = message.document
     if content_type == ContentType.DOCUMENT and document:
-        return {"kind": "document", "file_id": document.file_id, "caption": caption}
+        return _media_payload("document", document.file_id)
     audio = message.audio
     if content_type == ContentType.AUDIO and audio:
-        return {"kind": "audio", "file_id": audio.file_id, "caption": caption}
+        return _media_payload("audio", audio.file_id)
     voice = message.voice
     if content_type == ContentType.VOICE and voice:
-        return {"kind": "voice", "file_id": voice.file_id, "caption": caption}
+        return _media_payload("voice", voice.file_id)
     video_note = message.video_note
     if content_type == ContentType.VIDEO_NOTE and video_note:
         return {"kind": "video_note", "file_id": video_note.file_id}
@@ -891,10 +962,14 @@ def extract_broadcast_payload(message: Message) -> dict[str, Any]:
 
 
 async def send_broadcast_preview(message: Message, payload: dict[str, Any]) -> None:
-    """Показывает админу, как Telegram разберёт HTML, до подтверждения."""
+    """Показывает админу, как Telegram разберёт HTML, кнопку и перенос длинной подписи, до подтверждения."""
     kind = payload.get("kind")
+    markup = _build_broadcast_markup(payload.get("button"))
     if kind == "text":
-        await message.reply(payload.get("text") or "(пусто)", parse_mode="HTML")
+        kwargs_text: dict[str, Any] = {"parse_mode": "HTML"}
+        if markup:
+            kwargs_text["reply_markup"] = markup
+        await message.reply(payload.get("text") or "(пусто)", **kwargs_text)
         return
     if kind == "copy":
         await message.reply("📎 Это сообщение будет скопировано как есть. HTML-теги в нём не разберутся.")
@@ -909,10 +984,22 @@ async def send_broadcast_preview(message: Message, payload: dict[str, Any]) -> N
         await method(file_id)
         return
     caption = payload.get("caption") or ""
+    followup_text = payload.get("followup_text") or ""
     kwargs: dict[str, Any] = {"parse_mode": "HTML"}
     if caption:
         kwargs["caption"] = caption
+    if markup and not followup_text:
+        kwargs["reply_markup"] = markup
     await method(file_id, **kwargs)
+    if followup_text:
+        follow_kwargs: dict[str, Any] = {"parse_mode": "HTML"}
+        if markup:
+            follow_kwargs["reply_markup"] = markup
+        await message.answer(followup_text, **follow_kwargs)
+        await message.answer(
+            "ℹ️ <i>Подпись длиннее 1024 символов — бот автоматически отправит медиа и следом полный HTML-текст.</i>",
+            parse_mode="HTML",
+        )
 
 
 def _parse_broadcast_handler_args(*args, **kwargs):
@@ -927,12 +1014,14 @@ _BROADCAST_TARGET_LABELS: dict[str, str] = {
     "all": "Всем пользователям",
     "student": "Только студентам (группам)",
     "teacher": "Только преподавателям",
+    "groups": "Групповым чатам (беседам)",
 }
 
 _BROADCAST_TARGET_BY_WIDGET: dict[str, str] = {
     "go_broadcast_all": "all",
     "go_broadcast_students": "student",
     "go_broadcast_teachers": "teacher",
+    "go_broadcast_groups": "groups",
 }
 
 
@@ -949,7 +1038,12 @@ async def on_broadcast_received(*args, **kwargs):
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = extract_broadcast_payload(message)
     target = manager.dialog_data.get("broadcast_target", "all")
-    if target in ("student", "teacher"):
+    if target == "groups":
+        from core.group_chat_manager import GroupChatManager
+
+        gcm = GroupChatManager(user_data_manager.async_session_maker)
+        all_users = await gcm.get_active_chat_ids()
+    elif target in ("student", "teacher"):
         all_users = await user_data_manager.get_segment_user_ids(user_type=target)
     else:
         all_users = await user_data_manager.get_all_user_ids()
@@ -959,12 +1053,23 @@ async def on_broadcast_received(*args, **kwargs):
     try:
         await send_broadcast_preview(message, payload)
     except TelegramBadRequest as e:
+        err_text = str(e)
+        lower_err = err_text.lower()
+        if "too long" in lower_err:
+            prefix = "❌ Telegram отклонил сообщение. Никому не отправлено."
+            hint = "Превышен лимит длины Telegram (4096 символов для текста)."
+        elif "url" in lower_err or "button" in lower_err:
+            prefix = "❌ Telegram отклонил сообщение. Никому не отправлено."
+            hint = "Некорректная ссылка в кнопке. Формат: <code>[Текст | https://example.com]</code>."
+        else:
+            prefix = "❌ Telegram не разобрал HTML. Сообщение никому не отправлено."
+            hint = (
+                "Проверьте HTML-теги. Допустимы: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
+                "<code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, "
+                '<code>&lt;pre&gt;</code>, <code>&lt;a href="https://..."&gt;</code>.'
+            )
         await message.reply(
-            "❌ Telegram не разобрал HTML. Сообщение никому не отправлено.\n"
-            f"<code>{html.escape(str(e))}</code>\n\n"
-            "Допустимы теги: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
-            "<code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, "
-            '<code>&lt;pre&gt;</code>, <code>&lt;a href="https://..."&gt;</code>.',
+            f"{prefix}\n<code>{html.escape(err_text)}</code>\n\n{hint}",
             parse_mode="HTML",
         )
         return
@@ -974,6 +1079,31 @@ async def on_broadcast_received(*args, **kwargs):
         return
 
     await manager.switch_to(Admin.confirm_send)
+
+
+async def on_test_broadcast_self(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    """Отправляет превью-тест текущей рассылки в личку самому администратору."""
+    payload = manager.dialog_data.get("broadcast_payload") or {}
+    if not payload or not callback.from_user:
+        await callback.answer("Нет данных рассылки", show_alert=True)
+        return
+    markup_json = _markup_json(payload.get("button"))
+    kind = payload.get("kind")
+    uid = callback.from_user.id
+    if kind == "text":
+        send_message_task.send(uid, payload.get("text") or "", markup_json)
+    elif kind == "copy" and payload.get("from_chat_id") and payload.get("message_id"):
+        copy_message_task.send(uid, payload["from_chat_id"], payload["message_id"])
+    elif payload.get("file_id"):
+        send_media_task.send(
+            uid,
+            str(kind or ""),
+            str(payload["file_id"]),
+            payload.get("caption") or "",
+            payload.get("followup_text") or "",
+            markup_json,
+        )
+    await callback.answer("🧪 Тест поставлен в очередь — придёт в личку!")
 
 
 async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
@@ -994,6 +1124,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
     udm: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = manager.dialog_data.get("broadcast_payload") or {}
     user_ids = manager.dialog_data.get("broadcast_user_ids") or []
+    target = manager.dialog_data.get("broadcast_target") or "all"
 
     if not payload:
         await callback.answer("Нет данных рассылки", show_alert=True)
@@ -1001,6 +1132,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
         return
 
     await callback.answer("🚀 Рассылка поставлена в очередь...")
+    markup_json = _markup_json(payload.get("button"))
 
     async def _process_broadcast():
         sent_count = 0
@@ -1009,11 +1141,17 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
             if kind == "text":
                 template = payload.get("text") or ""
                 for user_id in user_ids:
-                    user_info = await udm.get_full_user_info(user_id)
-                    if not user_info:
-                        continue
-                    text = render_template(template, user_info)
-                    send_message_task.send(user_id, text)
+                    if target == "groups":
+                        text = template
+                    else:
+                        user_info = await udm.get_full_user_info(user_id)
+                        if not user_info:
+                            continue
+                        text = render_template(template, user_info)
+                    if markup_json:
+                        send_message_task.send(user_id, text, markup_json)
+                    else:
+                        send_message_task.send(user_id, text)
                     TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
                     sent_count += 1
                     if sent_count % 50 == 0:
@@ -1031,15 +1169,23 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
             else:
                 file_id = payload.get("file_id")
                 caption_template = payload.get("caption") or ""
+                followup_template = payload.get("followup_text") or ""
                 media_kind = str(kind or "")
                 if file_id:
                     for user_id in user_ids:
                         caption = caption_template
-                        if caption:
+                        followup = followup_template
+                        if target != "groups" and (caption or followup):
                             user_info = await udm.get_full_user_info(user_id)
                             if user_info:
-                                caption = render_template(caption, user_info)
-                        send_media_task.send(user_id, media_kind, str(file_id), caption)
+                                if caption:
+                                    caption = render_template(caption, user_info)
+                                if followup:
+                                    followup = render_template(followup, user_info)
+                        if followup or markup_json:
+                            send_media_task.send(user_id, media_kind, str(file_id), caption, followup, markup_json)
+                        else:
+                            send_media_task.send(user_id, media_kind, str(file_id), caption)
                         TASKS_SENT_TO_QUEUE.labels(actor_name="send_media_task").inc()
                         sent_count += 1
                         if sent_count % 50 == 0:
@@ -1324,6 +1470,7 @@ admin_dialog = Dialog(
         Button(Const("📣 Всем пользователям"), id="go_broadcast_all", on_click=on_broadcast_target_selected),
         Button(Const("🎓 Только студентам (группам)"), id="go_broadcast_students", on_click=on_broadcast_target_selected),
         Button(Const("🧑‍🏫 Только преподавателям"), id="go_broadcast_teachers", on_click=on_broadcast_target_selected),
+        Button(Const("👥 Групповым чатам (беседам)"), id="go_broadcast_groups", on_click=on_broadcast_target_selected),
         SwitchTo(Const("🎯 Сегментированная"), id="go_segment", state=Admin.segment_menu),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_broadcasts", state=Admin.menu),
         state=Admin.broadcast_menu,
@@ -1439,9 +1586,10 @@ admin_dialog = Dialog(
     Window(
         Const(
             "Введите сообщение для рассылки: текст, фото, видео или документ.\n\n"
-            "Текст и подписи уходят как Telegram HTML: "
-            "<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, "
-            '<code>&lt;a href="https://..."&gt;</code>.\n'
+            "Текст и подписи уходят как Telegram HTML (при пересылке сохраняется форматирование!).\n"
+            "Подпись &gt; 1024 символов для медиа автоматически уйдёт отдельным текстом следом.\n"
+            "Опционально последней строкой добавьте кнопку-ссылку:\n"
+            "<code>[Открыть | https://t.me/bstu_timetable_bot]</code>\n"
             "Плейсхолдеры: {user_id}, {username}, {group}.\n\n"
             "Перед отправкой будет превью и подтверждение."
         ),
@@ -1457,12 +1605,17 @@ admin_dialog = Dialog(
             "Тип: {kind_label}\n"
             "Получателей: <b>{recipient_count}</b>\n\n"
             "Превью уже отправлено сообщением выше — так это увидят пользователи.\n"
-            "Если HTML выглядит правильно, нажмите «Отправить»."
+            "Если всё выглядит правильно, нажмите «Отправить»."
         ),
         Button(
             Const("✅ Отправить"),
             id="confirm_broadcast_send",
             on_click=on_confirm_broadcast_send,
+        ),
+        Button(
+            Const("🧪 Отправить тест себе"),
+            id="test_broadcast_self",
+            on_click=on_test_broadcast_self,
         ),
         SwitchTo(Const("❌ Отмена"), id="cancel_broadcast_send", state=Admin.broadcast_menu),
         getter=get_broadcast_confirm_data,

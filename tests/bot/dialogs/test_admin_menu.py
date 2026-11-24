@@ -1773,3 +1773,136 @@ class TestCacheAndGeneration:
         active_generations.pop(323, None)
         await on_cancel_generation(cb)
         assert "Нет активной генерации" in cb.answer.await_args[0][0]
+
+    async def test_broadcast_rich_html_buttons_followup_self_test_and_groups(self):
+        from aiogram.types import MessageEntity
+
+        from bot.dialogs.admin_menu import (
+            _build_broadcast_markup,
+            _extract_rich_text,
+            _plain_text_len,
+            _split_inline_url_button,
+            on_broadcast_target_selected,
+            on_test_broadcast_self,
+        )
+
+        assert _plain_text_len("") == 0
+        assert _split_inline_url_button("") == ("", None)
+        assert _split_inline_url_button("   \n") == ("   \n", None)
+        assert _build_broadcast_markup(None) is None
+
+        # Entities + html_text (and fallback when html_text is None) + trailing URL button
+        msg = MagicMock()
+        msg.content_type = ContentType.TEXT
+        msg.text = "Привет\n[Сайт | https://example.com]"
+        msg.entities = [MessageEntity(type="bold", offset=0, length=6)]
+        msg.html_text = "<b>Привет</b>\n[Сайт | https://example.com]"
+        assert _extract_rich_text(msg, is_caption=False) == msg.html_text
+        msg_no_html = MagicMock(text="raw", entities=[MessageEntity(type="bold", offset=0, length=3)], html_text=None)
+        assert _extract_rich_text(msg_no_html, is_caption=False) == "raw"
+        payload = extract_broadcast_payload(msg)
+        assert payload["text"] == "<b>Привет</b>"
+        assert payload["button"] == {"text": "Сайт", "url": "https://example.com"}
+
+        # Long caption (>1024 chars) -> followup_text
+        long_msg = MagicMock()
+        long_msg.content_type = ContentType.PHOTO
+        long_msg.photo = [MagicMock(file_id="ph1")]
+        long_msg.caption = "A" * 1030 + "\n[Go | https://example.com]"
+        long_msg.caption_entities = None
+        long_payload = extract_broadcast_payload(long_msg)
+        assert long_payload["caption"] == ""
+        assert len(long_payload["followup_text"]) == 1030
+        assert long_payload["button"] == {"text": "Go", "url": "https://example.com"}
+
+        # send_broadcast_preview with button & followup_text
+        preview_msg = MagicMock()
+        preview_msg.content_type = ContentType.TEXT
+        preview_msg.text = "Hello"
+        preview_msg.entities = None
+        preview_msg.reply = AsyncMock()
+        preview_msg.answer_photo = AsyncMock()
+        preview_msg.answer = AsyncMock()
+        await send_broadcast_preview(preview_msg, payload)
+        assert "reply_markup" in preview_msg.reply.call_args.kwargs
+        await send_broadcast_preview(preview_msg, long_payload)
+        assert preview_msg.answer.await_count == 2
+        await send_broadcast_preview(preview_msg, {"kind": "photo", "file_id": "p1", "caption": "", "followup_text": "F"})
+        short_photo = {
+            "kind": "photo",
+            "file_id": "p1",
+            "caption": "Cap",
+            "button": {"text": "B", "url": "https://x.com"},
+        }
+        await send_broadcast_preview(preview_msg, short_photo)
+        assert "reply_markup" in preview_msg.answer_photo.call_args.kwargs
+
+        # Targeted TelegramBadRequest hints via on_broadcast_received
+        for err_str in ("message is too long", "BUTTON_URL_INVALID"):
+            bad_msg = MagicMock(content_type=ContentType.TEXT, text="Hi", entities=None)
+            bad_msg.reply = AsyncMock(side_effect=[TelegramBadRequest(method=MagicMock(), message=err_str), None])
+            mgr_err = make_manager({"user_data_manager": make_udm()})
+            await on_broadcast_received(bad_msg, MagicMock(), mgr_err)
+            assert bad_msg.reply.await_count == 2
+
+        # on_test_broadcast_self: empty, text, copy, media
+        cb = make_callback(user_id=101)
+        await on_test_broadcast_self(cb, MagicMock(), make_manager(dialog_data={}))
+        with (
+            patch("bot.dialogs.admin_menu.send_message_task") as m_msg,
+            patch("bot.dialogs.admin_menu.copy_message_task") as m_copy,
+            patch("bot.dialogs.admin_menu.send_media_task") as m_media,
+        ):
+            await on_test_broadcast_self(cb, MagicMock(), make_manager(dialog_data={"broadcast_payload": payload}))
+            m_msg.send.assert_called_once()
+            await on_test_broadcast_self(
+                cb,
+                MagicMock(),
+                make_manager(dialog_data={"broadcast_payload": {"kind": "copy", "from_chat_id": 1, "message_id": 2}}),
+            )
+            m_copy.send.assert_called_once()
+            await on_test_broadcast_self(cb, MagicMock(), make_manager(dialog_data={"broadcast_payload": long_payload}))
+            m_media.send.assert_called_once()
+            await on_test_broadcast_self(cb, MagicMock(), make_manager(dialog_data={"broadcast_payload": {"kind": "photo"}}))
+
+        # on_broadcast_target_selected(..., "groups") + on_broadcast_received + on_confirm_broadcast_send
+        fake_udm = MagicMock(async_session_maker=MagicMock())
+        fake_udm.get_full_user_info = AsyncMock(return_value=make_user_info())
+        fake_gcm = MagicMock()
+        fake_gcm.get_active_chat_ids = AsyncMock(return_value=[-1001, -1002])
+        mgr_grp = make_manager(middleware={"user_data_manager": fake_udm})
+        await on_broadcast_target_selected(cb, MagicMock(widget_id="go_broadcast_groups"), mgr_grp)
+        assert mgr_grp.dialog_data["broadcast_target"] == "groups"
+        msg.reply = AsyncMock()
+        with patch("core.group_chat_manager.GroupChatManager", return_value=fake_gcm):
+            await on_broadcast_received(msg, MagicMock(), mgr_grp)
+            assert mgr_grp.dialog_data["broadcast_user_ids"] == [-1001, -1002]
+
+        bot = MagicMock(send_message=AsyncMock())
+        with (
+            patch("bot.dialogs.admin_menu.send_message_task") as m_msg,
+            patch("bot.dialogs.admin_menu.send_media_task") as m_media,
+        ):
+            mgr_send_grp = make_manager(
+                {"bot": bot, "user_data_manager": fake_udm},
+                dialog_data={
+                    "broadcast_target": "groups",
+                    "broadcast_payload": payload,
+                    "broadcast_user_ids": [-1001],
+                },
+            )
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr_send_grp)
+            await drain_background_tasks()
+            m_msg.send.assert_called_once()
+
+            mgr_send_follow = make_manager(
+                {"bot": bot, "user_data_manager": fake_udm},
+                dialog_data={
+                    "broadcast_target": "all",
+                    "broadcast_payload": long_payload,
+                    "broadcast_user_ids": [42],
+                },
+            )
+            await on_confirm_broadcast_send(cb, MagicMock(), mgr_send_follow)
+            await drain_background_tasks()
+            m_media.send.assert_called_once()

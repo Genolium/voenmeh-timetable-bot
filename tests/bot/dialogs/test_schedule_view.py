@@ -300,3 +300,158 @@ class TestScheduleViewHandlers:
 
         mock_callback.message.delete.assert_called()
         mock_callback.answer.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_customize_schedule_dialog_and_rules_flow(self, mock_callback, mock_manager):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from bot.dialogs.schedule_view import (
+            _collect_group_subjects,
+            _rules_manager_from,
+            get_customize_data,
+            on_custom_lesson_input,
+            on_custom_note_input,
+            on_customize_click,
+            on_reset_custom_rules,
+            on_toggle_hide_subject,
+        )
+        from bot.dialogs.states import Schedule
+
+        await on_customize_click(mock_callback, MagicMock(), mock_manager)
+        mock_manager.switch_to.assert_awaited_with(Schedule.customize)
+
+        # _rules_manager_from None when no session_maker
+        mock_manager.middleware_data = {"user_data_manager": MagicMock(async_session_maker=None)}
+        assert _rules_manager_from(mock_manager) is None
+
+        fake_udm = MagicMock(async_session_maker=MagicMock())
+        fake_tm = MagicMock(
+            redis=None,
+            _schedules={
+                "О735Б": {
+                    "odd": {
+                        "Понедельник": [
+                            {"subject": "Физика", "start_time_raw": "09:00"},
+                            {"subject": "Физика", "start_time_raw": "10:50"},
+                        ]
+                    }
+                }
+            },
+        )
+        mock_manager.middleware_data = {"user_data_manager": fake_udm, "manager": fake_tm}
+        assert _rules_manager_from(mock_manager) is not None
+        mock_manager.event = SimpleNamespace(from_user=SimpleNamespace(id=77))
+        ctx = mock_manager.current_context()
+        ctx.dialog_data["group"] = "О735Б"
+        ctx.dialog_data["is_group_target"] = True
+
+        assert _collect_group_subjects(fake_tm, "О735Б", True) == ["Физика"]
+
+        sample_rules = [
+            {"rule_type": "hide_subject", "subject": "Физика"},
+            {"rule_type": "note", "subject": "Физика", "payload": {"note": "КР"}},
+            {"rule_type": "custom_lesson", "subject": "Спорт", "day_name": "Понедельник", "start_time": "08:00"},
+            {"rule_type": "unknown", "subject": "X"},
+        ]
+        fake_rules_mgr = MagicMock()
+        fake_rules_mgr.get_rules = AsyncMock(return_value=sample_rules)
+        fake_rules_mgr.toggle_hide_subject = AsyncMock(return_value=True)
+        fake_rules_mgr.clear_rules = AsyncMock(return_value=3)
+        fake_rules_mgr.add_note = AsyncMock(return_value=1)
+        fake_rules_mgr.add_custom_lesson = AsyncMock(return_value=2)
+
+        with patch("bot.dialogs.schedule_view._rules_manager_from", return_value=fake_rules_mgr):
+            data = await get_customize_data(mock_manager)
+            assert data["has_rules"] is True
+            assert len(data["subjects"]) == 1
+
+            fake_rules_mgr.get_rules = AsyncMock(return_value=[])
+            data_empty = await get_customize_data(mock_manager)
+            assert data_empty["has_rules"] is False
+            fake_rules_mgr.get_rules = AsyncMock(return_value=sample_rules)
+
+            # toggle hide subject: valid and invalid index
+            await on_toggle_hide_subject(mock_callback, MagicMock(), mock_manager, "0")
+            mock_callback.answer.assert_awaited()
+            await on_toggle_hide_subject(mock_callback, MagicMock(), mock_manager, "99")
+            assert "не найден" in mock_callback.answer.call_args[0][0]
+
+            # reset
+            await on_reset_custom_rules(mock_callback, MagicMock(), mock_manager)
+            assert "Сброшено" in mock_callback.answer.call_args[0][0]
+
+            # note input: bad format, empty parts, valid
+            msg = MagicMock(from_user=SimpleNamespace(id=77), text="no pipe")
+            msg.reply = AsyncMock()
+            await on_custom_note_input(msg, MagicMock(), mock_manager)
+            msg.text = " | "
+            await on_custom_note_input(msg, MagicMock(), mock_manager)
+            msg.text = "Физ | Лаба"
+            await on_custom_note_input(msg, MagicMock(), mock_manager)
+            fake_rules_mgr.add_note.assert_awaited_once()
+
+            # custom lesson input: short, bad day, no dash, bad time, odd/even, valid
+            for bad_txt in ("Пн | 09:00", "Хз | 09:00-10:30 | Пара", "Пн | 09:00 | Пара", "Пн | xx:yy-10:30 | Пара"):
+                msg.text = bad_txt
+                await on_custom_lesson_input(msg, MagicMock(), mock_manager)
+            msg.text = "Пн | 08:00-09:30 | Спорт | Зал | нечет"
+            await on_custom_lesson_input(msg, MagicMock(), mock_manager)
+            msg.text = "Вт | 08:00-09:30 | Спорт | Зал | чет"
+            await on_custom_lesson_input(msg, MagicMock(), mock_manager)
+            assert fake_rules_mgr.add_custom_lesson.await_count == 2
+
+        # Missing rules manager branches
+        with patch("bot.dialogs.schedule_view._rules_manager_from", return_value=None):
+            await on_toggle_hide_subject(mock_callback, MagicMock(), mock_manager, "0")
+            await on_reset_custom_rules(mock_callback, MagicMock(), mock_manager)
+            msg.text = "Физ | Лаба"
+            await on_custom_note_input(msg, MagicMock(), mock_manager)
+            msg.text = "Пн | 08:00-09:30 | Спорт"
+            await on_custom_lesson_input(msg, MagicMock(), mock_manager)
+
+        # Active user_rules applied across schedule_view entrypoints
+        ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = "2024-01-15"
+        ctx.dialog_data["is_group_target"] = True
+        fake_tm.get_schedule_for_day = AsyncMock(
+            return_value={
+                "date": date(2024, 1, 15),
+                "day_name": "Понедельник",
+                "week_name": "Нечётная неделя",
+                "lessons": [{"subject": "Физика", "start_time_raw": "09:00", "time": "09:00-10:30"}],
+            }
+        )
+        fake_tm.get_academic_week_type = AsyncMock(return_value=("odd", "Нечётная неделя"))
+        fake_tm.get_semester_info_for = AsyncMock(return_value={})
+        fake_tm.redis = AsyncMock()
+        fake_tm.redis.get = AsyncMock(return_value=None)
+        fake_tm.redis.set = AsyncMock(return_value=True)
+        fake_udm.get_user_language = AsyncMock(return_value="ru")
+        fake_udm.get_user_theme = AsyncMock(return_value="standard")
+        mock_callback.message = MagicMock()
+        mock_callback.message.answer = AsyncMock()
+        mock_callback.message.answer_document = AsyncMock()
+
+        from bot.dialogs.schedule_view import (
+            on_export_ics_click,
+            on_send_original_file,
+            on_text_week_click,
+        )
+
+        with (
+            patch("bot.dialogs.schedule_view._get_user_rules_for_target", AsyncMock(return_value=sample_rules)),
+            patch("core.image_service.ImageService") as m_img_svc,
+            patch("core.image_cache_manager.ImageCacheManager"),
+            patch("core.subscription_filter.is_user_subscribed", AsyncMock(return_value=True)),
+            patch("bot.dialogs.schedule_view.generate_schedule_ics", return_value=b"BEGIN:VCALENDAR"),
+        ):
+            m_img_svc.return_value.get_or_generate_week_image = AsyncMock(return_value=(True, "/tmp/x.png"))
+            sched_res = await get_schedule_data(mock_manager)
+            assert sched_res["has_lessons"] is True
+
+            await get_week_image_data(mock_manager)
+            assert m_img_svc.return_value.get_or_generate_week_image.call_args.kwargs["rules_hash"]
+
+            await on_send_original_file(mock_callback, MagicMock(), mock_manager)
+            await on_text_week_click(mock_callback, MagicMock(), mock_manager)
+            await on_export_ics_click(mock_callback, MagicMock(), mock_manager)

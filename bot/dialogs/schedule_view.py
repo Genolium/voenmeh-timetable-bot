@@ -14,12 +14,14 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
+    Message,
 )
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
-from aiogram_dialog.widgets.kbd import Button, Column, Row, SwitchTo, Url
+from aiogram_dialog.widgets.input import MessageInput
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo, Url
 from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.media import StaticMedia
-from aiogram_dialog.widgets.text import Const, Format
+from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.text_formatters import (
     format_full_week_text,
@@ -41,6 +43,12 @@ from core.image_cache_manager import ImageCacheManager
 from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
 from core.metrics import GROUP_POPULARITY, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME, USER_ACTIVITY_DAILY
+from core.user_schedule_rules import (
+    UserScheduleRulesManager,
+    apply_rules_to_lessons,
+    apply_rules_to_weeks,
+    rules_fingerprint,
+)
 
 from .constants import DialogDataKeys, WidgetIds
 from .states import About, Feedback, FindMenu, MainMenu, Schedule, SettingsMenu
@@ -169,6 +177,28 @@ async def get_cache_info():
             pass
 
 
+async def _get_user_rules_for_target(manager: DialogManager, user_id: int | None, group: str) -> list[dict[str, Any]]:
+    """Загружает персональные правила только если пользователь смотрит свою сохранённую группу/профиль."""
+    if not user_id or not group or group == "N/A":
+        return []
+    udm: Any = manager.middleware_data.get("user_data_manager")
+    session_factory = getattr(udm, "async_session_maker", None) if udm else None
+    if not session_factory:
+        return []
+    try:
+        saved_group = await udm.get_user_group(user_id)
+    except Exception:
+        return []
+    if not saved_group or str(saved_group).upper() != str(group).upper():
+        return []
+    redis_client = getattr(manager.middleware_data.get("manager"), "redis", None)
+    try:
+        rules_mgr = UserScheduleRulesManager(session_factory, redis_client)
+        return await rules_mgr.get_rules(user_id, str(group))
+    except Exception:
+        return []
+
+
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     manager: TimetableManager = dialog_manager.middleware_data.get("manager")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
@@ -231,6 +261,19 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
                     pass
         day_info = await manager.get_teacher_schedule(group, target_date=current_date) or {}
         render_as_teacher = True
+
+    # Персональные правила (скрытие предметов, заметки, свои пары) для своей группы
+    user_rules = await _get_user_rules_for_target(dialog_manager, user_id, str(group))
+    if user_rules and isinstance(day_info, dict) and "error" not in day_info:
+        day_name = str(day_info.get("day_name") or "")
+        week_key_day = str(day_info.get("week_key") or ("odd" if "Неч" in str(day_info.get("week_name", "")) else "even"))
+        day_info = dict(day_info)
+        day_info["lessons"] = apply_rules_to_lessons(
+            list(day_info.get("lessons") or []),
+            user_rules,
+            day_name=day_name,
+            week_key=week_key_day,
+        )
 
     # Метрики активности и популярности
     try:
@@ -312,6 +355,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_feedback": _("btn_feedback"),
         "btn_text_week": _("btn_text_week"),
         "btn_export_ics": _("btn_export_ics"),
+        "btn_customize": _("btn_customize"),
         "btn_back": _("btn_back"),
         "more_title": _("more_title"),
     }
@@ -473,6 +517,11 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     except Exception:
         user_theme = None
 
+    user_rules = await _get_user_rules_for_target(dialog_manager, user_id, str(group))
+    rules_hash = rules_fingerprint(user_rules)
+    if user_rules:
+        week_schedule = apply_rules_to_weeks({week_key: week_schedule}, user_rules).get(week_key, week_schedule)
+
     success, file_path = await image_service.get_or_generate_week_image(
         group=group,
         week_key=week_key,
@@ -483,6 +532,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> d
         placeholder_msg_id=placeholder_msg_id,
         final_caption=final_caption,
         lang=lang,
+        rules_hash=rules_hash,
     )
 
     if not success:
@@ -581,6 +631,10 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
         cache_key = f"{safe_group}_{week_key}_{user_theme_for_original}_{lang}"
     else:
         cache_key = f"{safe_group}_{week_key}_{lang}"
+    orig_rules = await _get_user_rules_for_target(manager, callback.from_user.id if callback.from_user else None, str(group))
+    orig_rules_hash = rules_fingerprint(orig_rules)
+    if orig_rules_hash:
+        cache_key = f"{cache_key}_u{orig_rules_hash}"
     output_dir = MEDIA_PATH / "generated"
     output_path = output_dir / f"{cache_key}.png"
     logging.info(f"📂 on_send_original_file: cache_key={cache_key}, output_path={output_path}, exists={output_path.exists()}")
@@ -752,6 +806,7 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     else:
         role = ctx.dialog_data.get("user_type")
         is_group_target = role != "teacher"
+    user_rules = await _get_user_rules_for_target(manager, user_id, str(group))
     for offset in range(6):
         target = week_start + timedelta(days=offset)
         if is_group_target:
@@ -760,7 +815,12 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
             info = await manager_obj.get_teacher_schedule(group, target_date=target)
         if info and not info.get("error"):
             week_name = info.get("week_name", week_name)
-            week_schedule[info.get("day_name", "")] = info.get("lessons", [])
+            day_name = info.get("day_name", "")
+            lessons_day = info.get("lessons", [])
+            if user_rules:
+                w_key = str(info.get("week_key") or ("odd" if "Неч" in str(week_name) else "even"))
+                lessons_day = apply_rules_to_lessons(list(lessons_day), user_rules, day_name=day_name, week_key=w_key)
+            week_schedule[day_name] = lessons_day
     title = i18n.get(
         "schedule_group_title" if is_group_target else "schedule_teacher_title",
         lang=lang,
@@ -798,6 +858,9 @@ async def on_export_ics_click(callback: CallbackQuery, button: Button, manager: 
     today = datetime.now(MOSCOW_TZ).date()
     semester_info = await timetable_manager.get_semester_info_for(today)
     weeks_data = collect_target_weeks(timetable_manager, group, is_group_target=is_group_target)
+    user_rules = await _get_user_rules_for_target(manager, user_id, group)
+    if user_rules:
+        weeks_data = apply_rules_to_weeks(weeks_data, user_rules)
     ics_bytes = generate_schedule_ics(
         group,
         weeks_data,
@@ -878,6 +941,209 @@ async def on_settings_click(callback: CallbackQuery, button: Button, manager: Di
 
 async def on_find_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     await manager.start(FindMenu.choice)
+
+
+async def on_customize_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    await manager.switch_to(Schedule.customize)
+
+
+def _rules_manager_from(dialog_manager: DialogManager) -> UserScheduleRulesManager | None:
+    udm = dialog_manager.middleware_data.get("user_data_manager")
+    session_factory = getattr(udm, "async_session_maker", None) if udm else None
+    if not session_factory:
+        return None
+    redis_client = getattr(dialog_manager.middleware_data.get("manager"), "redis", None)
+    return UserScheduleRulesManager(session_factory, redis_client)
+
+
+def _collect_group_subjects(manager_obj: Any, group: str, is_group_target: bool) -> list[str]:
+    weeks_data = collect_target_weeks(manager_obj, group, is_group_target=is_group_target)
+    seen: dict[str, str] = {}
+    for week_dict in weeks_data.values():
+        for lessons in week_dict.values():
+            for lesson in lessons:
+                subj = str(lesson.get("subject") or "").strip()
+                if subj and subj.upper() not in seen:
+                    seen[subj.upper()] = subj
+    return sorted(seen.values(), key=str.upper)
+
+
+async def get_customize_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
+    ctx = dialog_manager.current_context()
+    group = str(ctx.dialog_data.get(DialogDataKeys.GROUP) or "")
+    is_group_target = bool(ctx.dialog_data.get("is_group_target", True))
+    user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
+    rules_mgr = _rules_manager_from(dialog_manager)
+    rules = await rules_mgr.get_rules(user_id, group) if (rules_mgr and user_id and group) else []
+
+    hidden_set = {str(r.get("subject") or "").strip().upper() for r in rules if r.get("rule_type") == "hide_subject"}
+    notes_cnt = sum(1 for r in rules if r.get("rule_type") == "note")
+    custom_cnt = sum(1 for r in rules if r.get("rule_type") == "custom_lesson")
+
+    manager_obj = dialog_manager.middleware_data.get("manager")
+    all_subjects = _collect_group_subjects(manager_obj, group, is_group_target) if manager_obj and group else []
+    subject_items = [
+        {
+            "idx": str(idx),
+            "subject": subj,
+            "short": subj[:26] + ("…" if len(subj) > 26 else ""),
+            "is_hidden": subj.upper() in hidden_set,
+        }
+        for idx, subj in enumerate(all_subjects)
+    ]
+    ctx.dialog_data["customize_subjects"] = all_subjects
+
+    summary_lines = [
+        f"🚫 Скрыто предметов: <b>{len(hidden_set)}</b>",
+        f"📝 Заметок к парам: <b>{notes_cnt}</b>",
+        f"➕ Своих пар: <b>{custom_cnt}</b>",
+    ]
+    if rules:
+        summary_lines.append("")
+        for r in rules[:8]:
+            rtype = r.get("rule_type")
+            subj = html.escape(str(r.get("subject") or ""))
+            if rtype == "hide_subject":
+                summary_lines.append(f"• 🚫 {subj}")
+            elif rtype == "note":
+                note = html.escape(str((r.get("payload") or {}).get("note") or ""))
+                summary_lines.append(f"• 📝 {subj}: <i>{note}</i>")
+            elif rtype == "custom_lesson":
+                summary_lines.append(f"• ➕ {r.get('day_name')} {r.get('start_time')} — {subj}")
+
+    return {
+        "customize_group": html.escape(group),
+        "customize_summary": "\n".join(summary_lines),
+        "subjects": subject_items,
+        "has_rules": bool(rules),
+        "subjects_hint": ", ".join(html.escape(s) for s in all_subjects[:8]),
+    }
+
+
+async def on_toggle_hide_subject(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
+    ctx = manager.current_context()
+    subjects: list[str] = list(ctx.dialog_data.get("customize_subjects") or [])  # type: ignore[arg-type]
+    try:
+        subj = subjects[int(item_id)]
+    except (ValueError, IndexError):
+        await callback.answer("Предмет не найден", show_alert=True)
+        return
+    group = str(ctx.dialog_data.get(DialogDataKeys.GROUP) or "")
+    user_id = callback.from_user.id if callback.from_user else None
+    rules_mgr = _rules_manager_from(manager)
+    if not rules_mgr or not user_id or not group:
+        await callback.answer("Недоступно", show_alert=True)
+        return
+    hidden = await rules_mgr.toggle_hide_subject(user_id, group, subj)
+    await callback.answer(f"🚫 Скрыт: {subj}" if hidden else f"✅ Возвращён: {subj}")
+
+
+async def on_reset_custom_rules(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    ctx = manager.current_context()
+    group = str(ctx.dialog_data.get(DialogDataKeys.GROUP) or "")
+    user_id = callback.from_user.id if callback.from_user else None
+    rules_mgr = _rules_manager_from(manager)
+    if rules_mgr and user_id and group:
+        deleted = await rules_mgr.clear_rules(user_id, group)
+        await callback.answer(f"↺ Сброшено правил: {deleted}")
+    else:
+        await callback.answer()
+
+
+async def on_custom_note_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
+    raw = (message.text or "").strip()
+    if "|" not in raw:
+        await message.reply("Формат: <code>Предмет | Текст заметки</code>", parse_mode="HTML")
+        return
+    subj_part, note_part = [p.strip() for p in raw.split("|", 1)]
+    if not subj_part or not note_part:
+        await message.reply("Укажите и предмет, и текст заметки.", parse_mode="HTML")
+        return
+    ctx = manager.current_context()
+    group = str(ctx.dialog_data.get(DialogDataKeys.GROUP) or "")
+    subjects: list[str] = list(ctx.dialog_data.get("customize_subjects") or [])  # type: ignore[arg-type]
+    matched = next((s for s in subjects if subj_part.lower() in s.lower()), subj_part)
+    rules_mgr = _rules_manager_from(manager)
+    user_id = message.from_user.id if message.from_user else None
+    if not rules_mgr or not user_id or not group:
+        await message.reply("❌ Не удалось сохранить заметку.")
+        return
+    await rules_mgr.add_note(user_id, group, matched, note_part)
+    await message.reply(f"✅ Заметка для <b>{html.escape(matched)}</b> сохранена.", parse_mode="HTML")
+    await manager.switch_to(Schedule.customize)
+
+
+async def on_custom_lesson_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
+    raw = (message.text or "").strip()
+    parts = [p.strip() for p in raw.split("|")]
+    if len(parts) < 3:
+        await message.reply(
+            "Формат: <code>День | ЧЧ:ММ-ЧЧ:ММ | Предмет | Ауд. | чёт/нечёт</code>",
+            parse_mode="HTML",
+        )
+        return
+    day_raw, time_raw, subject = parts[0], parts[1], parts[2]
+    room = parts[3] if len(parts) >= 4 else ""
+    week_raw = parts[4].lower() if len(parts) >= 5 else ""
+
+    day_map_lower = {
+        "понедельник": "Понедельник",
+        "пн": "Понедельник",
+        "вторник": "Вторник",
+        "вт": "Вторник",
+        "среда": "Среда",
+        "ср": "Среда",
+        "четверг": "Четверг",
+        "чт": "Четверг",
+        "пятница": "Пятница",
+        "пт": "Пятница",
+        "суббота": "Суббота",
+        "сб": "Суббота",
+    }
+    day_name = day_map_lower.get(day_raw.lower())
+    if not day_name:
+        await message.reply("❌ Укажите день недели (Понедельник..Суббота или Пн..Сб).")
+        return
+
+    time_clean = time_raw.replace("–", "-").replace("—", "-")
+    if "-" not in time_clean:
+        await message.reply("❌ Укажите время в формате ЧЧ:ММ-ЧЧ:ММ.")
+        return
+    start_raw, end_raw = [p.strip() for p in time_clean.split("-", 1)]
+    try:
+        datetime.strptime(start_raw, "%H:%M")
+        datetime.strptime(end_raw, "%H:%M")
+    except ValueError:
+        await message.reply("❌ Неверный формат времени. Пример: 18:30-20:00.")
+        return
+
+    week_key = None
+    if week_raw.startswith("неч"):
+        week_key = "odd"
+    elif week_raw.startswith("чёт") or week_raw.startswith("чет"):
+        week_key = "even"
+
+    ctx = manager.current_context()
+    group = str(ctx.dialog_data.get(DialogDataKeys.GROUP) or "")
+    rules_mgr = _rules_manager_from(manager)
+    user_id = message.from_user.id if message.from_user else None
+    if not rules_mgr or not user_id or not group:
+        await message.reply("❌ Не удалось добавить пару.")
+        return
+    await rules_mgr.add_custom_lesson(
+        user_id,
+        group,
+        day_name=day_name,
+        start_time=start_raw,
+        end_time=end_raw,
+        subject=subject,
+        room=room,
+        week_key=week_key,
+    )
+    await message.reply(
+        f"✅ Пара <b>{html.escape(subject)}</b> добавлена ({day_name}, {start_raw}-{end_raw}).", parse_mode="HTML"
+    )
+    await manager.switch_to(Schedule.customize)
 
 
 def _when_has_lessons(data: dict, widget: object, manager: object) -> bool:
@@ -1011,6 +1277,11 @@ schedul_dialog_windows = [
                 on_click=on_export_ics_click,
             ),
             Button(
+                Format("{btn_customize}"),
+                id="customize_schedule",
+                on_click=on_customize_click,
+            ),
+            Button(
                 Format("{btn_change_group}"),
                 id=WidgetIds.CHANGE_GROUP,
                 on_click=on_change_group_click,
@@ -1060,6 +1331,68 @@ schedul_dialog_windows = [
         ),
         state=Schedule.week_image_view,
         getter=get_week_image_data,
+    ),
+    Window(
+        Format(
+            "✏️ <b>Настройка расписания ({customize_group})</b>\n\n"
+            "{customize_summary}\n\n"
+            "<i>Все правки применяются к экрану дня, картинке недели, календарю .ics и уведомлениям.</i>"
+        ),
+        Column(
+            SwitchTo(Const("🚫 Скрыть / вернуть предмет"), id="to_cust_hide", state=Schedule.customize_hide),
+            SwitchTo(Const("📝 Добавить заметку к паре"), id="to_cust_note", state=Schedule.customize_note_input),
+            SwitchTo(Const("➕ Добавить свою пару"), id="to_cust_add", state=Schedule.customize_add_input),
+            Button(Const("↺ Сбросить все правки"), id="reset_custom_rules", on_click=on_reset_custom_rules, when="has_rules"),
+        ),
+        SwitchTo(Const("◀️ Назад"), id="cust_back_more", state=Schedule.more),
+        state=Schedule.customize,
+        getter=get_customize_data,
+        parse_mode="HTML",
+    ),
+    Window(
+        Format(
+            "🚫 <b>Скрыть или вернуть предмет ({customize_group})</b>\n\nНажмите на предмет, чтобы скрыть его или вернуть:"
+        ),
+        Column(
+            Select(
+                Jinja("{% if item.is_hidden %}🚫 {{ item.short }}{% else %}✅ {{ item.short }}{% endif %}"),
+                id="toggle_hide_subj",
+                item_id_getter=lambda item: item["idx"],
+                items="subjects",
+                on_click=on_toggle_hide_subject,
+            )
+        ),
+        SwitchTo(Const("◀️ Назад"), id="cust_hide_back", state=Schedule.customize),
+        state=Schedule.customize_hide,
+        getter=get_customize_data,
+        parse_mode="HTML",
+    ),
+    Window(
+        Format(
+            "📝 <b>Заметка к паре</b>\n\n"
+            "Отправьте сообщение в формате:\n"
+            "<code>Предмет | Текст заметки</code>\n\n"
+            "Например: <code>Физика | 2 подгруппа, лаба №3</code>\n"
+            "<i>Предметы группы: {subjects_hint}</i>"
+        ),
+        MessageInput(on_custom_note_input, content_types=[ContentType.TEXT]),
+        SwitchTo(Const("◀️ Отмена"), id="cust_note_back", state=Schedule.customize),
+        state=Schedule.customize_note_input,
+        getter=get_customize_data,
+        parse_mode="HTML",
+    ),
+    Window(
+        Const(
+            "➕ <b>Добавить свою пару</b>\n\n"
+            "Отправьте сообщение в формате:\n"
+            "<code>День | ЧЧ:ММ-ЧЧ:ММ | Предмет | Ауд. | чёт/нечёт</code>\n\n"
+            "Пример: <code>Пятница | 18:30-20:00 | Английский клуб | 219* | нечёт</code>\n"
+            "<i>Аудитория и чётность недели необязательны.</i>"
+        ),
+        MessageInput(on_custom_lesson_input, content_types=[ContentType.TEXT]),
+        SwitchTo(Const("◀️ Отмена"), id="cust_add_back", state=Schedule.customize),
+        state=Schedule.customize_add_input,
+        parse_mode="HTML",
     ),
     # Окно гейта подписки временно отключено
 ]

@@ -334,14 +334,20 @@ async def get_worker_bot() -> Bot:
 
 
 async def _mark_user_as_blocked(user_id: int) -> None:
-    """Помечает пользователя как заблокировавшего бота (is_blocked = True)."""
+    """Помечает пользователя как заблокировавшего бота (или отключает групповой чат при user_id < 0)."""
     udm = None
     try:
         udm = UserDataManager(db_url=settings.DATABASE_URL, redis_url=settings.REDIS_URL)
-        await udm.set_user_blocked(user_id, True)
-        log.info(f"User {user_id} marked as is_blocked=True in database.")
+        if user_id < 0:
+            from core.group_chat_manager import GroupChatManager
+
+            await GroupChatManager(udm.async_session_maker).set_active(user_id, False)
+            log.info(f"Group chat {user_id} marked as is_active=False in database.")
+        else:
+            await udm.set_user_blocked(user_id, True)
+            log.info(f"User {user_id} marked as is_blocked=True in database.")
     except Exception as e:
-        log.warning(f"Failed to mark user {user_id} as blocked in DB: {e}")
+        log.warning(f"Failed to mark target {user_id} as inactive/blocked in DB: {e}")
     finally:
         if udm is not None:
             try:
@@ -350,12 +356,17 @@ async def _mark_user_as_blocked(user_id: int) -> None:
                 pass
 
 
-async def _send_message(user_id: int, text: str) -> None:
+async def _send_message(user_id: int, text: str, reply_markup_json: str | None = None) -> None:
     """Отправка сообщения с защитой от дублирования."""
     try:
         bot = await get_worker_bot()
+        kwargs: Dict[str, Any] = {"disable_web_page_preview": True}
+        if reply_markup_json:
+            from aiogram.types import InlineKeyboardMarkup
+
+            kwargs["reply_markup"] = InlineKeyboardMarkup.model_validate_json(reply_markup_json)
         async with rate_limiter:
-            await bot.send_message(user_id, text, disable_web_page_preview=True)
+            await bot.send_message(user_id, text, **kwargs)
 
         log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
         try:
@@ -453,20 +464,44 @@ _MEDIA_SEND_METHODS = {
 _MEDIA_NO_CAPTION_KINDS = {"sticker", "video_note"}
 
 
-async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
-    """Отправка медиа с HTML-подписью. copy_message теги не разбирает."""
+async def _send_media(
+    user_id: int,
+    kind: str,
+    file_id: str,
+    caption: str = "",
+    followup_text: str = "",
+    reply_markup_json: str | None = None,
+) -> None:
+    """Отправка медиа с HTML-подписью и опциональным вторым сообщением при длинной подписи."""
     method_name = _MEDIA_SEND_METHODS.get(kind)
     if not method_name:
         raise ValueError(f"Unsupported broadcast media kind: {kind}")
     try:
         bot = await get_worker_bot()
         method = getattr(bot, method_name)
+        markup = None
+        if reply_markup_json:
+            from aiogram.types import InlineKeyboardMarkup
+
+            markup = InlineKeyboardMarkup.model_validate_json(reply_markup_json)
+
         kwargs: Dict[str, Any] = {}
         if caption and kind not in _MEDIA_NO_CAPTION_KINDS:
             kwargs["caption"] = caption
             kwargs["parse_mode"] = "HTML"
+        if markup and not followup_text:
+            kwargs["reply_markup"] = markup
+
         async with rate_limiter:
             await method(user_id, file_id, **kwargs)
+            if followup_text:
+                await bot.send_message(
+                    user_id,
+                    followup_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
         log.info(f"[SEND_OK] Медиа ({kind}) отправлено пользователю {user_id}")
         return
     except TelegramForbiddenError:
@@ -498,8 +533,8 @@ async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") 
 @dramatiq.actor(
     queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
 )  # 15 мин (достаточно для сетевых задержек)
-def send_message_task(user_id: int, text: str) -> None:
-    run_async(_send_message(user_id, text))
+def send_message_task(user_id: int, text: str, reply_markup_json: str | None = None) -> None:
+    run_async(_send_message(user_id, text, reply_markup_json=reply_markup_json))
 
 
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
@@ -508,8 +543,24 @@ def copy_message_task(user_id: int, from_chat_id: int, message_id: int) -> None:
 
 
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)
-def send_media_task(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
-    run_async(_send_media(user_id, kind, file_id, caption))
+def send_media_task(
+    user_id: int,
+    kind: str,
+    file_id: str,
+    caption: str = "",
+    followup_text: str = "",
+    reply_markup_json: str | None = None,
+) -> None:
+    run_async(
+        _send_media(
+            user_id,
+            kind,
+            file_id,
+            caption,
+            followup_text=followup_text,
+            reply_markup_json=reply_markup_json,
+        )
+    )
 
 
 @dramatiq.actor(

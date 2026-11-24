@@ -15,6 +15,10 @@ class Schedule(StatesGroup):
     full_week_view = State()
     week_image_view = State()
     full_quality_gate = State()
+    customize = State()
+    customize_hide = State()
+    customize_note_input = State()
+    customize_add_input = State()
 
 
 class SettingsMenu(StatesGroup):

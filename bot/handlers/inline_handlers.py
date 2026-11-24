@@ -5,11 +5,17 @@ from datetime import date, datetime, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
-from aiogram.types import InlineQuery, InlineQueryResultArticle, InputTextMessageContent
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQuery,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+)
 from rapidfuzz import process
 
-from bot.text_formatters import esc, format_schedule_text
-from core.bot_identity import bot_mention
+from bot.text_formatters import esc, format_schedule_text, format_teacher_schedule_text
+from core.bot_identity import bot_mention, get_bot_username
 from core.config import MOSCOW_TZ
 from core.i18n import i18n
 from core.manager import TimetableManager
@@ -193,7 +199,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
         await _send_schedule_result(query, manager, group_query, target_date)
         return
 
-    # Fuzzy-поиск - показать autocomplete подсказки
+    # Fuzzy-поиск групп - показать autocomplete подсказки
     matches = process.extract(
         group_query,
         available_groups,
@@ -213,18 +219,26 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 )
             )
         await _safe_answer(query, results, cache_time=30, is_personal=True)
-    else:
-        # Ничего не найдено
-        result = InlineQueryResultArticle(
-            id=str(uuid4()),
-            title=_tr(lang, "inline_not_found_title", group=group_query),
-            description=_tr(lang, "inline_not_found_description"),
-            input_message_content=InputTextMessageContent(
-                message_text=_tr(lang, "inline_not_found_message", group=esc(group_query)),
-                parse_mode="HTML",
-            ),
-        )
-        await _safe_answer(query, [result], cache_time=10, is_personal=True)
+        return
+
+    # Поиск преподавателя (если запрос похож на фамилию)
+    if hasattr(manager, "find_teachers_fuzzy"):
+        teacher_matches = manager.find_teachers_fuzzy(query_text, limit=3, score_cutoff=65)
+        if isinstance(teacher_matches, (list, tuple)) and teacher_matches:
+            await _send_teacher_result(query, manager, teacher_matches[0], target_date)
+            return
+
+    # Ничего не найдено
+    result = InlineQueryResultArticle(
+        id=str(uuid4()),
+        title=_tr(lang, "inline_not_found_title", group=group_query),
+        description=_tr(lang, "inline_not_found_description"),
+        input_message_content=InputTextMessageContent(
+            message_text=_tr(lang, "inline_not_found_message", group=esc(group_query)),
+            parse_mode="HTML",
+        ),
+    )
+    await _safe_answer(query, [result], cache_time=10, is_personal=True)
 
 
 async def _send_schedule_result(
@@ -259,6 +273,18 @@ async def _send_schedule_result(
     if random.random() < 0.2:
         formatted_text += _tr(lang, "channel_promo")
 
+    uname = get_bot_username()
+    open_btn_label = {"ru": "📅 Открыть в боте", "en": "📅 Open in bot", "zh": "📅 在机器人中打开"}.get(
+        lang, "📅 Открыть в боте"
+    )
+    reply_markup = (
+        InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text=open_btn_label, url=f"https://t.me/{uname}?start=group_{group_name}")]]
+        )
+        if uname
+        else None
+    )
+
     result = InlineQueryResultArticle(
         id=f"{group_name}:{target_date.isoformat()}",
         title=result_title,
@@ -268,6 +294,7 @@ async def _send_schedule_result(
             parse_mode="HTML",
             disable_web_page_preview=True,
         ),
+        reply_markup=reply_markup,
         thumb_url="https://images2.imgbox.com/d2/af/ztPHjmSO_o.png",
         thumb_width=48,
         thumb_height=48,
@@ -277,3 +304,50 @@ async def _send_schedule_result(
         await query.answer([result], cache_time=60, is_personal=True)
     except Exception as e:
         logging.error(f"Error answering inline query: {e}")
+
+
+async def _send_teacher_result(
+    query: InlineQuery,
+    manager: TimetableManager,
+    teacher_name: str,
+    target_date: date,
+) -> None:
+    """Отправляет inline-результат с расписанием преподавателя."""
+    schedule_info = await manager.get_teacher_schedule(teacher_name, target_date=target_date)
+    lang = _inline_lang(query)
+    if not schedule_info or schedule_info.get("error"):
+        return
+
+    lessons = schedule_info.get("lessons") or []
+    result_description = (
+        _tr(
+            lang,
+            "inline_lessons_count",
+            count=len(lessons),
+            time=lessons[0]["time"].replace("–", "-").split("-")[0].strip(),
+        )
+        if lessons
+        else _tr(lang, "inline_no_lessons")
+    )
+    formatted_text = format_teacher_schedule_text(schedule_info, lang=lang)
+    uname = get_bot_username()
+    open_btn_label = {"ru": "📅 Открыть в боте", "en": "📅 Open in bot", "zh": "📅 在机器人中打开"}.get(
+        lang, "📅 Открыть в боте"
+    )
+    reply_markup = (
+        InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=open_btn_label, url=f"https://t.me/{uname}")]])
+        if uname
+        else None
+    )
+    result = InlineQueryResultArticle(
+        id=f"teacher:{teacher_name}:{target_date.isoformat()}",
+        title=f"🧑‍🏫 {teacher_name} ({target_date.strftime('%d.%m')})",
+        description=result_description,
+        input_message_content=InputTextMessageContent(
+            message_text=formatted_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        ),
+        reply_markup=reply_markup,
+    )
+    await _safe_answer(query, [result], cache_time=60, is_personal=True)
