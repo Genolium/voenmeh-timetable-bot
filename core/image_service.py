@@ -50,6 +50,7 @@ class ImageService:
         final_caption: Optional[str] = None,
         lang: str = "ru",
         exec_locally: bool = False,
+        rules_hash: str = "",
     ) -> Tuple[bool, Optional[str]]:
         """
         Получает изображение из кэша или генерирует новое.
@@ -75,6 +76,8 @@ class ImageService:
             cache_key = f"{safe_group}_{week_key}_{normalized_theme}_{lang}"
         else:
             cache_key = f"{safe_group}_{week_key}_{lang}"
+        if rules_hash:
+            cache_key = f"{cache_key}_u{rules_hash}"
 
         logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
 

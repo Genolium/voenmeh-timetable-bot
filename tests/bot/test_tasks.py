@@ -427,3 +427,41 @@ def test_log_configuration():
     assert hasattr(log, "info")
     assert hasattr(log, "error")
     assert hasattr(log, "warning")
+
+
+@pytest.mark.asyncio
+async def test_mark_group_chat_blocked_and_rich_broadcast_markup():
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from bot.tasks import _mark_user_as_blocked, _send_media
+
+    mock_udm = MagicMock()
+    mock_udm.async_session_maker = MagicMock()
+    mock_udm.engine = MagicMock()
+    mock_udm.engine.dispose = AsyncMock()
+    mock_gcm = MagicMock()
+    mock_gcm.set_active = AsyncMock()
+
+    with (
+        patch("bot.tasks.UserDataManager", return_value=mock_udm),
+        patch("core.group_chat_manager.GroupChatManager", return_value=mock_gcm),
+    ):
+        await _mark_user_as_blocked(-100500)
+        mock_gcm.set_active.assert_awaited_once_with(-100500, False)
+
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Open", url="https://example.com")]])
+    markup_json = markup.model_dump_json()
+
+    mock_bot = MagicMock()
+    mock_bot.send_message = AsyncMock()
+    mock_bot.send_photo = AsyncMock()
+    with patch("bot.tasks.get_worker_bot", AsyncMock(return_value=mock_bot)):
+        await _send_message(42, "Hi", reply_markup_json=markup_json)
+        assert "reply_markup" in mock_bot.send_message.call_args.kwargs
+
+        await _send_media(42, "photo", "fid", caption="", followup_text="Full text", reply_markup_json=markup_json)
+        mock_bot.send_photo.assert_awaited_once()
+        assert mock_bot.send_message.await_count == 2
+
+        await _send_media(42, "photo", "fid", caption="Cap", followup_text="", reply_markup_json=markup_json)
+        assert "reply_markup" in mock_bot.send_photo.call_args.kwargs

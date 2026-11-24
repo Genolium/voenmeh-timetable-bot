@@ -1243,3 +1243,57 @@ def test_setup_scheduler_with_reports(mock_bot, mock_timetable_manager, mock_use
     ]
 
     assert len(report_jobs) == 3  # Должно быть 3 задачи для отчётов
+
+
+@pytest.mark.asyncio
+async def test_scheduler_group_chat_rules_and_window_weather_helpers():
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from bot.scheduler import _fetch_window_weather, _safe_apply_user_rules, _safe_group_chat_rows
+    from core.config import MOSCOW_TZ
+
+    # _safe_group_chat_rows: missing session_factory, success, exception
+    assert await _safe_group_chat_rows(MagicMock(async_session_maker=None), "get_chats_for_diff") == []
+    mock_udm = MagicMock(async_session_maker=MagicMock())
+    mock_gcm = MagicMock()
+    mock_gcm.get_chats_for_diff = AsyncMock(return_value=["c1"])
+    with patch("core.group_chat_manager.GroupChatManager", return_value=mock_gcm):
+        assert await _safe_group_chat_rows(mock_udm, "get_chats_for_diff") == ["c1"]
+    mock_gcm.get_chats_for_diff = AsyncMock(side_effect=RuntimeError("db err"))
+    with patch("core.group_chat_manager.GroupChatManager", return_value=mock_gcm):
+        assert await _safe_group_chat_rows(mock_udm, "get_chats_for_diff") == []
+
+    # _safe_apply_user_rules: no session_factory, empty rules, rules applied, exception
+    sched = {
+        "day_name": "Понедельник",
+        "week_name": "Нечётная неделя",
+        "lessons": [{"subject": "Физика", "start_time_raw": "09:00"}],
+    }
+    assert await _safe_apply_user_rules(MagicMock(async_session_maker=None), MagicMock(), 1, "О735Б", sched) is sched
+    mock_rules_mgr = MagicMock()
+    mock_rules_mgr.get_rules = AsyncMock(return_value=[])
+    with patch("core.user_schedule_rules.UserScheduleRulesManager", return_value=mock_rules_mgr):
+        assert await _safe_apply_user_rules(mock_udm, MagicMock(redis=None), 1, "О735Б", sched) is sched
+    mock_rules_mgr.get_rules = AsyncMock(return_value=[{"rule_type": "hide_subject", "subject": "Физика"}])
+    with patch("core.user_schedule_rules.UserScheduleRulesManager", return_value=mock_rules_mgr):
+        res = await _safe_apply_user_rules(mock_udm, MagicMock(redis=None), 1, "О735Б", sched)
+        assert res["lessons"] == []
+    mock_rules_mgr.get_rules = AsyncMock(side_effect=RuntimeError("err"))
+    with patch("core.user_schedule_rules.UserScheduleRulesManager", return_value=mock_rules_mgr):
+        assert await _safe_apply_user_rules(mock_udm, MagicMock(redis=None), 1, "О735Б", sched) is sched
+
+    # _fetch_window_weather: WeatherAPI class, fallback, exception
+    class WeatherAPI:
+        get_day_weather_window = AsyncMock(return_value={"temperature": 5})
+
+    target_dt = MOSCOW_TZ.localize(datetime(2026, 11, 25, 8, 0))
+    cache = {}
+    assert await _fetch_window_weather(WeatherAPI(), target_dt, [], "ru", cache) == {"temperature": 5}
+
+    other_weather = MagicMock()
+    other_weather.get_forecast_for_time = AsyncMock(return_value={"temperature": 3})
+    assert await _fetch_window_weather(other_weather, target_dt, [], "en", cache) == {"temperature": 3}
+
+    other_weather.get_forecast_for_time = AsyncMock(side_effect=RuntimeError("net"))
+    assert await _fetch_window_weather(other_weather, target_dt, [], "zh", cache) is None

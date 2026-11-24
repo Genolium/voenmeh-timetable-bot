@@ -2,11 +2,13 @@ from .models import (
     Base,
     FailedMessage,
     Feedback,
+    GroupChat,
     RequiredChannel,
     ScheduleChangeLog,
     SemesterSettings,
     SubscriptionFilterSetting,
     User,
+    UserLessonRule,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "FailedMessage",
     "SubscriptionFilterSetting",
     "RequiredChannel",
+    "UserLessonRule",
+    "GroupChat",
 ]

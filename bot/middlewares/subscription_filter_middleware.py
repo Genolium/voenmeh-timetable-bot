@@ -74,7 +74,7 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
         data: Dict[str, Any],
     ) -> Any:
         user_id, chat_id = self._get_user_id_and_chat_id(event)
-        if not user_id:
+        if not user_id or (chat_id is not None and chat_id < 0):
             return await handler(event, data)
 
         # 1. Администраторы всегда имеют полный доступ

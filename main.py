@@ -447,9 +447,12 @@ async def main():
     )
     dp.errors.register(error_handler)
 
+    from bot.handlers.group_chat_router import group_chat_router
+
     # Регистрация диалогов и хэндлеров
-    # Регистрируем feedback_reply_router первым, чтобы он обрабатывал сообщения в FEEDBACK_CHAT_ID
+    # Регистрируем feedback_reply_router и group_chat_router до диалогов
     dp.include_router(feedback_reply_router)
+    dp.include_router(group_chat_router)
 
     all_dialogs = [
         main_menu_dialog,
@@ -467,12 +470,14 @@ async def main():
     dp.message.middleware(admin_guard)
     dp.callback_query.middleware(admin_guard)
 
-    dp.message.register(start_command_handler, CommandStart())
-    dp.message.register(about_command_handler, Command("about"))
-    dp.message.register(feedback_command_handler, Command("feedback"))
+    dp.message.register(start_command_handler, CommandStart(), F.chat.type == "private")
+    dp.message.register(about_command_handler, Command("about"), F.chat.type == "private")
+    dp.message.register(feedback_command_handler, Command("feedback"), F.chat.type == "private")
     if ADMIN_IDS:
-        dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
-        dp.message.register(override_command_handler, Command("override"), F.from_user.id.in_(ADMIN_IDS))
+        dp.message.register(admin_command_handler, Command("admin"), F.chat.type == "private", F.from_user.id.in_(ADMIN_IDS))
+        dp.message.register(
+            override_command_handler, Command("override"), F.chat.type == "private", F.from_user.id.in_(ADMIN_IDS)
+        )
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
