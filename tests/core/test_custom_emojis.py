@@ -107,6 +107,27 @@ def test_transform_inline_button_and_keyboard():
     preset = InlineKeyboardButton(text="Сегодня", callback_data="abc\x1dtoday", style="success")
     assert transform_inline_button(preset) is preset
 
+    # Выделение цветом кнопок настроек
+    settings_btn = transform_inline_button(InlineKeyboardButton(text="⚙️ Настройки", callback_data="abc\x1dsettings"))
+    assert settings_btn.style == "primary"
+    assert settings_btn.text == "Настройки"
+
+    theme_btn = transform_inline_button(InlineKeyboardButton(text="🎨 Тема: Vice VI", callback_data="abc\x1dtheme_btn"))
+    assert theme_btn.style == "primary"
+
+    enable_btn = transform_inline_button(
+        InlineKeyboardButton(text="Включить утреннюю сводку", callback_data="abc\x1dmorning_summary")
+    )
+    assert enable_btn.style == "success"
+
+    disable_btn = transform_inline_button(
+        InlineKeyboardButton(text="Отключить утреннюю сводку", callback_data="abc\x1dmorning_summary")
+    )
+    assert disable_btn.style == "danger"
+
+    unknown_toggle = transform_inline_button(InlineKeyboardButton(text="Статус", callback_data="abc\x1dmorning_summary"))
+    assert unknown_toggle.style is None
+
 
 def test_is_html_parse_mode():
     html_bot = MagicMock(spec=Bot)
