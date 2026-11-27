@@ -74,13 +74,14 @@ def parse_day_from_query(query_parts: list[str]) -> tuple[date, list[str]]:
     Возвращает дату и оставшиеся части запроса.
     """
     today = datetime.now(MOSCOW_TZ).date()
-    query_lower = " ".join(query_parts).lower()
+    today_tokens = {"сегодня", "today", "今天"}
+    tomorrow_tokens = {"завтра", "tomorrow", "tmr", "明天"}
 
-    if any(k in query_lower for k in ["сегодня", "today", "今天"]):
-        remaining_parts = [p for p in query_parts if p.lower() not in ["сегодня", "today", "今天"]]
+    if any(p.lower().strip(",.!?") in today_tokens for p in query_parts):
+        remaining_parts = [p for p in query_parts if p.lower().strip(",.!?") not in today_tokens]
         return today, remaining_parts
-    if any(k in query_lower for k in ["завтра", "tomorrow", "tmr", "明天"]):
-        remaining_parts = [p for p in query_parts if p.lower() not in ["завтра", "tomorrow", "tmr", "明天"]]
+    if any(p.lower().strip(",.!?") in tomorrow_tokens for p in query_parts):
+        remaining_parts = [p for p in query_parts if p.lower().strip(",.!?") not in tomorrow_tokens]
         return today + timedelta(days=1), remaining_parts
 
     target_day = None
@@ -160,7 +161,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
                 ),
             )
         ]
-        await _safe_answer(query, results, cache_time=300, is_personal=False)
+        await _safe_answer(query, results, cache_time=300, is_personal=True)
         return
 
     # Разделяем запрос на части
@@ -182,7 +183,7 @@ async def inline_query_handler(query: InlineQuery, manager: TimetableManager) ->
             )
             for g in popular_groups
         ]
-        await _safe_answer(query, results, cache_time=60, is_personal=False)
+        await _safe_answer(query, results, cache_time=60, is_personal=True)
         return
 
     # Нормализуем группу

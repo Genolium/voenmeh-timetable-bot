@@ -1,10 +1,11 @@
-import io
 import json
 import logging
 import os
+import re
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, cast
+from typing import Any, Dict, Optional, cast
 
 from redis.asyncio.client import Redis
 
@@ -12,6 +13,23 @@ from core.config import MEDIA_PATH, MOSCOW_TZ
 from core.metrics import IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, IMAGE_CACHE_OPERATIONS, IMAGE_CACHE_SIZE
 
 logger = logging.getLogger(__name__)
+
+_SAFE_CACHE_KEY_RE = re.compile(r"[^A-Za-z0-9А-Яа-яЁё._-]")
+
+
+def sanitize_group_key(group: str) -> str:
+    """Нормализует имя группы/преподавателя для безопасного использования в ключе кэша и имени файла."""
+    cleaned = str(group or "").strip().upper()
+    cleaned = cleaned.replace("..", "_").replace("/", "_").replace("\\", "_")
+    cleaned = _SAFE_CACHE_KEY_RE.sub("_", cleaned)
+    return cleaned.strip("._") or "UNKNOWN"
+
+
+def sanitize_cache_key(cache_key: str) -> str:
+    """Валидирует и нормализует ключ кэша изображений для защиты от path traversal."""
+    if not cache_key or "/" in cache_key or "\\" in cache_key or ".." in cache_key or "\x00" in cache_key:
+        raise ValueError(f"Unsafe image cache key: {cache_key!r}")
+    return cache_key
 
 
 class ImageCacheManager:
@@ -166,10 +184,11 @@ class ImageCacheManager:
             except Exception as e:
                 logger.warning(f"Failed to save metadata for {cache_key} to Redis: {e}")
 
-            # Сохраняем в файловую систему атомарно
+            # Сохраняем в файловую систему атомарно через уникальный временный файл
+            tmp_path = None
             try:
-                file_path = self.cache_dir / f"{cache_key}.png"
-                tmp_path = self.cache_dir / f".{cache_key}.png.tmp"
+                file_path = self.get_file_path(cache_key)
+                tmp_path = self.cache_dir / f".{cache_key}.{uuid.uuid4().hex[:8]}.png.tmp"
                 with open(tmp_path, "wb") as f:
                     f.write(image_bytes)
                 tmp_path.replace(file_path)
@@ -179,6 +198,8 @@ class ImageCacheManager:
                 IMAGE_CACHE_OPERATIONS.labels(operation="file_store").inc()
 
             except Exception as e:
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
                 logger.warning(f"Failed to save {cache_key} to file: {e}")
 
             # Счётчик и тяжёлые файловые проверки — не на каждой записи.
@@ -432,7 +453,7 @@ class ImageCacheManager:
 
     def get_file_path(self, cache_key: str) -> Path:
         """
-        Получает путь к файлу в кэше.
+        Получает путь к файлу в кэше с проверкой защиты от path traversal.
 
         Args:
             cache_key: Ключ кэша
@@ -440,7 +461,12 @@ class ImageCacheManager:
         Returns:
             Путь к файлу
         """
-        return self.cache_dir / f"{cache_key}.png"
+        safe_key = sanitize_cache_key(cache_key)
+        base_dir = self.cache_dir.resolve()
+        candidate = (self.cache_dir / f"{safe_key}.png").resolve()
+        if not candidate.is_relative_to(base_dir):
+            raise ValueError(f"Cache path escapes cache directory: {cache_key!r}")
+        return self.cache_dir / f"{safe_key}.png"
 
     async def diagnose_cache(self, cache_key: str) -> Dict[str, Any]:
         """
@@ -514,12 +540,15 @@ class ImageCacheManager:
 
 async def invalidate_generated_images_for_groups(redis_client: Redis | None, groups: set[str] | list[str]) -> int:
     """Удаляет кэш только для указанных групп."""
+    import glob
+
     removed = 0
     cache_dir = MEDIA_PATH / "generated"
-    normalized = {group.upper() for group in groups if group}
+    normalized = {sanitize_group_key(group) for group in groups if group}
     if cache_dir.exists():
         for group in normalized:
-            for file_path in cache_dir.glob(f"{group}_*.png"):
+            safe_pattern = f"{glob.escape(group)}_*.png"
+            for file_path in cache_dir.glob(safe_pattern):
                 try:
                     file_path.unlink()
                     removed += 1
@@ -529,8 +558,11 @@ async def invalidate_generated_images_for_groups(redis_client: Redis | None, gro
         for group in normalized:
             try:
                 for prefix in ("image_cache:meta:", "image_cache:data:"):
+                    keys_to_delete = []
                     async for key in redis_client.scan_iter(f"{prefix}{group}_*"):
-                        await redis_client.delete(key)
+                        keys_to_delete.append(key)
+                    if keys_to_delete:
+                        await redis_client.delete(*keys_to_delete)
             except Exception as e:
                 logger.warning(f"Failed to clear image cache keys for {group}: {e}")
     logger.info(f"Invalidated image cache for {len(normalized)} groups: {removed} files removed")

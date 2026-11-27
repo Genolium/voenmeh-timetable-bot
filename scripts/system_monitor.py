@@ -66,30 +66,36 @@ class SystemMonitor:
             logger.error(f"Ошибка получения статистики системы: {e}")
             return {}
 
+    def _parse_rabbitmq_auth(self) -> aiohttp.BasicAuth:
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(self.rabbitmq_url)
+        username = unquote(parsed.username or os.getenv("RABBITMQ_USER", ""))
+        password = unquote(parsed.password or os.getenv("RABBITMQ_PASSWORD", ""))
+        return aiohttp.BasicAuth(username, password)
+
     async def check_redis_health(self) -> bool:
         """Проверяет состояние Redis"""
+        redis = Redis.from_url(self.redis_url)
         try:
-            redis = Redis.from_url(self.redis_url)
             await redis.ping()
-            await redis.aclose()
             return True
         except Exception as e:
             logger.error(f"Redis не отвечает: {e}")
             return False
+        finally:
+            try:
+                await redis.aclose()
+            except Exception:
+                pass
 
     async def check_rabbitmq_health(self) -> bool:
         """Проверяет состояние RabbitMQ"""
         try:
-            if "@" in self.rabbitmq_url:
-                auth_part = self.rabbitmq_url.split("@")[0].replace("amqp://", "")
-                username, password = auth_part.split(":")
-            else:
-                username, password = "guest", "guest"
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.management_url}/api/overview", auth=aiohttp.BasicAuth(username, password), timeout=10
-                ) as response:
+            auth = self._parse_rabbitmq_auth()
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"{self.management_url}/api/overview", auth=auth) as response:
                     return response.status == 200
         except Exception as e:
             logger.error(f"RabbitMQ не отвечает: {e}")
@@ -98,16 +104,10 @@ class SystemMonitor:
     async def get_queue_stats(self) -> Dict[str, Any]:
         """Получает статистику очередей RabbitMQ"""
         try:
-            if "@" in self.rabbitmq_url:
-                auth_part = self.rabbitmq_url.split("@")[0].replace("amqp://", "")
-                username, password = auth_part.split(":")
-            else:
-                username, password = "guest", "guest"
-
-            async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.management_url}/api/queues", auth=aiohttp.BasicAuth(username, password), timeout=10
-                ) as response:
+            auth = self._parse_rabbitmq_auth()
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(f"{self.management_url}/api/queues", auth=auth) as response:
                     if response.status == 200:
                         queues = await response.json()
                         stats = {}
@@ -127,26 +127,24 @@ class SystemMonitor:
             return {}
 
     async def kill_hung_processes(self):
-        """Убивает зависшие процессы"""
+        """Безопасно проверяет высокую нагрузку процессов без автоматического SIGKILL посторонних процессов."""
         try:
-            killed_count = 0
+            my_pid = os.getpid()
             for proc in psutil.process_iter(["pid", "name", "cpu_percent", "memory_percent", "create_time"]):
                 try:
-                    # Проверяем процессы старше 30 минут с высокой нагрузкой CPU
-                    if (
-                        "python" in (proc.info["name"] or "").lower()
-                        and proc.info["cpu_percent"] > 80
-                        and time.time() - proc.info["create_time"] > 1800
-                    ):  # 30 минут
-                        logger.warning(f"Убиваем зависший процесс {proc.info['pid']} (CPU: {proc.info['cpu_percent']}%)")
-                        proc.kill()
-                        killed_count += 1
+                    if proc.info["pid"] == my_pid:
+                        continue
+                    name = (proc.info["name"] or "").lower()
+                    cpu = proc.info["cpu_percent"] or 0.0
+                    if "python" in name and cpu > 80 and time.time() - proc.info["create_time"] > 1800:
+                        logger.warning(
+                            f"Обнаружен процесс с высокой нагрузкой CPU={cpu}% (PID={proc.info['pid']}); "
+                            "автоматический SIGKILL отключён в целях безопасности."
+                        )
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
-            if killed_count > 0:
-                logger.info(f"Убито {killed_count} зависших процессов")
         except Exception as e:
-            logger.error(f"Ошибка при убийстве процессов: {e}")
+            logger.error(f"Ошибка при проверке процессов: {e}")
 
     async def monitor_loop(self):
         """Основной цикл мониторинга"""

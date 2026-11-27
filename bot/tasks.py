@@ -351,7 +351,10 @@ async def _mark_user_as_blocked(user_id: int) -> None:
     finally:
         if udm is not None:
             try:
-                await udm.engine.dispose()
+                if hasattr(udm, "close"):
+                    await udm.close()
+                else:
+                    await udm.engine.dispose()
             except Exception:
                 pass
 
@@ -663,7 +666,10 @@ def generate_week_image_task(
                                     resolved_theme = None
                                 finally:
                                     try:
-                                        await udm.engine.dispose()
+                                        if hasattr(udm, "close"):
+                                            await udm.close()
+                                        else:
+                                            await udm.engine.dispose()
                                     except Exception:
                                         pass
                         success, _ = await image_service.get_or_generate_week_image(
@@ -693,7 +699,7 @@ def generate_week_image_task(
                     except Exception:
                         pass
 
-    run_async(_inner())
+        run_async(_inner())
 
 
 async def _send_error_message(user_id: int, error_text: str) -> None:
@@ -851,12 +857,16 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str) -> None:
                     await bot.send_message(user_id, "Доступ к полному качеству по подписке на канал.", reply_markup=kb)
                     return
 
-                # Use correct cache_key based path
-                file_path = MEDIA_PATH / "generated" / f"{cache_key}.png"
-                if not file_path.exists():
+                # Use sanitized cache_key with path containment check (path traversal defense)
+                from core.image_cache_manager import sanitize_cache_key
+
+                safe_key = sanitize_cache_key(cache_key)
+                gen_dir = (MEDIA_PATH / "generated").resolve()
+                file_path = (MEDIA_PATH / "generated" / f"{safe_key}.png").resolve()
+                if not file_path.is_relative_to(gen_dir) or not file_path.exists():
                     return
                 # Добавляем имя файла и подпись для красоты и надежности
-                doc_file = FSInputFile(file_path, filename=f"Schedule_{cache_key}.png")
+                doc_file = FSInputFile(file_path, filename=f"Schedule_{safe_key}.png")
                 await bot.send_document(user_id, document=doc_file, caption="📄 Оригинал расписания (полное качество)")
         except Exception as e:
             log.error(f"send_week_original_if_subscribed_task failed: {e}")

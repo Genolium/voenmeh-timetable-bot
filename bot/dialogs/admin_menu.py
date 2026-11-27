@@ -139,11 +139,13 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
     test_user_id, test_group_name, _, _ = random.choice(test_users)
     await bot.send_message(
         admin_id,
-        f"ℹ️ Тестирую логику для случайного пользователя: <code>{test_user_id}</code> (группа <code>{test_group_name}</code>)",
+        f"ℹ️ Тестирую логику для случайного пользователя: <code>{test_user_id}</code> "
+        f"(группа <code>{html.escape(str(test_group_name), quote=False)}</code>)",
     )
 
+    today_msk = datetime.now(MOSCOW_TZ).date()
     for i in range(7):
-        test_date = date.today() + timedelta(days=i)
+        test_date = today_msk + timedelta(days=i)
         await bot.send_message(
             admin_id,
             f"--- 🗓️ <b>Тест для даты: {test_date.strftime('%A, %d.%m.%Y')}</b> ---",
@@ -287,6 +289,24 @@ MAX_RESTORE_BYTES = 20 * 1024 * 1024
 RESTORE_CONFIRM_WORD = "RESTORE"
 
 
+_restore_lock = asyncio.Lock()
+
+
+def _cleanup_restore_dir(raw_path: str | None) -> None:
+    if not raw_path:
+        return
+    try:
+        path = Path(raw_path)
+        if path.parent.name.startswith("voenmeh_restore_"):
+            import shutil
+
+            shutil.rmtree(path.parent, ignore_errors=True)
+        elif path.exists():
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _is_sql_backup_name(name: str | None) -> bool:
     lower = (name or "").lower()
     return lower.endswith(".sql") or lower.endswith(".sql.gz") or lower.endswith(".gz")
@@ -308,9 +328,15 @@ async def on_backup_upload_received(message: Message, widget: MessageInput, mana
         await message.answer("❌ Файл слишком большой (лимит 20 МБ).")
         return
 
+    _cleanup_restore_dir(manager.dialog_data.pop("backup_restore_path", None))
     tmp_dir = Path(tempfile.mkdtemp(prefix="voenmeh_restore_"))
-    tmp_path = tmp_dir / (file_name or "backup.sql")
+    safe_name = "backup.sql.gz" if file_name.lower().endswith(".gz") else "backup.sql"
+    tmp_path = tmp_dir / safe_name
     await message.bot.download(document, destination=tmp_path)
+    if tmp_path.exists() and tmp_path.stat().st_size > MAX_RESTORE_BYTES:
+        _cleanup_restore_dir(str(tmp_path))
+        await message.answer("❌ Файл слишком большой (лимит 20 МБ).")
+        return
     manager.dialog_data["backup_restore_path"] = str(tmp_path)
     manager.dialog_data["backup_upload_status"] = (
         f"Файл <code>{html.escape(file_name, quote=False)}</code> принят.\n"
@@ -331,25 +357,21 @@ async def on_backup_restore_typed(message: Message, widget: MessageInput, manage
         return
 
     tmp_path = Path(raw_path)
-    try:
-        target_path = maybe_decompress_gzip(tmp_path)
-        await restore_db_backup(target_path)
-        status = (
-            "✅ База данных успешно восстановлена из резервной копии.\n"
-            "Перезагрузите сервисы, если изменения не применились автоматически."
-        )
-    except BackupError as exc:
-        status = f"❌ Не удалось применить резервную копию: {exc}"
-    except Exception as exc:
-        status = f"❌ Не удалось применить резервную копию: {exc}"
-    finally:
+    async with _restore_lock:
         try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            tmp_path.parent.rmdir()
-        except OSError:
-            pass
-        manager.dialog_data.pop("backup_restore_path", None)
+            target_path = await asyncio.to_thread(maybe_decompress_gzip, tmp_path)
+            await restore_db_backup(target_path)
+            status = (
+                "✅ База данных успешно восстановлена из резервной копии.\n"
+                "Перезагрузите сервисы, если изменения не применились автоматически."
+            )
+        except BackupError as exc:
+            status = f"❌ Не удалось применить резервную копию: {html.escape(str(exc), quote=False)}"
+        except Exception as exc:
+            status = f"❌ Не удалось применить резервную копию: {html.escape(str(exc), quote=False)}"
+        finally:
+            _cleanup_restore_dir(raw_path)
+            manager.dialog_data.pop("backup_restore_path", None)
 
     manager.dialog_data["backup_upload_status"] = status
     manager.dialog_data["backup_status"] = status
@@ -1365,6 +1387,12 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 
 async def on_cancel_generation(callback: CallbackQuery) -> None:
     """Отменяет генерацию изображений."""
+    from core.config import ADMIN_IDS
+
+    if not callback.from_user or (ADMIN_IDS and callback.from_user.id not in ADMIN_IDS):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
     admin_id = callback.from_user.id
 
     if admin_id in active_generations:
@@ -1380,8 +1408,8 @@ async def on_cancel_generation(callback: CallbackQuery) -> None:
         except Exception:
             pass
 
-        # Удаляем из активных генераций
-        del active_generations[admin_id]
+        # Удаляем из активных генераций безопасно (защита от повторного клика)
+        active_generations.pop(admin_id, None)
     else:
         await callback.answer("❌ Нет активной генерации для отмены")
 

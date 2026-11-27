@@ -4,6 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src 'self' file: data:; script-src 'unsafe-inline';" />
   <title>Расписание — {{ i18n_week_type }}: {{ group }}</title>
   <style>
     /* --- 1. Подключение шрифтов --- */
@@ -1367,11 +1368,12 @@
         var time = row.querySelector('.lesson-time');
         if (!room || !time) return;
 
-        // Базовые размеры в rem (у нас 1rem ≈ 10px)
+        // Базовые размеры в rem с учётом реального root font-size
+        var rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize) || 10;
         var minRoom = 2.2;   // минимум для кабинета
         var minTime = 3.0;   // минимум для времени
-        var roomRem = parseFloat(getComputedStyle(room).fontSize) / 10;
-        var timeRem = parseFloat(getComputedStyle(time).fontSize) / 10;
+        var roomRem = parseFloat(getComputedStyle(room).fontSize) / rootPx;
+        var timeRem = parseFloat(getComputedStyle(time).fontSize) / rootPx;
 
         var safety = 40;
         while (safety-- > 0) {

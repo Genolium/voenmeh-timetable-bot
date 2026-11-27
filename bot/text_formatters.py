@@ -47,7 +47,7 @@ async def calculate_semester_week_number(target_date: date, session_factory: Any
 def format_schedule_text(day_info: dict, week_number: int | None = None, lang: str = "ru") -> str:
     """Форматирует расписание на день для группы."""
     if not day_info or "error" in day_info:
-        error_msg = day_info.get("error", i18n.get("fmt_error_unknown", lang))
+        error_msg = (day_info or {}).get("error", i18n.get("fmt_error_unknown", lang))
         return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     date_obj = day_info.get("date")
@@ -73,7 +73,7 @@ def format_schedule_text(day_info: dict, week_number: int | None = None, lang: s
 
     lesson_parts = []
     for lesson in lessons:
-        time_str = lesson.get("time", i18n.get("fmt_time_unknown", lang))
+        time_str = esc(lesson.get("time", i18n.get("fmt_time_unknown", lang)))
         subject_str = esc(transliterate(lesson.get("subject", i18n.get("fmt_subject_unknown", lang)), lang))
         type_str = _lesson_type_suffix(lesson, lang)
 
@@ -122,7 +122,7 @@ def _lesson_type_suffix(lesson: dict, lang: str = "ru") -> str:
 def format_teacher_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
     """Форматирует расписание на день для преподавателя."""
     if not schedule_info or schedule_info.get("error"):
-        error_msg = schedule_info.get("error", i18n.get("fmt_error_unknown", lang))
+        error_msg = (schedule_info or {}).get("error", i18n.get("fmt_error_unknown", lang))
         return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     teacher_name = esc(transliterate(schedule_info.get("teacher", i18n.get("fmt_teacher_label", lang)), lang))
@@ -142,7 +142,7 @@ def format_teacher_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
 
     lesson_parts = []
     for lesson in lessons:
-        time_str = lesson.get("time", i18n.get("fmt_time_unknown", lang))
+        time_str = esc(lesson.get("time", i18n.get("fmt_time_unknown", lang)))
         subject_str = esc(transliterate(lesson.get("subject", i18n.get("fmt_subject_unknown", lang)), lang))
         type_str = _lesson_type_suffix(lesson, lang)
         groups_list = lesson.get("groups", []) or []
@@ -179,7 +179,7 @@ def format_teacher_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
 def format_classroom_schedule_text(schedule_info: dict, lang: str = "ru") -> str:
     """Форматирует расписание на день для аудитории."""
     if not schedule_info or schedule_info.get("error"):
-        error_msg = schedule_info.get("error", i18n.get("fmt_error_unknown", lang))
+        error_msg = (schedule_info or {}).get("error", i18n.get("fmt_error_unknown", lang))
         return cast(str, i18n.get("fmt_error", lang).format(error=esc(error_msg)))
 
     classroom_number = esc(transliterate(schedule_info.get("classroom", i18n.get("fmt_classroom_label", lang)), lang))
@@ -199,7 +199,7 @@ def format_classroom_schedule_text(schedule_info: dict, lang: str = "ru") -> str
 
     lesson_parts = []
     for lesson in lessons:
-        time_str = lesson.get("time", i18n.get("fmt_time_unknown", lang))
+        time_str = esc(lesson.get("time", i18n.get("fmt_time_unknown", lang)))
         subject_str = esc(transliterate(lesson.get("subject", i18n.get("fmt_subject_unknown", lang)), lang))
         type_str = _lesson_type_suffix(lesson, lang)
         groups_list = lesson.get("groups", []) or []
@@ -232,7 +232,7 @@ def format_classroom_schedule_text(schedule_info: dict, lang: str = "ru") -> str
 def format_full_week_text(week_schedule: dict, week_name: str, lang: str = "ru") -> str:
     """Форматирует текст расписания на всю неделю с корректной сортировкой пар."""
     days_order = ["ПОНЕДЕЛЬНИК", "ВТОРНИК", "СРЕДА", "ЧЕТВЕРГ", "ПЯТНИЦА", "СУББОТА"]
-    week_header = i18n.get("fmt_week_header", lang).format(week_name=week_name.capitalize())
+    week_header = i18n.get("fmt_week_header", lang).format(week_name=esc(week_name.capitalize()))
     text_parts = [week_header]
 
     sorted_days = sorted(
@@ -246,7 +246,7 @@ def format_full_week_text(week_schedule: dict, week_name: str, lang: str = "ru")
         lessons = week_schedule.get(day_name)
 
         if lessons:
-            localized_day_name = get_day_name(day_name.title(), lang).upper()
+            localized_day_name = esc(get_day_name(day_name.title(), lang).upper())
             text_parts.append(f"\n--- <b>{localized_day_name}</b> ---")
 
             try:
@@ -258,7 +258,7 @@ def format_full_week_text(week_schedule: dict, week_name: str, lang: str = "ru")
                 sorted_lessons = lessons
 
             for lesson in sorted_lessons:
-                time_str = lesson.get("time", i18n.get("fmt_time_unknown", lang))
+                time_str = esc(lesson.get("time", i18n.get("fmt_time_unknown", lang)))
                 subject_str = esc(transliterate(lesson.get("subject", i18n.get("fmt_subject_unknown", lang)), lang))
                 type_raw = lesson.get("type", "")
                 type_str = f"({esc(transliterate(type_raw, lang))})" if type_raw else ""

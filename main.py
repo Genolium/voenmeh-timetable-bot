@@ -2,8 +2,6 @@ import asyncio
 import html
 import logging
 import os
-import sys
-import time
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
@@ -14,7 +12,6 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, Message
 from aiogram_dialog import DialogManager, StartMode, setup_dialogs
 from aiogram_dialog.api.exceptions import UnknownIntent
-from aiohttp import ClientTimeout
 from dotenv import load_dotenv
 from prometheus_client import start_http_server
 from pythonjsonlogger.json import JsonFormatter
@@ -387,6 +384,10 @@ async def main():
     timetable_manager = await TimetableManager.create(redis_client=redis_client)
     if not timetable_manager:
         logging.critical("Критическая ошибка: не удалось инициализировать TimetableManager. Запуск отменен.")
+        try:
+            await redis_client.close()
+        except Exception:
+            pass
         return
 
     user_data_manager = UserDataManager(db_url=db_url or "", redis_url=redis_url)
@@ -484,8 +485,11 @@ async def main():
     # Обработчики кнопок оригинала и проверки подписки
     dp.callback_query.register(on_send_original_file_callback, F.data == "send_original_file")
     dp.callback_query.register(on_check_subscription_callback, F.data == "check_sub")
-    # Обработчик отмены генерации изображений
-    dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
+    # Обработчик отмены генерации изображений (только для администраторов)
+    if ADMIN_IDS:
+        dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation", F.from_user.id.in_(ADMIN_IDS))
+    else:
+        dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
     # Времено отключено: кнопки "полное качество" и проверка подписки
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
@@ -509,19 +513,23 @@ async def main():
                     except Exception:
                         pass
 
+        # Запускаем HTTP-сервер алертов и сохраняем runner для корректной остановки
+        alert_runner = None
+        try:
+            alert_runner = await run_alert_webhook_server(
+                bot,
+                ADMIN_IDS,
+                redis_client=redis_client,
+                db_session_maker=user_data_manager.async_session_maker,
+            )
+        except Exception as e:
+            logging.error(f"Failed to start alert webhook server: {e}")
+
         # Сначала запускаем фоновые сервисы, затем начинаем polling
         logging.info("Starting background services...")
         background_tasks.extend(
             [
                 asyncio.create_task(run_metrics_server()),
-                asyncio.create_task(
-                    run_alert_webhook_server(
-                        bot,
-                        ADMIN_IDS,
-                        redis_client=redis_client,
-                        db_session_maker=user_data_manager.async_session_maker,
-                    )
-                ),
                 asyncio.create_task(start_business_monitoring()),
                 asyncio.create_task(_notify_admins_start()),
             ]
@@ -540,6 +548,11 @@ async def main():
                 task.cancel()
         if background_tasks:
             await asyncio.gather(*background_tasks, return_exceptions=True)
+        if "alert_runner" in locals() and alert_runner is not None:
+            try:
+                await alert_runner.cleanup()
+            except Exception:
+                pass
         # Корректно останавливаем планировщик и ресурсы
         try:
             scheduler.shutdown()
@@ -554,7 +567,10 @@ async def main():
         except Exception:
             pass
         try:
-            await user_data_manager.engine.dispose()
+            if hasattr(user_data_manager, "close"):
+                await user_data_manager.close()
+            else:
+                await user_data_manager.engine.dispose()
         except Exception:
             pass
         # Закрываем Playwright/Chromium, чтобы избежать утечек

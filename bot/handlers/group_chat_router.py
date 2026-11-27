@@ -148,7 +148,8 @@ async def on_group_command(
         suggestions = (
             manager.find_groups_fuzzy(raw_arg, limit=3, score_cutoff=45) if hasattr(manager, "find_groups_fuzzy") else []
         )
-        hint = f"\nВозможно, вы имели в виду: <b>{', '.join(suggestions)}</b>" if suggestions else ""
+        escaped_suggestions = ", ".join(html.escape(str(s), quote=False) for s in suggestions)
+        hint = f"\nВозможно, вы имели в виду: <b>{escaped_suggestions}</b>" if suggestions else ""
         await message.reply(f"❌ Группа <b>{html.escape(raw_arg)}</b> не найдена.{hint}", parse_mode="HTML")
         return
 

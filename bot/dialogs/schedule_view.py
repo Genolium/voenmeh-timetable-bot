@@ -625,10 +625,14 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     except Exception:
         pass
 
-    # Приводим к верхнему регистру для консистентности имен файлов
-    safe_group = group.upper()
-    if user_theme_for_original and user_theme_for_original != "standard":
-        cache_key = f"{safe_group}_{week_key}_{user_theme_for_original}_{lang}"
+    # Нормализуем ключ кэша для защиты от path traversal и совпадения с ImageService
+    from core.image_cache_manager import sanitize_group_key
+    from core.themes import get_theme_meta
+
+    safe_group = sanitize_group_key(group)
+    norm_theme = get_theme_meta(user_theme_for_original).id if user_theme_for_original else "standard"
+    if norm_theme != "standard":
+        cache_key = f"{safe_group}_{week_key}_{norm_theme}_{lang}"
     else:
         cache_key = f"{safe_group}_{week_key}_{lang}"
     orig_rules = await _get_user_rules_for_target(manager, callback.from_user.id if callback.from_user else None, str(group))
@@ -636,10 +640,13 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     if orig_rules_hash:
         cache_key = f"{cache_key}_u{orig_rules_hash}"
     output_dir = MEDIA_PATH / "generated"
-    output_path = output_dir / f"{cache_key}.png"
+    output_path = (output_dir / f"{cache_key}.png").resolve()
+    if not output_path.is_relative_to(output_dir.resolve()):
+        logging.warning("Blocked unsafe original image path for group=%r", group)
+        return
     logging.info(f"📂 on_send_original_file: cache_key={cache_key}, output_path={output_path}, exists={output_path.exists()}")
 
-    # Проверка подписки через единый механизм БД/legacy-канала
+    # Проверка подписки через единый механизм БД/legacy-канала (fail-closed при сбое)
     try:
         from core.subscription_filter import is_user_subscribed
 
@@ -683,8 +690,13 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             except Exception:
                 pass
             return
-    except Exception:
-        pass
+    except Exception as exc:
+        logging.warning(f"Subscription check failed in on_send_original_file (fail-closed): {exc}")
+        try:
+            await callback.answer("⚠️ Не удалось проверить подписку. Попробуйте позже.", show_alert=True)
+        except Exception:
+            pass
+        return
 
     # Если файла нет — генерируем синхронно и отправляем сразу (без поллинга)
     if not output_path.exists():

@@ -46,6 +46,21 @@ class FastConnectAiohttpSession(AiohttpSession):
         return await super().make_request(bot, method, timeout=client_timeout)  # type: ignore[arg-type]
 
 
+_NON_IDEMPOTENT_METHODS = frozenset(
+    {
+        "sendMessage",
+        "sendPhoto",
+        "sendDocument",
+        "sendVideo",
+        "sendAudio",
+        "sendVoice",
+        "sendAnimation",
+        "copyMessage",
+        "forwardMessage",
+    }
+)
+
+
 class NetworkRetryRequestMiddleware(BaseRequestMiddleware):
     """Повторяет запросы к Bot API при транзиентных TelegramNetworkError (кроме GetUpdates)."""
 
@@ -67,6 +82,9 @@ class NetworkRetryRequestMiddleware(BaseRequestMiddleware):
             try:
                 return await make_request(bot, method)
             except TelegramNetworkError as exc:
+                is_read_timeout = isinstance(exc.__cause__, asyncio.TimeoutError)
+                if is_read_timeout and getattr(method, "__api_method__", "") in _NON_IDEMPOTENT_METHODS:
+                    raise
                 if attempt >= self.max_attempts:
                     raise
                 delay = self.backoff_base * attempt

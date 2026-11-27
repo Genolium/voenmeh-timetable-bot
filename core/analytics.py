@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib
 
+from core.config import MOSCOW_TZ
 from core.time_utils import now_msk_naive
 
 # Использовать неинтерактивный бэкенд Agg для работы без GUI / в контейнере
@@ -87,11 +88,12 @@ async def get_top_features(
         now = now_msk_naive()
 
         # Получаем посуточные счётчики одним pipeline-запросом вместо N round-trip'ов
-        if days > 0:
+        clamped_days = min(days, 60)
+        if clamped_days > 0:
             pipe = redis_client.pipeline()
             if inspect.isawaitable(pipe):
                 pipe = await pipe
-            for i in range(days):
+            for i in range(clamped_days):
                 date_str = (now - timedelta(days=i)).strftime("%Y%m%d")
                 pipe.hgetall(f"{FEATURE_KEY_PREFIX}:daily:{date_str}")
             day_results = await pipe.execute()
@@ -146,80 +148,82 @@ def generate_dynamics_chart(
     color_notify = "#CBA6F7"  # Лавандовый для уведомлений
 
     fig, ax = plt.subplots(figsize=(9, 4.8), dpi=150, facecolor=bg_color)
-    ax.set_facecolor(card_color)
+    try:
+        ax.set_facecolor(card_color)
 
-    if not dates:
-        dates = [now_msk_naive() - timedelta(days=i) for i in reversed(range(7))]
-        new_users = [0] * len(dates)
-        active_users = [0] * len(dates)
+        if not dates:
+            dates = [now_msk_naive() - timedelta(days=i) for i in reversed(range(7))]
+            new_users = [0] * len(dates)
+            active_users = [0] * len(dates)
 
-    # Построение линий с маркерами
-    ax.plot(
-        dates,
-        active_users,
-        label="Активные за день (DAU)",
-        color=color_dau,
-        linewidth=2.2,
-        marker="o",
-        markersize=4,
-    )
-    ax.plot(
-        dates,
-        new_users,
-        label="Новые пользователи",
-        color=color_new,
-        linewidth=2.0,
-        marker="s",
-        markersize=4,
-    )
-
-    if notifications_sent and len(notifications_sent) == len(dates):
+        # Построение линий с маркерами
         ax.plot(
             dates,
-            notifications_sent,
-            label="Отправлено рассылок",
-            color=color_notify,
-            linewidth=1.8,
-            linestyle="--",
-            marker="^",
+            active_users,
+            label="Активные за день (DAU)",
+            color=color_dau,
+            linewidth=2.2,
+            marker="o",
+            markersize=4,
+        )
+        ax.plot(
+            dates,
+            new_users,
+            label="Новые пользователи",
+            color=color_new,
+            linewidth=2.0,
+            marker="s",
             markersize=4,
         )
 
-    # Заголовок и подписи
-    ax.set_title(
-        f"Динамика активности бота (за {period_title})",
-        fontsize=13,
-        fontweight="bold",
-        color=text_color,
-        pad=15,
-    )
-    ax.tick_params(colors=subtext_color, labelsize=9)
+        if notifications_sent and len(notifications_sent) == len(dates):
+            ax.plot(
+                dates,
+                notifications_sent,
+                label="Отправлено рассылок",
+                color=color_notify,
+                linewidth=1.8,
+                linestyle="--",
+                marker="^",
+                markersize=4,
+            )
 
-    # Форматирование дат на оси X
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
-    fig.autofmt_xdate(rotation=0, ha="center")
+        # Заголовок и подписи
+        ax.set_title(
+            f"Динамика активности бота (за {period_title})",
+            fontsize=13,
+            fontweight="bold",
+            color=text_color,
+            pad=15,
+        )
+        ax.tick_params(colors=subtext_color, labelsize=9)
 
-    # Сетка
-    ax.grid(True, linestyle=":", alpha=0.5, color=grid_color)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_color(grid_color)
-    ax.spines["bottom"].set_color(grid_color)
+        # Форматирование дат на оси X в часовом поясе Москвы
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m", tz=MOSCOW_TZ))
+        fig.autofmt_xdate(rotation=0, ha="center")
 
-    # Легенда
-    legend = ax.legend(
-        facecolor=bg_color,
-        edgecolor=grid_color,
-        labelcolor=text_color,
-        fontsize=9,
-        loc="upper left",
-    )
-    legend.get_frame().set_alpha(0.85)
+        # Сетка
+        ax.grid(True, linestyle=":", alpha=0.5, color=grid_color)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color(grid_color)
+        ax.spines["bottom"].set_color(grid_color)
 
-    plt.tight_layout()
+        # Легенда
+        legend = ax.legend(
+            facecolor=bg_color,
+            edgecolor=grid_color,
+            labelcolor=text_color,
+            fontsize=9,
+            loc="upper left",
+        )
+        legend.get_frame().set_alpha(0.85)
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", facecolor=fig.get_facecolor(), bbox_inches="tight")
+        buf.seek(0)
+        return buf
+    finally:
+        plt.close(fig)

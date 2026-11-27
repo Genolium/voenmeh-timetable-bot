@@ -340,10 +340,12 @@ async def build_showcase(renders_dir: Path, output_jpg: Path) -> None:
     tmp_png = renders_dir / "themes_showcase_raw.png"
     async with async_playwright() as p:
         browser = await p.chromium.launch()
-        page = await browser.new_page(viewport={"width": 2048, "height": 2480})
-        await page.set_content(html, wait_until="load")
-        await page.screenshot(path=str(tmp_png), full_page=True)
-        await browser.close()
+        try:
+            page = await browser.new_page(viewport={"width": 2048, "height": 2480})
+            await page.set_content(html, wait_until="load")
+            await page.screenshot(path=str(tmp_png), full_page=True)
+        finally:
+            await browser.close()
 
     output_jpg.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(tmp_png) as img:
@@ -352,5 +354,7 @@ async def build_showcase(renders_dir: Path, output_jpg: Path) -> None:
 
 
 if __name__ == "__main__":
-    renders = Path("/Users/ilyan/.gemini/antigravity/brain/9bac0716-3459-41f4-922a-3583d496f692/scratch/renders_v2")
-    asyncio.run(build_showcase(renders, ROOT / "bot/media/themes_showcase.jpg"))
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="voenmeh_showcase_") as tmp_dir:
+        asyncio.run(build_showcase(Path(tmp_dir), ROOT / "bot/media/themes_showcase.jpg"))

@@ -258,7 +258,6 @@ async def generate_schedule_image(
                 mime = "image/jpeg" if path.suffix == ".jpg" else "image/png"
                 encoded = f"data:{mime};base64,{b64encode(path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache[target_key] = ""
                 return ""
             _bg_images_cache[target_key] = encoded
             return encoded

@@ -17,9 +17,11 @@ from core.custom_emojis import replace_emojis_html, transform_inline_keyboard
 
 
 def _is_html_parse_mode(parse_mode: Any, bot: Bot) -> bool:
-    if parse_mode is None or isinstance(parse_mode, Default):
+    if isinstance(parse_mode, Default):
         default_mode = bot.default.parse_mode if getattr(bot, "default", None) else None
         return str(default_mode or "").upper() == "HTML"
+    if parse_mode is None:
+        return False
     return str(parse_mode).upper() == "HTML"
 
 

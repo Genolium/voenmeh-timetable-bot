@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, cast
 
@@ -7,6 +8,14 @@ import aiohttp
 
 from core.config import MOSCOW_TZ
 from core.metrics import ERRORS_TOTAL, RETRIES_TOTAL
+
+_APPID_RE = re.compile(r"(appid=)[^&\s'\"\)]+", re.IGNORECASE)
+_OWM_LANG_MAP = {"zh": "zh_cn"}
+
+
+def _scrub_appid(text: object) -> str:
+    """Маскирует OpenWeatherMap API-ключ в сообщениях об ошибках перед логированием."""
+    return _APPID_RE.sub(r"\1***", str(text))
 
 
 class WeatherAPI:
@@ -58,7 +67,7 @@ class WeatherAPI:
                 "id": self.city_id,
                 "appid": self.api_key,
                 "units": self.units,
-                "lang": lang,  # Язык описания погоды
+                "lang": _OWM_LANG_MAP.get(lang, lang),  # Язык описания погоды
             }
 
             try:
@@ -74,36 +83,35 @@ class WeatherAPI:
                             ) as response:
                                 if response.status in (401, 403):
                                     logging.error("Invalid API key for OpenWeatherMap.")
-                                    # Send alert
-                                    from core.alert_sender import AlertSender
+                                    try:
+                                        from core.alert_sender import AlertSender
 
-                                    alert_settings: dict[str, Any] = {}  # Load settings
-                                    async with AlertSender(alert_settings) as sender:
-                                        await sender.send(
-                                            {
-                                                "severity": "critical",
-                                                "summary": "Invalid OpenWeatherMap API key",
-                                            }
-                                        )
+                                        alert_settings: dict[str, Any] = {}
+                                        async with AlertSender(alert_settings) as sender:
+                                            await sender.send(
+                                                {
+                                                    "severity": "critical",
+                                                    "summary": "Invalid OpenWeatherMap API key",
+                                                }
+                                            )
+                                    except Exception as alert_err:
+                                        logging.warning(f"Failed to send weather auth alert: {alert_err}")
                                     ERRORS_TOTAL.labels(source="weather").inc()
                                     return None
                                 response.raise_for_status()
                                 data = await response.json()
                                 break
                         except asyncio.TimeoutError:
-                            logging.warning(f"Таймаут при получении погоды (попытка {attempt+1})")
+                            logging.warning(f"Таймаут при получении погоды (попытка {attempt + 1})")
                             RETRIES_TOTAL.labels(component="weather").inc()
                         except aiohttp.ClientResponseError as e:
-                            if e.status in (401, 403):
-                                # Handle auth error as above
-                                pass
-                            logging.error(f"HTTP error: {e}")
+                            logging.error(f"HTTP error {e.status}: {_scrub_appid(e.message)}")
                             ERRORS_TOTAL.labels(source="weather").inc()
                             return None
                         except Exception as e:
                             # На практике aiohttp.raise_for_status поднимает ClientResponseError (наследник ClientError),
                             # но для устойчивости обработаем и общий Exception из тестов/моков.
-                            logging.error(f"Неожиданная ошибка при запросе погоды: {e}")
+                            logging.error(f"Неожиданная ошибка при запросе погоды: {_scrub_appid(e)}")
                             ERRORS_TOTAL.labels(source="weather").inc()
                             return None
                     else:
@@ -111,7 +119,7 @@ class WeatherAPI:
                         ERRORS_TOTAL.labels(source="weather").inc()
                         return None
             except Exception as e:
-                logging.error(f"Критическая ошибка при обращении к погодному API: {e}")
+                logging.error(f"Критическая ошибка при обращении к погодному API: {_scrub_appid(e)}")
                 ERRORS_TOTAL.labels(source="weather").inc()
                 return None
 
@@ -123,8 +131,11 @@ class WeatherAPI:
         closest_forecast_item = None
         min_diff = timedelta(days=999)
 
-        for forecast_item in data.get("list", []):
-            forecast_utc_dt = datetime.fromtimestamp(forecast_item["dt"], tz=timezone.utc)  # OWM время всегда в UTC
+        for forecast_item in data.get("list") or []:
+            dt_ts = forecast_item.get("dt") if isinstance(forecast_item, dict) else None
+            if dt_ts is None:
+                continue
+            forecast_utc_dt = datetime.fromtimestamp(dt_ts, tz=timezone.utc)  # OWM время всегда в UTC
 
             # Ищем прогноз, который находится в том же 3-часовом блоке, что и target_datetime
             # Или ближайший в будущем, если target_datetime очень близко к границе блока
@@ -139,13 +150,14 @@ class WeatherAPI:
                 min_diff = time_diff
 
         if closest_forecast_item:
-            main_block = closest_forecast_item.get("main", {})
-            weather_block = closest_forecast_item.get("weather", [{}])[0]
+            main_block = closest_forecast_item.get("main") or {}
+            weather_list = closest_forecast_item.get("weather") or []
+            weather_block = weather_list[0] if isinstance(weather_list, list) and weather_list else {}
             weather_description = weather_block.get("description", "неизвестно")
             temp = self._safe_number(main_block.get("temp"))
             feels_like = self._safe_number(main_block.get("feels_like"))
             humidity = self._safe_number(main_block.get("humidity"))
-            wind_speed = self._safe_number(closest_forecast_item.get("wind", {}).get("speed"))
+            wind_speed = self._safe_number((closest_forecast_item.get("wind") or {}).get("speed"))
             pop_raw = closest_forecast_item.get("pop", 0)
             try:
                 pop = max(0, min(100, round(float(pop_raw) * 100)))
@@ -185,10 +197,9 @@ class WeatherAPI:
         if not self.api_key:
             return None
 
-        start_dt = MOSCOW_TZ.localize(
-            datetime(target_date.year, target_date.month, target_date.day, max(0, min(23, start_hour)), 0)
-        )
-        end_hour_clamped = max(start_hour, min(23, end_hour))
+        start_hour_clamped = max(0, min(23, start_hour))
+        start_dt = MOSCOW_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, start_hour_clamped, 0))
+        end_hour_clamped = max(start_hour_clamped, min(23, end_hour))
         end_dt = MOSCOW_TZ.localize(datetime(target_date.year, target_date.month, target_date.day, end_hour_clamped, 0))
 
         start_forecast = await self.get_forecast_for_time(start_dt, lang=lang)
@@ -197,7 +208,7 @@ class WeatherAPI:
 
         slots = [start_forecast]
         end_forecast = None
-        if end_hour_clamped - start_hour >= 3:
+        if end_hour_clamped - start_hour_clamped >= 3:
             end_forecast = await self.get_forecast_for_time(end_dt, lang=lang)
             if end_forecast:
                 slots.append(end_forecast)

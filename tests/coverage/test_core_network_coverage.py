@@ -295,7 +295,7 @@ class _PostCtx:
 
 
 class _FakePostSession:
-    def __init__(self, status=200, data=None, raise_exc=None, coroutine=False):
+    def __init__(self, status=200, data=None, raise_exc=None, coroutine=False, **kwargs):
         self.calls = []
         self._status = status
         self._data = data
