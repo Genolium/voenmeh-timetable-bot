@@ -21,6 +21,7 @@ from bot.text_formatters import (
     generate_evening_intro,
     generate_morning_intro,
     get_footer_with_promo,
+    has_reportable_lessons,
 )
 from core.admin_reports import send_daily_reports, send_monthly_reports, send_weekly_reports
 from core.config import (
@@ -57,6 +58,9 @@ logger = logging.getLogger(__name__)
 GRADUATED_MISS_PREFIX = "graduated_miss:"
 GRADUATED_MISS_THRESHOLD = 2
 GRADUATED_MISS_TTL_SECONDS = 7 * 86400
+
+GOST_LAB_PROMO_PREFIX = "promo:gost_lab_footer:"
+GOST_LAB_PROMO_COOLDOWN_SECONDS = 8 * 86400
 
 
 class TimetableManagerRef:
@@ -193,6 +197,30 @@ async def _fetch_window_weather(
     return result
 
 
+async def _should_show_gost_lab_promo(
+    timetable_manager: Any,
+    user_id: int,
+    user_type: str,
+    lessons: list[dict[str, Any]],
+) -> bool:
+    """Показывает футер про ГОСТ-отчёт студентам в ЛС при наличии лаб/практ/курс не чаще 1 раза в 8 дней."""
+    if user_id <= 0 or user_type == "teacher" or not has_reportable_lessons(lessons):
+        return False
+    redis_client = getattr(timetable_manager, "redis", None)
+    if redis_client is None:
+        return False
+    try:
+        claimed = await redis_client.set(
+            f"{GOST_LAB_PROMO_PREFIX}{user_id}",
+            "1",
+            nx=True,
+            ex=GOST_LAB_PROMO_COOLDOWN_SECONDS,
+        )
+        return bool(claimed)
+    except Exception:
+        return False
+
+
 async def evening_broadcast(user_data_manager: UserDataManager, timetable_manager: TimetableManager) -> None:
     timetable_manager = _resolve_manager(timetable_manager)
     tomorrow = datetime.now(MOSCOW_TZ) + timedelta(days=1)
@@ -243,10 +271,13 @@ async def evening_broadcast(user_data_manager: UserDataManager, timetable_manage
         else:
             text_body = i18n.get("fmt_no_lessons", lang)
 
+        show_gost_promo = await _should_show_gost_lab_promo(
+            timetable_manager, user_id, user_type, lessons if has_lessons else []
+        )
         footer = (
             "\n\n<tg-spoiler><i>Настроить рассылку чата: /group</i></tg-spoiler>"
             if user_id < 0
-            else get_footer_with_promo(lang)
+            else get_footer_with_promo(lang, show_gost_lab_promo=show_gost_promo)
         )
         text = f"{intro_text}{text_body}{footer}"
 

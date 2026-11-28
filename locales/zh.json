@@ -89,6 +89,7 @@
     "btn_change_group": "🔄 更改",
     "btn_search": "🔍 搜索",
     "btn_news": "📢 新闻",
+    "btn_gost_report": "📄 生成 GOST 报告",
     "btn_original": "📄 原件 (文件)",
     "schedule_teacher_label": "教师:",
     "schedule_week_caption": "✅ 每周时间表已准备就绪！\n\n{subject_line}\n周: <b>{week_name}</b>\n时期: <b>{start} - {end}</b>",
@@ -112,6 +113,7 @@
     "fmt_week_no_lessons": "🎉 本周没有课!",
     "unsubscribe_footer": "\n\n<tg-spoiler><i>可以在 «⚙️ 设置» 中关闭此通知</i></tg-spoiler>",
     "channel_promo": "\n\n📢 <i>开发新闻: <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a></i>",
+    "gost_lab_promo": "\n\n📄 <i>明天有实验课？1 分钟按 VOENMEH GOST 规范排版报告（零正文改动）→ <a href='https://t.me/auditorium_404_bot?start=tt_lab'>@auditorium_404_bot</a></i>",
     "evening_greetings": [
         "晚上好！👋",
         "嗨！准备迎接明天。",
