@@ -108,8 +108,18 @@ class GroupChatManager:
                 return
             existing_new = await session.get(GroupChat, new_chat_id)
             if existing_new:
+                existing_new.title = old_chat.title or existing_new.title
                 existing_new.target_group = old_chat.target_group or existing_new.target_group
+                existing_new.language = old_chat.language
+                existing_new.morning_summary = old_chat.morning_summary
+                existing_new.evening_notify = old_chat.evening_notify
+                existing_new.lesson_reminders = old_chat.lesson_reminders
+                existing_new.schedule_diff_notify = old_chat.schedule_diff_notify
+                existing_new.morning_time = old_chat.morning_time
+                existing_new.evening_time = old_chat.evening_time
+                existing_new.reminder_time_minutes = old_chat.reminder_time_minutes
                 existing_new.is_active = old_chat.is_active
+                existing_new.added_by_user_id = old_chat.added_by_user_id or existing_new.added_by_user_id
                 await session.delete(old_chat)
             else:
                 session.add(

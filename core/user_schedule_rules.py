@@ -204,18 +204,20 @@ class UserScheduleRulesManager:
 
     async def toggle_hide_subject(self, user_id: int, target_group: str, subject: str) -> bool:
         """Скрывает или возвращает предмет; возвращает True, если предмет теперь скрыт."""
-        norm_group = target_group.upper()
-        norm_subject = subject.strip()
+        norm_group = target_group.strip().upper()
+        norm_subject = subject.strip()[:120]
+        target_upper = norm_subject.upper()
         async with self.session_factory() as session:
             stmt = select(UserLessonRule).where(
                 UserLessonRule.user_id == user_id,
                 UserLessonRule.target_group == norm_group,
                 UserLessonRule.rule_type == "hide_subject",
-                UserLessonRule.subject == norm_subject,
             )
-            existing = (await session.execute(stmt)).scalar_one_or_none()
-            if existing:
-                await session.delete(existing)
+            all_rows = (await session.execute(stmt)).scalars().all()
+            existing_rows = [row for row in all_rows if (row.subject or "").strip().upper() == target_upper]
+            if existing_rows:
+                for row in existing_rows:
+                    await session.delete(row)
                 await session.commit()
                 hidden = False
             else:

@@ -385,7 +385,7 @@ async def test_generate_bg_read_failure(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "read_bytes", fake_read)
     assert await ig.generate_schedule_image(_schedule(), "Нечетная", "G1", str(tmp_path / "o.png"), user_theme="light") is True
-    assert ig._bg_images_cache["light"] == ""
+    assert "light" not in ig._bg_images_cache
 
 
 @pytest.mark.asyncio

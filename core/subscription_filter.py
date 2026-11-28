@@ -189,8 +189,8 @@ class SubscriptionFilterManager:
         """Удаляет канал из списка обязательных по channel_id или ID записи."""
         clean_channel_id = str(channel_id).strip()
         async with self.session_factory() as session:
-            if clean_channel_id.isdigit():
-                # Пробуем удалить как PK, иначе как channel_id
+            if clean_channel_id.isdigit() and int(clean_channel_id) <= 2_147_483_647:
+                # Пробуем удалить как PK (в пределах 32-bit INT), иначе как channel_id
                 res = await session.execute(
                     delete(RequiredChannel).where(
                         (RequiredChannel.id == int(clean_channel_id)) | (RequiredChannel.channel_id == clean_channel_id)
@@ -264,8 +264,9 @@ class SubscriptionFilterManager:
             target_chat_id = int(cid) if (cid.startswith("-") and cid[1:].isdigit()) or cid.isdigit() else cid
             try:
                 member = await bot.get_chat_member(chat_id=target_chat_id, user_id=user_id)
-                # Статусы участника
-                if member.status not in ("member", "administrator", "creator", "restricted"):
+                # Статусы участника (для restricted дополнительно проверяем флаг is_member)
+                is_restricted_member = member.status == "restricted" and getattr(member, "is_member", True) is True
+                if member.status not in ("member", "administrator", "creator") and not is_restricted_member:
                     missing_channels.append(ch)
             except TelegramForbiddenError:
                 # Бот заблокирован или не имеет доступа к каналу

@@ -78,6 +78,14 @@ NAME_TRANSLIT_TABLE = {
 }
 
 
+_GROUP_TRANSLIT_MAP = str.maketrans(TRANSLIT_TABLE)
+_GROUP_ALLOWED_RE = re.compile(r"[^А-ЯЁ0-9\-\.]")
+_NAME_MULTI_RE = re.compile(
+    "|".join(re.escape(k) for k in sorted((k for k in NAME_TRANSLIT_TABLE if len(k) > 1), key=len, reverse=True))
+)
+_NAME_SINGLE_MAP = str.maketrans({k: v for k, v in NAME_TRANSLIT_TABLE.items() if len(k) == 1})
+
+
 def normalize_group_name(group_name: str) -> str:
     """
     Нормализует название группы:
@@ -88,20 +96,8 @@ def normalize_group_name(group_name: str) -> str:
     if not group_name:
         return ""
 
-    s = group_name.upper().strip()
-
-    # Замена латиницы на кириллицу
-    chars = list(s)
-    for i, char in enumerate(chars):
-        if char in TRANSLIT_TABLE:
-            chars[i] = TRANSLIT_TABLE[char]
-
-    normalized = "".join(chars)
-
-    # Оставляем только допустимые символы (буквы и цифры, дефис)
-    normalized = re.sub(r"[^А-ЯЁ0-9\-\.]", "", normalized)
-
-    return normalized
+    normalized = group_name.upper().strip().translate(_GROUP_TRANSLIT_MAP)
+    return _GROUP_ALLOWED_RE.sub("", normalized)
 
 
 def transliterate_failed_search(text: str) -> str:
@@ -111,17 +107,5 @@ def transliterate_failed_search(text: str) -> str:
     """
     if not text:
         return ""
-    text = text.lower()
-
-    # Сначала заменяем многобуквенные сочетания
-    for eng, rus in NAME_TRANSLIT_TABLE.items():
-        if len(eng) > 1:
-            text = text.replace(eng, rus)
-
-    # Затем одиночные буквы
-    chars = list(text)
-    for i, char in enumerate(chars):
-        if char in NAME_TRANSLIT_TABLE:
-            chars[i] = NAME_TRANSLIT_TABLE[char]
-
-    return "".join(chars).title()  # Возвращаем с заглавной буквы
+    lowered = _NAME_MULTI_RE.sub(lambda m: NAME_TRANSLIT_TABLE[m.group(0)], text.lower())
+    return lowered.translate(_NAME_SINGLE_MAP).title()  # Возвращаем с заглавной буквы

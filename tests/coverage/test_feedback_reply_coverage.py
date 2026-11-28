@@ -20,7 +20,7 @@ def _load(feedback_chat_id):
     original = config.FEEDBACK_CHAT_ID
     config.FEEDBACK_CHAT_ID = feedback_chat_id
     try:
-        source = _MODULE_PATH.read_text()
+        source = _MODULE_PATH.read_text(encoding="utf-8")
         code = compile(source, str(_MODULE_PATH), "exec")
         namespace = {"__name__": "feedback_reply_handler_cov", "__file__": str(_MODULE_PATH)}
         exec(code, namespace)
@@ -30,7 +30,8 @@ def _load(feedback_chat_id):
 
 
 @pytest.fixture
-def handler_module():
+def handler_module(monkeypatch):
+    monkeypatch.setattr(config, "ADMIN_IDS", [999])
     return _load("-1001234567890")
 
 

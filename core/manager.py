@@ -75,79 +75,83 @@ class TimetableManager:
 
             if cached_data:
                 print("Найден кэш расписания в Redis.")
-                # Создаем временный экземпляр для разжатия данных
-                temp_instance = cls.__new__(cls)
-                temp_instance._use_compression = True
-                data = temp_instance._decompress_data(cached_data)
-
-                # Обновляем fallback файл актуальными данными из кэша
                 try:
-                    from core.parser import save_fallback_schedule
+                    # Создаем временный экземпляр для разжатия данных
+                    temp_instance = cls.__new__(cls)
+                    temp_instance._use_compression = True
+                    data = temp_instance._decompress_data(cached_data)
 
-                    save_fallback_schedule(data)
-                    print("Fallback schedule updated with cached data")
+                    # Обновляем fallback файл актуальными данными из кэша
+                    try:
+                        from core.parser import save_fallback_schedule
+
+                        save_fallback_schedule(data)
+                        print("Fallback schedule updated with cached data")
+                    except Exception as e:
+                        print(f"Warning: Failed to update fallback schedule: {e}")
+
+                    return cls(data, redis_client)
                 except Exception as e:
-                    print(f"Warning: Failed to update fallback schedule: {e}")
+                    logging.error(f"Повреждённый кэш расписания в Redis, переходим к загрузке: {e}")
+                    try:
+                        await redis_client.delete(REDIS_SCHEDULE_CACHE_KEY)
+                    except Exception:
+                        pass
+            print("Кэш в Redis не найден. Загрузка с сервера...")
+            from core.parser import NOT_MODIFIED, fetch_and_parse_all_schedules
 
-                return cls(data, redis_client)
+            new_data = await fetch_and_parse_all_schedules(force=True)
+            if new_data is NOT_MODIFIED:
+                new_data = None
+            if new_data:
+                temp_instance = cls(new_data, redis_client)
+                await temp_instance.save_to_cache()
+                print("Новое расписание загружено и сохранено в кэш Redis.")
+                return temp_instance
             else:
-                print("Кэш в Redis не найден. Загрузка с сервера...")
-                from core.parser import NOT_MODIFIED, fetch_and_parse_all_schedules
+                # Пытаемся восстановить из последней резервной копии
+                print("Сервер недоступен. Пытаемся восстановить из резервной копии...")
+                backup_data = await cls._restore_from_backup(redis_client)
+                if backup_data:
+                    temp_instance = cls(backup_data, redis_client)
+                    await temp_instance.save_to_cache()  # Восстанавливаем основной кэш
 
-                new_data = await fetch_and_parse_all_schedules(force=True)
-                if new_data is NOT_MODIFIED:
-                    new_data = None
-                if new_data:
-                    temp_instance = cls(new_data, redis_client)
-                    await temp_instance.save_to_cache()
-                    print("Новое расписание загружено и сохранено в кэш Redis.")
+                    # Обновляем fallback файл данными из резервной копии
+                    try:
+                        from core.parser import save_fallback_schedule
+
+                        save_fallback_schedule(backup_data)
+                        print("Fallback schedule updated with backup data")
+                    except Exception as e:
+                        print(f"Warning: Failed to update fallback schedule from backup: {e}")
+
+                    print("Расписание восстановлено из резервной копии!")
                     return temp_instance
                 else:
-                    # Пытаемся восстановить из последней резервной копии
-                    print("Сервер недоступен. Пытаемся восстановить из резервной копии...")
-                    backup_data = await cls._restore_from_backup(redis_client)
-                    if backup_data:
-                        temp_instance = cls(backup_data, redis_client)
-                        await temp_instance.save_to_cache()  # Восстанавливаем основной кэш
+                    print("Критическая ошибка: нет доступных резервных копий расписания. Попытка загрузить fallback данные...")
+                    # Пытаемся загрузить fallback данные
+                    from core.parser import load_fallback_schedule
 
-                        # Обновляем fallback файл данными из резервной копии
+                    fallback_data = load_fallback_schedule()
+                    if fallback_data:
+                        print("Используем fallback данные расписания.")
+                        temp_instance = cls(fallback_data, redis_client)
+                        await temp_instance.save_to_cache()
+
+                        # Обновляем fallback файл (на случай если данные были изменены)
                         try:
                             from core.parser import save_fallback_schedule
 
-                            save_fallback_schedule(backup_data)
-                            print("Fallback schedule updated with backup data")
+                            save_fallback_schedule(fallback_data)
+                            print("Fallback schedule file verified and updated")
                         except Exception as e:
-                            print(f"Warning: Failed to update fallback schedule from backup: {e}")
+                            print(f"Warning: Failed to update fallback schedule file: {e}")
 
-                        print("Расписание восстановлено из резервной копии!")
+                        print("Fallback расписание загружено и сохранено в кэш Redis.")
                         return temp_instance
                     else:
-                        print(
-                            "Критическая ошибка: нет доступных резервных копий расписания. Попытка загрузить fallback данные..."
-                        )
-                        # Пытаемся загрузить fallback данные
-                        from core.parser import load_fallback_schedule
-
-                        fallback_data = load_fallback_schedule()
-                        if fallback_data:
-                            print("Используем fallback данные расписания.")
-                            temp_instance = cls(fallback_data, redis_client)
-                            await temp_instance.save_to_cache()
-
-                            # Обновляем fallback файл (на случай если данные были изменены)
-                            try:
-                                from core.parser import save_fallback_schedule
-
-                                save_fallback_schedule(fallback_data)
-                                print("Fallback schedule file verified and updated")
-                            except Exception as e:
-                                print(f"Warning: Failed to update fallback schedule file: {e}")
-
-                            print("Fallback расписание загружено и сохранено в кэш Redis.")
-                            return temp_instance
-                        else:
-                            print("Критическая ошибка: fallback данные недоступны.")
-                            return None
+                        print("Критическая ошибка: fallback данные недоступны.")
+                        return None
 
     @classmethod
     async def _restore_from_backup(cls, redis_client: Redis) -> dict[str, Any] | None:
@@ -349,6 +353,20 @@ class TimetableManager:
         )
         return [name for name, score, _ in results]
 
+    @staticmethod
+    def _normalize_teacher_key(name: str) -> str:
+        try:
+            return "".join(ch for ch in name.replace(" ", "").replace("\u00a0", "").replace(".", "")).upper()
+        except Exception:
+            return (name or "").upper()
+
+    def _get_normalized_teachers_map(self) -> dict[str, str]:
+        cache = getattr(self, "_normalized_teachers_cache", None)
+        if cache is None or len(cache) != len(self._teachers_index):
+            cache = {self._normalize_teacher_key(k): k for k in self._teachers_index.keys()}
+            self._normalized_teachers_cache = cache
+        return cache
+
     def resolve_canonical_teacher(self, raw_name: str) -> str | None:
         """Возвращает каноническое имя преподавателя по «сырым» данным пользователя.
 
@@ -363,15 +381,9 @@ class TimetableManager:
         if raw_name in self._teachers_index:
             return raw_name
 
-        # 2) normalization
-        def _normalize(n: str) -> str:
-            try:
-                return "".join(ch for ch in n.replace(" ", "").replace("\u00a0", "").replace(".", "")).upper()
-            except Exception:
-                return (n or "").upper()
-
-        normalized_to_canonical = {_normalize(k): k for k in self._teachers_index.keys()}
-        norm_key = _normalize(raw_name)
+        # 2) normalization (кэшированный O(1) поиск)
+        normalized_to_canonical = self._get_normalized_teachers_map()
+        norm_key = self._normalize_teacher_key(raw_name)
         if norm_key in normalized_to_canonical:
             return cast(str | None, normalized_to_canonical[norm_key])
 
@@ -391,19 +403,13 @@ class TimetableManager:
         if teacher_name in self._teachers_index:
             exact_match = teacher_name
         else:
-            # 2) Нормализация: убираем точки/пробелы, сравниваем без регистра
-            def _normalize(n: str) -> str:
-                try:
-                    return "".join(ch for ch in n.replace(" ", "").replace("\u00a0", "").replace(".", "")).upper()
-                except Exception:
-                    return (n or "").upper()
-
-            normalized_to_canonical: dict[str, str] = {_normalize(k): k for k in self._teachers_index.keys()}
-            norm_key = _normalize(teacher_name)
+            # 2) Нормализация: убираем точки/пробелы, сравниваем без регистра (O(1) кэш)
+            normalized_to_canonical = self._get_normalized_teachers_map()
+            norm_key = self._normalize_teacher_key(teacher_name)
             if norm_key in normalized_to_canonical:
                 exact_match = normalized_to_canonical[norm_key]
             else:
-                # 3) Fallback: ne чёткий поиск по исходным ключам (регистрация могла сохранить вариант с опечаткой)
+                # 3) Fallback: нечёткий поиск по исходным ключам (регистрация могла сохранить вариант с опечаткой)
                 fuzzy_results = self.find_teachers_fuzzy(teacher_name, limit=1, score_cutoff=50)
                 if fuzzy_results:
                     exact_match = fuzzy_results[0]

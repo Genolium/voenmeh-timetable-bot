@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import date, datetime, time
 from typing import Any
 
@@ -50,23 +51,26 @@ def analyze_lessons_window(lessons: list[dict[str, Any]] | None) -> dict[str, An
             "is_dense": False,
         }
 
-    parsed.sort(key=lambda item: item[0])
+    parsed.sort(key=lambda item: (item[0], item[1]))
     max_gap = 0
-    for idx in range(len(parsed) - 1):
-        end_curr = parsed[idx][1]
-        start_next = parsed[idx + 1][0]
-        gap = (start_next.hour * 60 + start_next.minute) - (end_curr.hour * 60 + end_curr.minute)
+    running_end = parsed[0][1]
+    last_et, last_raw = parsed[0][1], parsed[0][3]
+    for idx in range(1, len(parsed)):
+        start_next, end_next, _, end_next_raw = parsed[idx]
+        gap = (start_next.hour * 60 + start_next.minute) - (running_end.hour * 60 + running_end.minute)
         if gap > max_gap:
             max_gap = gap
+        if end_next > running_end:
+            running_end = end_next
+            last_et, last_raw = end_next, end_next_raw
 
     first_st, _, first_raw, _ = parsed[0]
-    _, last_et, _, last_raw = parsed[-1]
     return {
         "count": len(parsed),
         "first_start": first_raw,
         "last_end": last_raw,
         "start_hour": first_st.hour,
-        "end_hour": last_et.hour + (1 if last_et.minute >= 30 else 0),
+        "end_hour": min(23, last_et.hour + (1 if last_et.minute >= 30 else 0)),
         "max_gap_minutes": max_gap,
         "is_dense": len(parsed) >= 3 and max_gap <= 25,
     }
@@ -287,8 +291,10 @@ def build_weather_summary_block(
     else:
         prefix = "Погода на день" if is_morning else "Прогноз на завтра"
 
-    desc_cap = desc[:1].upper() + desc[1:] if desc else ""
-    main_line = f"{emoji} {prefix}: {desc_cap}, {temp_str}".rstrip(", ")
+    desc_cap = html.escape(desc[:1].upper() + desc[1:], quote=False) if desc else ""
+    safe_emoji = html.escape(emoji, quote=False)
+    summary_parts = [part for part in (desc_cap, temp_str) if part]
+    main_line = f"{safe_emoji} {prefix}: {', '.join(summary_parts)}" if summary_parts else f"{safe_emoji} {prefix}"
     if details:
         main_line += f" ({', '.join(details)})"
 

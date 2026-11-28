@@ -1751,7 +1751,8 @@ class TestCacheAndGeneration:
         cb = make_callback(user_id=321)
         active_generations[321] = {"cancelled": False, "status_msg_id": 11}
         try:
-            await on_cancel_generation(cb)
+            with patch("core.config.ADMIN_IDS", [321]):
+                await on_cancel_generation(cb)
         finally:
             active_generations.pop(321, None)
         cb.answer.assert_awaited_once()
@@ -1763,7 +1764,8 @@ class TestCacheAndGeneration:
         cb.message.edit_text = AsyncMock(side_effect=Exception("cannot edit"))
         active_generations[322] = {"cancelled": False, "status_msg_id": 11}
         try:
-            await on_cancel_generation(cb)
+            with patch("core.config.ADMIN_IDS", [322]):
+                await on_cancel_generation(cb)
         finally:
             active_generations.pop(322, None)
         assert 322 not in active_generations
@@ -1771,8 +1773,15 @@ class TestCacheAndGeneration:
     async def test_on_cancel_generation_none(self):
         cb = make_callback(user_id=323)
         active_generations.pop(323, None)
-        await on_cancel_generation(cb)
+        with patch("core.config.ADMIN_IDS", [323]):
+            await on_cancel_generation(cb)
         assert "Нет активной генерации" in cb.answer.await_args[0][0]
+
+    async def test_on_cancel_generation_non_admin_denied(self):
+        cb = make_callback(user_id=999)
+        with patch("core.config.ADMIN_IDS", [321]):
+            await on_cancel_generation(cb)
+        assert "Доступ запрещён" in cb.answer.await_args[0][0]
 
     async def test_broadcast_rich_html_buttons_followup_self_test_and_groups(self):
         from aiogram.types import MessageEntity

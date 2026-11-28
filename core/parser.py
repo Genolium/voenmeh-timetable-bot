@@ -97,18 +97,23 @@ def save_fallback_schedule(data: dict) -> bool:
     Returns:
         True если сохранение успешно, False в случае ошибки
     """
+    tmp_path = None
     try:
         # Создаем директорию если её нет
         FALLBACK_SCHEDULE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        # Сохраняем данные в файл
-        with open(FALLBACK_SCHEDULE_PATH, "w", encoding="utf-8") as f:
+        # Пишем атомарно во временный файл и заменяем целевой через os.replace
+        tmp_path = FALLBACK_SCHEDULE_PATH.with_name(f".{FALLBACK_SCHEDULE_PATH.name}.{os.getpid()}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, FALLBACK_SCHEDULE_PATH)
 
         logging.info(f"Updated fallback schedule file: {FALLBACK_SCHEDULE_PATH}")
         return True
 
     except Exception as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         logging.error(f"Failed to save fallback schedule: {e}")
         return False
 
@@ -317,7 +322,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             "source": "voenmeh.su",
         }
         hash_seed = f"{meta.get('updated_at', '')}_{period_str}_{len(all_schedules)}"
-        all_schedules["__current_xml_hash__"] = hashlib.md5(hash_seed.encode("utf-8")).hexdigest()
+        all_schedules["__current_xml_hash__"] = hashlib.md5(hash_seed.encode("utf-8"), usedforsecurity=False).hexdigest()
 
         _LAST_VOENMEH_SU_UPDATED_AT = meta_updated_at
 
@@ -366,6 +371,8 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
     try:
         attempts = 0
         xml_bytes = None
+        new_etag = None
+        new_last_modified = None
         while attempts < 3:
             attempts += 1
             try:
@@ -374,8 +381,8 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     if response.status == 304:
                         return NOT_MODIFIED
                     xml_bytes = await response.read()
-                    _LAST_ETAG = response.headers.get("ETag") or _LAST_ETAG
-                    _LAST_MODIFIED = response.headers.get("Last-Modified") or _LAST_MODIFIED
+                    new_etag = response.headers.get("ETag")
+                    new_last_modified = response.headers.get("Last-Modified")
                     break
             except Exception:
                 ERRORS_TOTAL.labels(source="parser").inc()
@@ -387,9 +394,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if not xml_bytes:
             return None
 
-        # Ограничиваем общее время декодирования и парсинга XML
+        # Ограничиваем общее время декодирования и парсинга XML (utf-8-sig первым, чтобы снять BOM)
         xml_data = None
-        for encoding in ("utf-8", "utf-16", "windows-1251", "utf-8-sig"):
+        for encoding in ("utf-8-sig", "utf-8", "utf-16", "windows-1251"):
             try:
                 candidate = xml_bytes.decode(encoding).strip()
                 if "<Timetable" in candidate or "<?xml" in candidate:
@@ -401,7 +408,7 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if xml_data is None:
             xml_data = xml_bytes.decode("utf-8", errors="replace").strip()
 
-        current_hash = hashlib.md5(xml_bytes).hexdigest()
+        current_hash = hashlib.md5(xml_bytes, usedforsecurity=False).hexdigest()
         root = ET.fromstring(xml_data)
 
         all_schedules: dict[str, Any] = {}
@@ -425,6 +432,12 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     f"(текущий учебный год: {current_academic_year}). Файл отклонён во избежание сброса расписания."
                 )
                 return None
+
+        # Обновляем условные заголовки только после успешного парсинга и проверки актуальности года
+        if new_etag:
+            _LAST_ETAG = new_etag
+        if new_last_modified:
+            _LAST_MODIFIED = new_last_modified
 
         all_schedules["__metadata__"] = {
             "period": period_meta,

@@ -152,6 +152,17 @@ class UserDataManager:
             self._redis_client = get_redis_client()
         return cast(Redis, self._redis_client)
 
+    async def close(self) -> None:
+        """Корректно освобождает пул подключений к БД и Redis."""
+        if self._redis_client is not None:
+            try:
+                await self._redis_client.aclose()
+            except Exception as e:
+                logger.warning(f"Failed to close Redis client in UserDataManager: {e}")
+            finally:
+                self._redis_client = None
+        await self.engine.dispose()
+
     def _get_cache_key(self, func_name: str, *args: Any, **kwargs: Any) -> str:
         """
         Генерирует детерминированный ключ кэша на основе имени функции и аргументов.
@@ -163,7 +174,7 @@ class UserDataManager:
         kwargs_str = str(sorted(kwargs.items()))
         data_to_hash = f"{args_str}:{kwargs_str}"
 
-        arg_hash = hashlib.md5(data_to_hash.encode("utf-8")).hexdigest()
+        arg_hash = hashlib.md5(data_to_hash.encode("utf-8"), usedforsecurity=False).hexdigest()
         return f"cache:{func_name}:{arg_hash}"
 
     async def clear_user_cache(self, user_id: Optional[int] = None) -> None:
@@ -253,6 +264,7 @@ class UserDataManager:
                 user.blocked_date = now_msk_naive() if is_blocked else None
                 await session.commit()
         await self.clear_user_cache(user_id)
+        await self.clear_user_cache()
 
     async def set_user_group(self, user_id: int, group: str | None) -> None:
         """Устанавливает или обновляет учебную группу пользователя."""

@@ -69,15 +69,22 @@ class ImageService:
         Returns:
             Tuple[success, file_path]
         """
-        # Ключ кэша: для пользовательских тем учитываем тему (в нижнем регистре), защищаем от path traversal
-        safe_group = group.upper().replace("/", "_").replace("\\", "_").replace("..", "_")
-        normalized_theme = user_theme.lower() if user_theme else "standard"
+        # Ключ кэша: нормализуем группу, тему и параметры для защиты от path traversal
+        from core.image_cache_manager import sanitize_group_key
+        from core.themes import get_theme_meta
+
+        safe_group = sanitize_group_key(group)
+        safe_week = "odd" if week_key == "odd" else ("even" if week_key == "even" else sanitize_group_key(week_key).lower())
+        normalized_theme = get_theme_meta(user_theme).id if user_theme else "standard"
+        safe_lang = lang if lang in ("ru", "en", "zh") else "ru"
         if normalized_theme != "standard":
-            cache_key = f"{safe_group}_{week_key}_{normalized_theme}_{lang}"
+            cache_key = f"{safe_group}_{safe_week}_{normalized_theme}_{safe_lang}"
         else:
-            cache_key = f"{safe_group}_{week_key}_{lang}"
+            cache_key = f"{safe_group}_{safe_week}_{safe_lang}"
         if rules_hash:
-            cache_key = f"{cache_key}_u{rules_hash}"
+            safe_rules = "".join(ch for ch in str(rules_hash) if ch.isalnum())[:32]
+            if safe_rules:
+                cache_key = f"{cache_key}_u{safe_rules}"
 
         logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
 

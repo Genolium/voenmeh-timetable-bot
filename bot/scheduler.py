@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -843,6 +844,9 @@ async def handle_graduated_groups(
         current_groups = set(timetable_manager._schedules.keys())
         # Исключаем служебные ключи
         current_groups = {g for g in current_groups if not g.startswith("__")}
+        if not current_groups:
+            logger.warning("Список текущих групп пуст — пропускаем проверку выпустившихся групп.")
+            return
 
         graduated_groups = set()
         affected_users = []
@@ -891,14 +895,16 @@ async def handle_graduated_groups(
         notified_count = 0
         for user_id, old_group in affected_users:
             try:
-                # Формируем сообщение
+                # Формируем сообщение (экранируем динамические имена групп для HTML)
+                safe_old_group = html.escape(str(old_group), quote=False)
+                safe_available = ", ".join(html.escape(str(g), quote=False) for g in available_groups[:10])
                 message_text = (
                     f"⚠️ <b>Внимание!</b>\n\n"
-                    f"Группа <b>{old_group}</b> больше не существует в расписании.\n"
+                    f"Группа <b>{safe_old_group}</b> больше не существует в расписании.\n"
                     f"Возможно, группа выпустилась или была переименована.\n\n"
                     f"Пожалуйста, выберите новую группу:\n"
                     f"<code>/start</code> - для выбора группы\n\n"
-                    f"Доступные группы: {', '.join(available_groups[:10])}"
+                    f"Доступные группы: {safe_available}"
                     + (f"\n... и еще {len(available_groups) - 10} групп" if len(available_groups) > 10 else "")
                 )
 

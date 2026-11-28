@@ -76,8 +76,23 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if text_value and not str(text_value).startswith("<MagicMock"):
             if str(text_value).startswith("/"):
                 action = "command"
-                raw_cmd = str(text_value)[1:].split()[0].split("@")[0][:32] if str(text_value)[1:].strip() else ""
-                BOT_COMMANDS.labels(command=raw_cmd, user_type=user_type).inc()
+                raw_cmd = str(text_value)[1:].split()[0].split("@")[0].lower()[:32] if str(text_value)[1:].strip() else ""
+                known_commands = {
+                    "start",
+                    "help",
+                    "about",
+                    "feedback",
+                    "admin",
+                    "override",
+                    "group",
+                    "settings",
+                    "find",
+                    "today",
+                    "tomorrow",
+                    "week",
+                }
+                safe_cmd = raw_cmd if raw_cmd in known_commands else "other"
+                BOT_COMMANDS.labels(command=safe_cmd, user_type=user_type).inc()
             else:
                 action = "text_message"
         elif callback_data is not None and not str(callback_data).startswith("<MagicMock"):

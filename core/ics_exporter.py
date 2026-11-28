@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from core.config import DAY_MAP, MOSCOW_TZ
 from core.semester_calendar import SEMESTER_LENGTH_WEEKS, SemesterInfo
 
 _TIME_RANGE_RE = re.compile(r"(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})")
+_ICS_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _DAY_TO_INDEX: dict[str, int] = {name: idx for idx, name in enumerate(DAY_MAP) if name}
 
 _VTIMEZONE_MOSCOW = (
@@ -27,7 +28,8 @@ _VTIMEZONE_MOSCOW = (
 
 
 def _escape_ics_text(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("\r\n", "\\n").replace("\n", "\\n").replace(";", "\\;").replace(",", "\\,")
+    cleaned = _ICS_CONTROL_RE.sub("", value).replace("\r\n", "\n").replace("\r", "\n")
+    return cleaned.replace("\\", "\\\\").replace("\n", "\\n").replace(";", "\\;").replace(",", "\\,")
 
 
 def _fold_ics_line(line: str) -> str:
@@ -111,7 +113,7 @@ def generate_schedule_ics(
     semester_end = semester_info.semester_start + timedelta(weeks=SEMESTER_LENGTH_WEEKS)
     until_date = semester_end if semester_end > today else today + timedelta(weeks=16)
     until_str = until_date.strftime("%Y%m%dT235959Z")
-    dtstamp = datetime.now(MOSCOW_TZ).strftime("%Y%m%dT%H%M%SZ")
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     # Определяем понедельники ближайшей нечётной и ближайшей чётной недель.
     if semester_info.week_key == "odd":
@@ -141,11 +143,19 @@ def generate_schedule_ics(
 
                 desc_parts = [week_label]
                 if is_teacher:
-                    group_str = str(lesson.get("group") or "").strip()
+                    groups_val = lesson.get("groups")
+                    if isinstance(groups_val, list) and groups_val:
+                        group_str = ", ".join(str(g).strip() for g in groups_val if str(g).strip())
+                    else:
+                        group_str = str(lesson.get("group") or "").strip()
                     if group_str:
                         desc_parts.append(f"Группа: {group_str}")
                 else:
-                    teacher_str = str(lesson.get("teacher") or "").strip()
+                    teacher_val = lesson.get("teachers") or lesson.get("teacher")
+                    if isinstance(teacher_val, list):
+                        teacher_str = ", ".join(str(t).strip() for t in teacher_val if str(t).strip())
+                    else:
+                        teacher_str = str(teacher_val or "").strip()
                     if teacher_str:
                         desc_parts.append(f"Преподаватель: {teacher_str}")
                 description = "\n".join(desc_parts)
@@ -190,5 +200,5 @@ def generate_schedule_ics(
 
 def build_ics_filename(target_name: str) -> str:
     """Формирует безопасное имя .ics файла для Telegram."""
-    safe = re.sub(r"[^\w\-]+", "_", target_name.strip(), flags=re.UNICODE).strip("_")
+    safe = re.sub(r"[^\w\-]+", "_", target_name.strip(), flags=re.UNICODE).strip("_")[:64]
     return f"{safe or 'schedule'}_schedule.ics"

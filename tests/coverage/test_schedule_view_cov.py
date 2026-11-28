@@ -528,7 +528,7 @@ class TestOnSendOriginalFile:
         bot.send_document.assert_not_awaited()
         callback.answer.assert_awaited()
 
-    async def test_subscription_helper_exception_is_swallowed(self):
+    async def test_subscription_helper_exception_is_fail_closed(self):
         bot = AsyncMock()
         dm = self._dm(bot=bot)
         callback = make_callback()
@@ -538,7 +538,8 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", return_value=True),
         ):
             await sv.on_send_original_file(callback, None, dm)
-        bot.send_document.assert_awaited()
+        bot.send_document.assert_not_awaited()
+        callback.answer.assert_awaited()
 
     async def test_subscribed_file_exists_sends_document(self):
         bot = AsyncMock()
@@ -596,7 +597,7 @@ class TestOnSendOriginalFile:
         svc.get_or_generate_week_image.return_value = (True, "/tmp/x.png")
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
-            patch("pathlib.Path.exists", side_effect=[False, False, False]),
+            patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
             patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
@@ -614,7 +615,7 @@ class TestOnSendOriginalFile:
         svc.get_or_generate_week_image.side_effect = RuntimeError("gen failed")
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
-            patch("pathlib.Path.exists", side_effect=[False, False, False]),
+            patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
             patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,

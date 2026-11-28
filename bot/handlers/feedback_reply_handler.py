@@ -40,6 +40,11 @@ if FEEDBACK_CHAT_ID_INT is not None:
         if not message.reply_to_message:
             return
 
+        from core.config import ADMIN_IDS
+
+        if ADMIN_IDS and (not message.from_user or message.from_user.id not in ADMIN_IDS):
+            return
+
         replied_msg = message.reply_to_message
         user_id = None
 
@@ -48,21 +53,10 @@ if FEEDBACK_CHAT_ID_INT is not None:
             user_id = replied_msg.forward_from.id
             logger.info(f"Found user_id from forward_from: {user_id}")
 
-        # Вариант 2: Пытаемся извлечь ID из текста сообщения (user info message от бота)
-        if not user_id and (replied_msg.text or replied_msg.caption):
-            text = replied_msg.text or replied_msg.caption
-            # Ищем паттерн "ID: <code>123456</code>" или "ID: 123456"
-            match = re.search(r"ID:\s*(?:<code>)?(\d+)(?:</code>)?", text)
-            if match:
-                user_id = int(match.group(1))
-                logger.info(f"Found user_id from text pattern: {user_id}")
-
-        # Вариант 3: Если это reply на пересланное сообщение со скрытым отправителем,
-        # ищем следующее сообщение в цепочке (сообщение с info от бота)
+        # Вариант 2 (пересылка со скрытым отправителем проверяется ДО regex по тексту,
+        # чтобы исключить подмену user_id через "ID: <victim>" в тексте самого пользователя)
         if not user_id and (replied_msg.forward_sender_name or replied_msg.forward_from_chat):
             logger.info("Forward from hidden user, trying to find user_id from next message")
-            # В этом случае бот должен был отправить следующее сообщение с информацией о пользователе
-            # Но мы не можем легко получить следующее сообщение, поэтому просим админа ответить на сообщение с информацией
             await message.reply(
                 "⚠️ <b>Пользователь скрыл пересылку сообщений</b>\n\n"
                 "Пожалуйста, ответьте на следующее сообщение от бота с информацией о пользователе "
@@ -70,6 +64,15 @@ if FEEDBACK_CHAT_ID_INT is not None:
                 parse_mode="HTML",
             )
             return
+
+        # Вариант 3: Пытаемся извлечь ID из текста сервисного сообщения от бота
+        if not user_id and (replied_msg.text or replied_msg.caption):
+            text = replied_msg.text or replied_msg.caption
+            # Ищем паттерн "ID: <code>123456</code>" или "ID: 123456"
+            match = re.search(r"ID:\s*(?:<code>)?(\d+)(?:</code>)?", text)
+            if match:
+                user_id = int(match.group(1))
+                logger.info(f"Found user_id from text pattern: {user_id}")
 
         if not user_id:
             await message.reply(
@@ -125,8 +128,9 @@ if FEEDBACK_CHAT_ID_INT is not None:
 
                     result = await session.execute(
                         select(Feedback)
-                        .where(Feedback.user_id == user_id, Feedback.is_answered == False)
+                        .where(Feedback.user_id == user_id, Feedback.is_answered.is_(False))
                         .order_by(Feedback.created_at.desc())
+                        .limit(1)
                     )
                     feedback = result.scalar_one_or_none()
 
