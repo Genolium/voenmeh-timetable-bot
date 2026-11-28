@@ -30,20 +30,23 @@ def test_gost_urls_and_locales():
         assert "@auditorium_404_bot" in promo
 
 
-def test_more_menu_contains_quiet_gost_url_button():
+def test_main_schedule_menu_contains_gost_url_button_in_separate_row():
+    view_window = next(w for w in schedul_dialog_windows if w.state == Schedule.view)
     more_window = next(w for w in schedul_dialog_windows if w.state == Schedule.more)
-    url_ids: list[str] = []
 
-    def _collect(widget):
+    def _collect(widget) -> list[str]:
+        ids: list[str] = []
         wid = getattr(widget, "widget_id", None)
         if wid:
-            url_ids.append(wid)
+            ids.append(wid)
         for attr in ("buttons", "widgets"):
             for child in getattr(widget, attr, []) or []:
-                _collect(child)
+                ids.extend(_collect(child))
+        return ids
 
-    _collect(more_window.keyboard)
-    assert "gost_report_url" in url_ids
+    assert "gost_report_url" in _collect(view_window.keyboard)
+    assert "gost_report_url" not in _collect(more_window.keyboard)
+    assert GOST_LAB_PROMO_COOLDOWN_SECONDS == 4 * 86400
 
 
 @pytest.mark.asyncio
