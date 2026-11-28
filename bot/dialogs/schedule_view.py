@@ -27,6 +27,7 @@ from bot.text_formatters import (
     generate_dynamic_header,
 )
 from core.config import (
+    GOST_REPORT_BOT_MENU_URL,
     MEDIA_PATH,
     MOSCOW_TZ,
     NO_LESSONS_IMAGE_PATH,
@@ -333,6 +334,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "show_my_group": show_my_group,
         "nav_date_label": nav_date_label,
         "news_url": news_channel_url(),
+        "gost_report_url": GOST_REPORT_BOT_MENU_URL,
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
         "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
@@ -344,6 +346,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_make_my_group": _("btn_make_my_group"),
         "btn_search": _("btn_search"),
         "btn_news": _("btn_news"),
+        "btn_gost_report": _("btn_gost_report"),
         "full_quality_gate_text": _("full_quality_gate_text"),
         "btn_check_subscription": _("btn_check_subscription"),
         "btn_help": _("btn_help"),
@@ -1293,6 +1296,7 @@ schedul_dialog_windows = [
                 id=WidgetIds.CHANGE_GROUP,
                 on_click=on_change_group_click,
             ),
+            Url(Format("{btn_gost_report}"), Format("{gost_report_url}"), id="gost_report_url"),
             Url(Format("{btn_news}"), Format("{news_url}"), id="news_url"),
             Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
             Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),

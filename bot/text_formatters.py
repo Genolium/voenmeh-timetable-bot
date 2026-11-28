@@ -1,6 +1,7 @@
 import html
 import logging
 import random
+import re
 from datetime import date, datetime, time
 from typing import Any, Dict, cast
 
@@ -433,10 +434,30 @@ UNSUBSCRIBE_FOOTER = "\n\n<tg-spoiler><i>Отключить эту рассыл�
 # Реклама канала с новостями разработки (показывается в 30% случаев)
 CHANNEL_PROMO = "\n\n📢 <i>Новости разработки бота: <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a></i>"
 
+_REPORTABLE_TYPE_RE = re.compile(r"(?:^|[\s.,(/])(?:лаб|практ|пр|курс)", re.IGNORECASE)
+_REPORTABLE_SUBJECT_RE = re.compile(r"\b(?:лабораторн\w*|курсов(?:ая|ой|ое|ые|ых|ую)\b)", re.IGNORECASE)
 
-def get_footer_with_promo(lang: str = "ru") -> str:
-    """Возвращает footer с возможной рекламой канала (30% вероятность)"""
+
+def has_reportable_lessons(lessons: list[dict[str, Any]] | None) -> bool:
+    """Возвращает True, если в списке пар есть лабораторная, практическая или курсовая."""
+    if not lessons:
+        return False
+    for lesson in lessons:
+        lesson_type = str(lesson.get("type") or "")
+        if _REPORTABLE_TYPE_RE.search(lesson_type):
+            return True
+        subject = str(lesson.get("subject") or "")
+        if _REPORTABLE_SUBJECT_RE.search(subject):
+            return True
+    return False
+
+
+def get_footer_with_promo(lang: str = "ru", *, show_gost_lab_promo: bool = False) -> str:
+    """Возвращает footer с контекстной строкой ГОСТ-отчёта или рекламой канала (30%)."""
     footer = i18n.get("unsubscribe_footer", lang)
+    if show_gost_lab_promo:
+        gost_promo = i18n.get("gost_lab_promo", lang)
+        return cast(str, footer + gost_promo)
     if random.random() < 0.3:  # 30% вероятность показа рекламы
         promo = i18n.get("channel_promo", lang)
         return cast(str, footer + promo)
