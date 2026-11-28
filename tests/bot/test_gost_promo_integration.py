@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from bot.dialogs.schedule_view import get_schedule_data, schedul_dialog_windows
+from bot.dialogs.schedule_view import _when_show_gost_report, get_schedule_data, schedul_dialog_windows
 from bot.dialogs.states import Schedule
 from bot.scheduler import (
     GOST_LAB_PROMO_COOLDOWN_SECONDS,
@@ -47,6 +47,17 @@ def test_main_schedule_menu_contains_gost_url_button_in_separate_row():
     assert "gost_report_url" in _collect(view_window.keyboard)
     assert "gost_report_url" not in _collect(more_window.keyboard)
     assert GOST_LAB_PROMO_COOLDOWN_SECONDS == 4 * 86400
+    assert _when_show_gost_report({"show_gost_report": True}, None, None) is True
+    assert _when_show_gost_report({"show_gost_report": False}, None, None) is False
+    assert _when_show_gost_report({}, None, None) is False
+
+    # Verify the Row wrapping gost_report_url is guarded by _when_show_gost_report
+    children = list(getattr(view_window.keyboard, "buttons", []) or []) + list(
+        getattr(view_window.keyboard, "widgets", []) or []
+    )
+    gost_rows = [w for w in children if "gost_report_url" in _collect(w)]
+    assert len(gost_rows) == 1
+    assert getattr(gost_rows[0], "condition", None) is _when_show_gost_report
 
 
 @pytest.mark.asyncio
@@ -69,6 +80,38 @@ async def test_get_schedule_data_exposes_gost_button_fields():
     data = await get_schedule_data(dm)
     assert data["gost_report_url"] == "https://t.me/auditorium_404_bot?start=tt_menu"
     assert data["btn_gost_report"] == "📄 Оформить отчёт по ГОСТ"
+    assert data["show_gost_report"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user_type,target_group,expected_show",
+    [
+        ("teacher", "Иванов И.И.", False),
+        ("teacher", "О735Б", False),
+        ("student", "Иванов И.И.", False),
+        ("student", "О735Б", True),
+    ],
+)
+async def test_get_schedule_data_hides_gost_button_for_teachers(user_type, target_group, expected_show):
+    ctx = SimpleNamespace(dialog_data={"group": target_group, "current_date_iso": "2026-11-28"})
+    dm = MagicMock()
+    dm.event = SimpleNamespace(from_user=SimpleNamespace(id=202))
+    dm.current_context.return_value = ctx
+    dm.start_data = {}
+    udm = MagicMock()
+    udm.get_user_group = AsyncMock(return_value=target_group)
+    udm.get_user_type = AsyncMock(return_value=user_type)
+    udm.get_user_language = AsyncMock(return_value="ru")
+    tm = MagicMock()
+    tm._schedules = {"О735Б": {"odd": {}, "even": {}}}
+    tm._teachers_index = {"Иванов И.И.": []}
+    tm.get_schedule_for_day = AsyncMock(return_value={"lessons": [], "week_name": "Нечётная"})
+    tm.get_teacher_schedule = AsyncMock(return_value={"lessons": [], "week_name": "Нечётная"})
+    dm.middleware_data = {"manager": tm, "user_data_manager": udm}
+
+    data = await get_schedule_data(dm)
+    assert data["show_gost_report"] is expected_show
 
 
 @pytest.mark.parametrize(
@@ -173,3 +216,44 @@ async def test_evening_broadcast_includes_gost_footer_once_per_cooldown():
     assert len(sent_texts) == 2
     assert "auditorium_404_bot?start=tt_lab" in sent_texts[0]
     assert "auditorium_404_bot?start=tt_lab" not in sent_texts[1]
+
+
+@pytest.mark.asyncio
+async def test_evening_broadcast_never_shows_gost_footer_to_teachers():
+    udm = AsyncMock()
+    udm.get_users_for_evening_notify.return_value = [(888, "Иванов И.И.", "ru", "teacher")]
+    udm.async_session_maker = None
+
+    tm = MagicMock()
+    tm.redis = AsyncMock()
+    tm.redis.set = AsyncMock(return_value=True)
+    tm.get_teacher_schedule = AsyncMock(
+        return_value={
+            "date": datetime.now(MOSCOW_TZ).date(),
+            "day_name": "Понедельник",
+            "lessons": [
+                {
+                    "time": "09:00-10:30",
+                    "type": "лаб",
+                    "subject": "Физика",
+                    "start_time_raw": "09:00",
+                    "end_time_raw": "10:30",
+                    "room": "101",
+                    "group": "О735Б",
+                }
+            ],
+        }
+    )
+
+    sent_texts: list[str] = []
+    with (
+        patch("bot.scheduler.WeatherAPI") as mock_w,
+        patch("bot.scheduler.send_message_task.send", side_effect=lambda _uid, txt: sent_texts.append(txt)),
+    ):
+        mock_w.return_value.get_forecast_for_time = AsyncMock(return_value=None)
+        mock_w.return_value.get_day_weather_window = AsyncMock(return_value=None)
+        await evening_broadcast(udm, tm)
+
+    assert len(sent_texts) == 1
+    assert "auditorium_404_bot" not in sent_texts[0]
+    tm.redis.set.assert_not_awaited()
