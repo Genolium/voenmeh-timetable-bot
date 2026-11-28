@@ -463,12 +463,13 @@ async def test_additional_security_branches_for_full_coverage(monkeypatch, tmp_p
     assert loop is not None
     worker_loop.stop_worker_loop()
 
-    # 10. user_data: close() closes redis + disposes engine (and tolerates redis close error)
+    # 10. user_data: close() closes redis + disposes engine (and tolerates redis close error + idempotent close)
     udm = UserDataManager(db_url="sqlite+aiosqlite:///:memory:")
     udm._redis_client = AsyncMock()
     udm._redis_client.aclose = AsyncMock(side_effect=RuntimeError("redis close err"))
     await udm.close()
     assert udm._redis_client is None
+    await udm.close()
 
     # 11. image_cache_manager: cache_image unsafe key (tmp_path is None in except) & resolve escape
     await mgr.cache_image("../bad", b"123")

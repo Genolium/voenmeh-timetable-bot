@@ -31,7 +31,8 @@ def get_worker_loop() -> asyncio.AbstractEventLoop:
                 except Exception as e:
                     logger.error(f"Worker loop crashed: {e}")
                 finally:
-                    loop.close()
+                    if not loop.is_closed():
+                        loop.close()
                     logger.info("Background worker event loop stopped")
 
             _worker_loop_thread = threading.Thread(
