@@ -1256,6 +1256,13 @@ schedul_dialog_windows = [
             ),
         ),
         Row(
+            Url(
+                Format("{btn_gost_report}"),
+                Format("{gost_report_url}"),
+                id="gost_report_url",
+            ),
+        ),
+        Row(
             Button(
                 Format("{btn_my_group}"),
                 id=WidgetIds.MY_GROUP,
@@ -1296,7 +1303,6 @@ schedul_dialog_windows = [
                 id=WidgetIds.CHANGE_GROUP,
                 on_click=on_change_group_click,
             ),
-            Url(Format("{btn_gost_report}"), Format("{gost_report_url}"), id="gost_report_url"),
             Url(Format("{btn_news}"), Format("{news_url}"), id="news_url"),
             Button(Format("{btn_help}"), id="help_btn", on_click=on_help_click),
             Button(Format("{btn_feedback}"), id="feedback_btn", on_click=on_feedback_click),

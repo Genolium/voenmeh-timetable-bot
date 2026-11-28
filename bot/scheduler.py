@@ -60,7 +60,7 @@ GRADUATED_MISS_THRESHOLD = 2
 GRADUATED_MISS_TTL_SECONDS = 7 * 86400
 
 GOST_LAB_PROMO_PREFIX = "promo:gost_lab_footer:"
-GOST_LAB_PROMO_COOLDOWN_SECONDS = 8 * 86400
+GOST_LAB_PROMO_COOLDOWN_SECONDS = 4 * 86400
 
 
 class TimetableManagerRef:
@@ -203,7 +203,7 @@ async def _should_show_gost_lab_promo(
     user_type: str,
     lessons: list[dict[str, Any]],
 ) -> bool:
-    """Показывает футер про ГОСТ-отчёт студентам в ЛС при наличии лаб/практ/курс не чаще 1 раза в 8 дней."""
+    """Показывает футер про ГОСТ-отчёт студентам в ЛС при наличии лаб/практ/курс не чаще 1 раза в 4 дня."""
     if user_id <= 0 or user_type == "teacher" or not has_reportable_lessons(lessons):
         return False
     redis_client = getattr(timetable_manager, "redis", None)
