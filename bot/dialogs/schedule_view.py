@@ -337,6 +337,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "nav_date_label": nav_date_label,
         "news_url": news_channel_url(),
         "gost_report_url": GOST_REPORT_BOT_MENU_URL,
+        "show_gost_report": user_type == "student" and not render_as_teacher,
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
         "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
@@ -1180,6 +1181,10 @@ def _when_show_my_group(data: dict, widget: object, manager: object) -> bool:
     return bool(data.get("show_my_group"))
 
 
+def _when_show_gost_report(data: dict, widget: object, manager: object) -> bool:
+    return bool(data.get("show_gost_report"))
+
+
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Fallback: send the news channel URL if a URL button is unavailable."""
     await callback.answer()
@@ -1271,6 +1276,7 @@ schedul_dialog_windows = [
                 Format("{gost_report_url}"),
                 id="gost_report_url",
             ),
+            when=_when_show_gost_report,
         ),
         Row(
             Button(

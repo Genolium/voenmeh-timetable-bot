@@ -204,7 +204,7 @@ async def _should_show_gost_lab_promo(
     lessons: list[dict[str, Any]],
 ) -> bool:
     """Показывает футер про ГОСТ-отчёт студентам в ЛС при наличии лаб/практ/курс не чаще 1 раза в 4 дня."""
-    if user_id <= 0 or user_type == "teacher" or not has_reportable_lessons(lessons):
+    if user_id <= 0 or user_type != "student" or not has_reportable_lessons(lessons):
         return False
     redis_client = getattr(timetable_manager, "redis", None)
     if redis_client is None:
