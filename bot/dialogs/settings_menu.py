@@ -1,11 +1,10 @@
-import logging
 from typing import Any, cast
 
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram_dialog import Dialog, DialogManager, Window
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Group, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Group, Row, Select, SwitchTo
 from aiogram_dialog.widgets.media import StaticMedia
-from aiogram_dialog.widgets.text import Const, Format, Jinja
+from aiogram_dialog.widgets.text import Format, Jinja
 
 from core.config import THEMES_SHOWCASE_IMAGE_PATH
 from core.i18n import i18n
@@ -413,7 +412,8 @@ settings_dialog = Dialog(
         Group(
             Select(
                 Jinja(
-                    "{% if item == current_reminder_time %}✅ {{ item }} {{ settings_minutes_short }}{% else %}{{ item }} {{ settings_minutes_short }}{% endif %}"
+                    "{% if item == current_reminder_time %}✅ {{ item }} {{ settings_minutes_short }}"
+                    "{% else %}{{ item }} {{ settings_minutes_short }}{% endif %}"
                 ),
                 id="select_reminder_time",
                 item_id_getter=lambda item: str(item),

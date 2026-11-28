@@ -44,7 +44,8 @@ _SAFE_ENV_KEYS = (
 )
 _COPY_STDIN_RE = re.compile(r"^\s*COPY\b.*\bFROM\s+stdin\s*;", re.IGNORECASE)
 _DANGEROUS_PSQL_META_RE = re.compile(
-    r"^\s*\\(?:!|i\b|ir\b|include\b|include_relative\b|o\b|out\b|w\b|write\b|g\b|gx\b|s\b|e\b|ef\b|ev\b|copy\b|lo_import\b|lo_export\b|!)",
+    r"^\s*\\(?:!|i\b|ir\b|include\b|include_relative\b|o\b|out\b|w\b|write\b"
+    r"|g\b|gx\b|s\b|e\b|ef\b|ev\b|copy\b|lo_import\b|lo_export\b)",
     re.IGNORECASE,
 )
 

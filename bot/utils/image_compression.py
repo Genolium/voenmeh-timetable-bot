@@ -39,7 +39,8 @@ def compress_image_for_telegram(
         output_path = input_path
 
     try:
-        with Image.open(input_path) as img:
+        with Image.open(input_path) as opened_img:
+            img: Image.Image = opened_img
             # Конвертируем в RGB если нужно
             if img.mode in ("RGBA", "LA", "P"):
                 # Создаем белый фон для прозрачных изображений

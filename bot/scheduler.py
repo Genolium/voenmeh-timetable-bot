@@ -37,7 +37,6 @@ from core.config import (
 from core.db.backups import compress_file_gzip, create_db_backup
 from core.i18n import i18n
 from core.image_cache_manager import ImageCacheManager
-from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager, refresh_schedule_cache_ttl
 from core.metrics import (
     ERRORS_TOTAL,
@@ -489,6 +488,7 @@ async def monitor_schedule_changes(user_data_manager: UserDataManager, redis_cli
                 # Здесь можно добавить дополнительные действия при работе на резервных копиях
             return
 
+        assert isinstance(new_schedule_data, dict)
         new_hash = new_schedule_data.get("__current_xml_hash__")
         if new_hash != old_hash:
             logger.warning(f"ОБНАРУЖЕНЫ ИЗМЕНЕНИЯ В РАСПИСАНИИ! Старый хеш: {old_hash}, Новый: {new_hash}")

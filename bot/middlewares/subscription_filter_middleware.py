@@ -67,7 +67,7 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
         lines.append("\n<i>После подписки нажмите кнопку «🔄 Проверить подписку» ниже.</i>")
         return "\n".join(lines)
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
         event: Update,
@@ -81,7 +81,7 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
         if ADMIN_IDS and user_id in ADMIN_IDS:
             return await handler(event, data)
 
-        bot: Bot = data.get("bot")
+        bot: Optional[Bot] = data.get("bot")
 
         # 2. Обработка кнопки «🔄 Проверить подписку»
         if event.callback_query and event.callback_query.data == SUB_CHECK_CALLBACK:
@@ -101,7 +101,8 @@ class SubscriptionFilterMiddleware(BaseMiddleware):
                 await event.callback_query.answer("✅ Подписка подтверждена! Приятного пользования ботом.", show_alert=True)
                 try:
                     if event.callback_query.message:
-                        await event.callback_query.message.delete()
+                        cb_msg: Any = event.callback_query.message
+                        await cb_msg.delete()
                 except Exception:
                     pass
 

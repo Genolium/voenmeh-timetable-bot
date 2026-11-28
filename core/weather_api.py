@@ -262,7 +262,7 @@ class WeatherAPI:
         except (TypeError, ValueError):
             return "N/A"
 
-    def _get_weather_emoji(self, icon_code: str) -> str:
+    def _get_weather_emoji(self, icon_code: str | None) -> str:
         """Преобразует код иконки OpenWeatherMap в эмодзи."""
         if not icon_code:
             return "❓"

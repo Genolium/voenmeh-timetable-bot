@@ -89,6 +89,7 @@ def run_async(coro):
         # Timeout 1900 сек = ~31 мин (чуть больше consumer_timeout и time_limit в Dramatiq)
         return future.result(timeout=1900)
     except asyncio.TimeoutError:
+        assert future is not None
         future.cancel()
         logger.error("Coroutine timed out in worker loop after 1900 seconds")
         raise

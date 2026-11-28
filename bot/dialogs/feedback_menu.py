@@ -5,7 +5,7 @@ from aiogram.types import CallbackQuery, ContentType, Message
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput
 from aiogram_dialog.widgets.kbd import Button
-from aiogram_dialog.widgets.text import Const, Format
+from aiogram_dialog.widgets.text import Format
 
 from bot.text_formatters import esc
 from core.config import FEEDBACK_CHAT_ID

@@ -1,8 +1,7 @@
-import os
 from datetime import timedelta
 from pathlib import Path
 
-import pytz
+import pytz  # type: ignore[import-untyped]
 from pydantic_settings import BaseSettings
 
 # Определяем базовую директорию проекта

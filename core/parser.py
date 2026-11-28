@@ -12,7 +12,7 @@ from urllib.parse import quote
 import aiohttp
 import defusedxml.ElementTree as ET
 
-from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT, VOENMEH_SU_API_URL
+from core.config import API_URL, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT
 from core.metrics import ERRORS_TOTAL, EXTERNAL_SERVICE_STATUS, PARSER_DURATION, PARSER_STATS, RETRIES_TOTAL
 
 # Заготовки для условного кэширования
@@ -217,7 +217,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
                 kind = item.get("kind") or ""
                 subject = item.get("subject") or ""
-                lecturers = [l.strip() for l in item.get("teachers", []) if l and l.strip()]
+                lecturers = [teacher.strip() for teacher in item.get("teachers", []) if teacher and teacher.strip()]
                 rooms = [r.strip() for r in item.get("rooms", []) if r and r.strip()]
                 classroom = ", ".join(rooms) if rooms else None
 
@@ -470,9 +470,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     disc_parts = discipline_raw.split(" ", 1)
 
                     lecturers = [
-                        l.text.strip()
-                        for l in lesson_element.findall("Lecturers/Lecturer/ShortName")
-                        if l.text and l.text.strip()
+                        lecturer_el.text.strip()
+                        for lecturer_el in lesson_element.findall("Lecturers/Lecturer/ShortName")
+                        if lecturer_el.text and lecturer_el.text.strip()
                     ]
                     classroom = (
                         classroom_tag.text.strip("; ")

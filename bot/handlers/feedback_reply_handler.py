@@ -68,6 +68,7 @@ if FEEDBACK_CHAT_ID_INT is not None:
         # Вариант 3: Пытаемся извлечь ID из текста сервисного сообщения от бота
         if not user_id and (replied_msg.text or replied_msg.caption):
             text = replied_msg.text or replied_msg.caption
+            assert text is not None
             # Ищем паттерн "ID: <code>123456</code>" или "ID: 123456"
             match = re.search(r"ID:\s*(?:<code>)?(\d+)(?:</code>)?", text)
             if match:

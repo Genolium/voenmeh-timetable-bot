@@ -4,12 +4,12 @@ from typing import Any
 from aiogram.types import CallbackQuery, Message
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
 from aiogram_dialog.widgets.input import MessageInput
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.link_preview import LinkPreview
 from aiogram_dialog.widgets.media import StaticMedia
 from aiogram_dialog.widgets.text import Const, Format
 
-from bot.text_formatters import esc, format_classroom_schedule_text, format_teacher_schedule_text
+from bot.text_formatters import format_classroom_schedule_text, format_teacher_schedule_text
 from core.config import CLASSROOM_IMAGE_PATH, MOSCOW_TZ, SEARCH_IMAGE_PATH, TEACHER_IMAGE_PATH
 from core.i18n import i18n
 from core.manager import TimetableManager

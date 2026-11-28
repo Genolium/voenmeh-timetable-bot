@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -23,11 +23,12 @@ from core.transliteration import transliterate
 """
 
 # Экспортируемая ссылка на async_playwright (для тестов она мокается)
+_async_playwright: Any
 try:
     from playwright.async_api import async_playwright as _async_playwright
 except Exception:
     _async_playwright = None
-async_playwright = _async_playwright
+async_playwright: Any = _async_playwright
 
 
 def print_progress_bar(
@@ -74,7 +75,7 @@ def _background_path(key: str) -> Path | None:
     return None
 
 
-_template_cache = None
+_template_cache: Any = None
 _template_mtime: float | None = None
 
 # Параметры пула (настраиваются через ENV)
@@ -149,7 +150,7 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
             try:
                 lessons = sorted(
                     lessons,
-                    key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
+                    key=lambda lesson: _time_to_minutes(lesson.get("start_time_raw", "23:59")),
                 )
                 first = lessons[0].get("start_time_raw", "")
             except Exception:
@@ -158,9 +159,9 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
             lessons = []  # Гарантируем список
 
         items = []
-        for l in lessons:
-            subject = l.get("subject", "")
-            lesson_type = l.get("type", "")
+        for lesson in lessons:
+            subject = lesson.get("subject", "")
+            lesson_type = lesson.get("type", "")
             # Build title with optional type
             if lesson_type:
                 title_raw = f"{subject} ({lesson_type})"
@@ -169,16 +170,16 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
             # Transliterate title for non-Russian languages
             title = transliterate(title_raw, lang)
 
-            room_raw = (l.get("room", "") or "").strip("; ")
+            room_raw = (lesson.get("room", "") or "").strip("; ")
             room_lower = room_raw.lower()
             if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
                 # Room not specified - leave empty (don't show anything)
                 room_fmt = ""
             else:
-                room_fmt = transliterate(room_raw, lang)
-            teacher_raw = (l.get("teachers", "") or "").strip()
+                room_fmt = transliterate(room_raw, lang) or ""
+            teacher_raw = (lesson.get("teachers", "") or "").strip()
             teacher_fmt = transliterate(teacher_raw, lang) if teacher_raw else ""
-            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": l.get("time", "")})
+            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": lesson.get("time", "")})
 
         prepared.append({"name": localized_name, "title": localized_name, "firstStart": first, "lessons": items})
     return prepared

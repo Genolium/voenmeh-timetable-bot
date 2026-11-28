@@ -5,9 +5,8 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, cast
 
-import aiohttp
 import dramatiq
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
@@ -26,26 +25,23 @@ except Exception:
         from aiogram.utils.exceptions import RetryAfter  # type: ignore
     except Exception:  # Fallback: define a stub to keep logic working
 
-        class RetryAfter(Exception):
+        class RetryAfter(Exception):  # type: ignore[no-redef]
             pass
 
 
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.encoder import JSONEncoder
-from dramatiq.middleware import Middleware
 from dramatiq.middleware.retries import Retries
 from dramatiq.middleware.time_limit import TimeLimit
-from dramatiq.results.backends import RedisBackend
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
 from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
 from bot.text_formatters import generate_reminder_text
-from bot.utils.image_compression import get_telegram_safe_image_path
 from bot.utils.worker_loop import run_async
 from core.config import MEDIA_PATH, SUBSCRIPTION_CHANNEL, settings
 from core.image_cache_manager import ImageCacheManager
@@ -60,6 +56,7 @@ load_dotenv()
 
 def _create_bot_with_timeout():
     """Create a Bot instance with proper HTTP client timeout settings."""
+    assert BOT_TOKEN is not None
     session = AiohttpSession(timeout=60.0, limit=15)
     return attach_custom_emoji_middleware(
         Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
@@ -101,8 +98,9 @@ def get_redis_client(decode_responses: bool = False) -> Any:
     Важно: не переиспользуем глобальные пулы между потоками/лупами Dramatiq,
     чтобы избежать ошибок вида "Future attached to a different loop".
     """
-    return redis.Redis.from_url(
-        redis_url,
+    from_url: Any = redis.Redis.from_url
+    return from_url(
+        cast(str, redis_url),
         password=redis_password,
         decode_responses=decode_responses,
         retry_on_timeout=True,
@@ -234,6 +232,7 @@ def _compose_hostname_outside_docker(broker_url: str) -> bool:
 
 def _create_broker(broker_url: str | None) -> "Broker":
     """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
+    broker: Broker
     if broker_url and not _compose_hostname_outside_docker(broker_url):
         # Connection parameters are handled via rabbitmq.conf and retry middleware
         broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
@@ -314,7 +313,7 @@ if not BOT_TOKEN:
 BOT_INSTANCE = None  # Не используется напрямую; бот создаётся внутри задач
 rate_limiter = AsyncLimiter(25, 1)
 
-_worker_bot = None
+_worker_bot: Optional[Bot] = None
 _worker_bot_loop: asyncio.AbstractEventLoop | None = None
 
 
@@ -323,6 +322,7 @@ async def get_worker_bot() -> Bot:
     global _worker_bot, _worker_bot_loop
     current_loop = asyncio.get_running_loop()
     if _worker_bot is None or _worker_bot_loop is not current_loop:
+        assert BOT_TOKEN is not None
         # limit=15 ограничивает количество одновременных TCP-соединений
         session = AiohttpSession(timeout=45.0, limit=15)
         _worker_bot = attach_custom_emoji_middleware(
@@ -623,6 +623,7 @@ def generate_week_image_task(
                 # Создаём бота в текущем лупе только если он действительно понадобится
                 bot_for_images: Bot | None = None
                 if not is_auto_generation:
+                    assert BOT_TOKEN is not None
                     bot_for_images = attach_custom_emoji_middleware(
                         Bot(
                             token=BOT_TOKEN,
@@ -715,7 +716,7 @@ async def _send_error_message(user_id: int, error_text: str) -> None:
 @dramatiq.actor(
     queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=300000
 )  # 5 мин (для проверки подписки и отправки сообщений)
-def check_theme_subscription_task(user_id: int, callback_data: str = None) -> None:
+def check_theme_subscription_task(user_id: int, callback_data: Optional[str] = None) -> None:
     """
     Проверяет подписку пользователя на канал для доступа к темам.
     Кэширует результат проверки на 6 часов для подписанных, на 1 минуту для неподписанных.
