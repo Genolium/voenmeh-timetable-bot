@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 from aiogram import Bot
 from aiogram.types import CallbackQuery, ContentType, Message
@@ -17,8 +17,9 @@ from .states import Feedback
 
 
 async def get_feedback_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
     user_lang = await user_data_manager.get_user_language(user_id)
 
     # Реинициализируем функцию перевода с актуальным языком
@@ -38,9 +39,10 @@ async def on_feedback_received(message: Message, message_input: MessageInput, ma
     """
     Получает фидбэк, сохраняет в БД, пересылает и завершает диалог.
     """
-    bot: Bot = manager.middleware_data.get("bot")
-    session_factory = manager.middleware_data.get("session_factory")
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
+    session_factory: Any = manager.middleware_data.get("session_factory")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    assert message.from_user is not None
     user_lang = await user_data_manager.get_user_language(message.from_user.id)
 
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)

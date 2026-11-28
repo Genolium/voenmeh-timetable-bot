@@ -7,7 +7,7 @@ import re
 import tempfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
@@ -21,7 +21,7 @@ from aiogram.types import (
     Message,
 )
 from aiogram_dialog import Dialog, DialogManager, Window
-from aiogram_dialog.widgets.input import MessageInput, TextInput
+from aiogram_dialog.widgets.input import ManagedTextInput, MessageInput, TextInput
 from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
@@ -105,26 +105,28 @@ async def on_override_input(message: Message, message_input: MessageInput, manag
 
 
 async def on_test_morning(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    user_data_manager = manager.middleware_data.get("user_data_manager")
-    timetable_manager = manager.middleware_data.get("manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
     await callback.answer("🚀 Запускаю постановку задач на утреннюю рассылку...")
     await morning_summary_broadcast(user_data_manager, timetable_manager)
-    await callback.message.answer("✅ Задачи для утренней рассылки поставлены в очередь.")
+    cb_msg: Any = callback.message
+    await cb_msg.answer("✅ Задачи для утренней рассылки поставлены в очередь.")
 
 
 async def on_test_evening(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    user_data_manager = manager.middleware_data.get("user_data_manager")
-    timetable_manager = manager.middleware_data.get("manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
     await callback.answer("🚀 Запускаю постановку задач на вечернюю рассылку...")
     await evening_broadcast(user_data_manager, timetable_manager)
-    await callback.message.answer("✅ Задачи для вечерней рассылки поставлены в очередь.")
+    cb_msg: Any = callback.message
+    await cb_msg.answer("✅ Задачи для вечерней рассылки поставлены в очередь.")
 
 
 async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
     await callback.answer("🚀 Начинаю тест планировщика напоминаний...")
 
@@ -168,7 +170,7 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
 
 
 async def on_test_alert(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
     await callback.answer("🧪 Отправляю тестовый алёрт...")
     text = (
@@ -184,7 +186,7 @@ async def on_test_alert(callback: CallbackQuery, button: Button, manager: Dialog
 async def on_generate_full_schedule(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Массовая генерация отключена."""
     await callback.answer("❌ Массовая генерация отключена")
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     try:
         await bot.send_message(
             callback.from_user.id,
@@ -196,10 +198,10 @@ async def on_generate_full_schedule(callback: CallbackQuery, button: Button, man
 
 async def on_check_graduated_groups(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Запуск проверки выпустившихся групп."""
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
-    user_data_manager = manager.middleware_data.get("user_data_manager")
-    timetable_manager = manager.middleware_data.get("manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
     # Создаем правильный Redis-клиент
     from redis.asyncio import Redis
@@ -211,7 +213,8 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
     await callback.answer("🔍 Запускаю проверку выпустившихся групп...")
 
     try:
-        redis_client = Redis.from_url(redis_url, password=redis_password, decode_responses=False)
+        from_url: Any = Redis.from_url
+        redis_client = from_url(redis_url, password=redis_password, decode_responses=False)
         await bot.send_message(admin_id, "🔍 Начинаю проверку выпустившихся групп...")
         # Импортируем функцию из scheduler
         from bot.scheduler import handle_graduated_groups
@@ -258,10 +261,11 @@ async def on_backup_create(callback: CallbackQuery, button: Button, manager: Dia
     await manager.switch_to(Admin.backup_create_confirm)
 
     backup_path: Path | None = None
+    cb_msg: Any = callback.message
     try:
         backup_path = await create_db_backup(output_dir=Path("/app/data"))
         document = FSInputFile(backup_path)
-        await callback.message.answer_document(
+        await cb_msg.answer_document(
             document,
             caption=f"✅ Резервная копия создана: <code>{backup_path.name}</code>",
         )
@@ -271,11 +275,11 @@ async def on_backup_create(callback: CallbackQuery, button: Button, manager: Dia
     except BackupError as exc:
         error_text = f"❌ Не удалось создать резервную копию: {exc}"
         manager.dialog_data["backup_status"] = error_text
-        await callback.message.answer(error_text)
+        await cb_msg.answer(error_text)
     except Exception as exc:  # pragma: no cover - неожиданные ошибки
         error_text = f"❌ Ошибка создания бэкапа: {exc}"
         manager.dialog_data["backup_status"] = error_text
-        await callback.message.answer(error_text)
+        await cb_msg.answer(error_text)
     finally:
         if backup_path and backup_path.exists():
             try:
@@ -332,6 +336,7 @@ async def on_backup_upload_received(message: Message, widget: MessageInput, mana
     tmp_dir = Path(tempfile.mkdtemp(prefix="voenmeh_restore_"))
     safe_name = "backup.sql.gz" if file_name.lower().endswith(".gz") else "backup.sql"
     tmp_path = tmp_dir / safe_name
+    assert message.bot is not None
     await message.bot.download(document, destination=tmp_path)
     if tmp_path.exists() and tmp_path.stat().st_size > MAX_RESTORE_BYTES:
         _cleanup_restore_dir(str(tmp_path))
@@ -388,7 +393,7 @@ async def get_backup_upload_data(dialog_manager: DialogManager, **kwargs: Any) -
 
 
 async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    session_factory = dialog_manager.middleware_data.get("session_factory")
+    session_factory: Any = dialog_manager.middleware_data.get("session_factory")
     redis_client = dialog_manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
 
@@ -420,7 +425,7 @@ async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> d
 
 
 async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    session_factory = manager.middleware_data.get("session_factory")
+    session_factory: Any = manager.middleware_data.get("session_factory")
     redis_client = manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
 
@@ -432,16 +437,16 @@ async def on_toggle_sub_filter(callback: CallbackQuery, button: Button, manager:
     await callback.answer(f"Фильтр обязательной подписки {state_str}!", show_alert=False)
 
 
-async def on_add_channel_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
+async def on_add_channel_input(message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str) -> None:
     raw = (message.text or "").strip()
     if _is_cancel(raw):
         await message.answer("↩️ Отменено")
         await manager.switch_to(Admin.sub_filter_menu)
         return
 
-    session_factory = manager.middleware_data.get("session_factory")
+    session_factory: Any = manager.middleware_data.get("session_factory")
     redis_client = manager.middleware_data.get("redis_client")
-    bot: Bot = manager.middleware_data.get("bot")
+    bot: Bot | None = manager.middleware_data.get("bot")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
 
     clean_target = raw
@@ -458,7 +463,7 @@ async def on_add_channel_input(message: Message, widget: TextInput, manager: Dia
             invite_link = f"https://t.me/{username}"
 
     title = clean_target
-    target_chat_id = clean_target
+    target_chat_id: str | int = clean_target
     if clean_target.startswith("+") or "joinchat/" in raw:
         await message.answer(
             "❌ Для проверки подписки нужен @username канала или его числовой ID. "
@@ -497,7 +502,7 @@ async def on_add_channel_input(message: Message, widget: TextInput, manager: Dia
 
 
 async def on_delete_sub_filter_channel(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
-    session_factory = manager.middleware_data.get("session_factory")
+    session_factory: Any = manager.middleware_data.get("session_factory")
     redis_client = manager.middleware_data.get("redis_client")
     mgr = SubscriptionFilterManager(session_factory, redis_client)
 
@@ -515,14 +520,14 @@ async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manag
     await manager.switch_to(Admin.edit_spring_semester)
 
 
-async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
+async def on_fall_semester_input(message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str) -> None:
     """Обработка ввода даты осеннего семестра."""
     try:
         # Парсим дату в формате DD.MM.YYYY
         date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
-        session_factory = manager.middleware_data.get("session_factory")
+        session_factory: Any = manager.middleware_data.get("session_factory")
         settings_manager = SemesterSettingsManager(session_factory)
 
         # Получаем текущие настройки
@@ -530,6 +535,7 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
         spring_start = current_settings[1] if current_settings else date(2025, 2, 9)
 
         # Обновляем настройки
+        assert message.from_user is not None
         success = await settings_manager.update_semester_settings(date_obj, spring_start, message.from_user.id)
 
         if success:
@@ -545,14 +551,14 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
     await manager.switch_to(Admin.semester_settings)
 
 
-async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
+async def on_spring_semester_input(message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str) -> None:
     """Обработка ввода даты весеннего семестра."""
     try:
         # Парсим дату в формате DD.MM.YYYY
         date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
-        session_factory = manager.middleware_data.get("session_factory")
+        session_factory: Any = manager.middleware_data.get("session_factory")
         settings_manager = SemesterSettingsManager(session_factory)
 
         # Получаем текущие настройки
@@ -560,6 +566,7 @@ async def on_spring_semester_input(message: Message, widget: TextInput, manager:
         fall_start = current_settings[0] if current_settings else date(2024, 9, 1)
 
         # Обновляем настройки
+        assert message.from_user is not None
         success = await settings_manager.update_semester_settings(fall_start, date_obj, message.from_user.id)
 
         if success:
@@ -601,7 +608,9 @@ def render_template(template_text: str, user_info: Any) -> str:
     return text
 
 
-async def on_segment_criteria_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
+async def on_segment_criteria_input(
+    message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str
+) -> None:
     dialog_data = manager.dialog_data
     # ожидаем ввод в формате: PREFIX|DAYS (например: О7|7). Пусто для всех
     raw = (message.text or "").strip()
@@ -638,7 +647,7 @@ async def on_template_input_message(message: Message, message_input: MessageInpu
 
 
 async def get_preview_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
     prefix = dialog_manager.dialog_data.get("segment_group_prefix")
     days_active = dialog_manager.dialog_data.get("segment_days_active")
     template = dialog_manager.dialog_data.get("segment_template", "")
@@ -660,9 +669,9 @@ async def get_preview_data(dialog_manager: DialogManager, **kwargs: Any) -> dict
 
 
 async def on_confirm_segment_send(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
-    udm: UserDataManager = manager.middleware_data.get("user_data_manager")
+    udm = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     message_type = manager.dialog_data.get("segment_message_type", "text")
     user_ids = manager.dialog_data.get("segment_selected_ids", [])
     await callback.answer("🚀 Рассылка по сегменту поставлена в очередь...")
@@ -718,7 +727,7 @@ async def on_period_selected(callback: CallbackQuery, widget: Select, manager: D
 
 async def get_stats_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """Собирает и форматирует все данные для дашборда статистики."""
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
     period = dialog_manager.dialog_data.get("stats_period", 7)
 
     (
@@ -826,7 +835,7 @@ async def get_stats_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[s
 async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Генерирует и отправляет график динамики за выбранный период."""
     await callback.answer("⏳ Генерирую график...", show_alert=False)
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
     period = manager.dialog_data.get("stats_period", 7)
     period_title = {1: "1 день", 7: "7 дней", 30: "30 дней"}.get(period, f"{period} дн.")
 
@@ -839,6 +848,7 @@ async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: 
         except Exception as e:
             logger.error(f"Error fetching activity history: {e}")
 
+    cb_msg: Any = callback.message
     try:
         from core.analytics import generate_dynamics_chart
 
@@ -849,14 +859,14 @@ async def on_send_stats_chart(callback: CallbackQuery, button: Button, manager: 
             period_title=period_title,
         )
         photo = BufferedInputFile(chart_buf.getvalue(), filename=f"stats_chart_{period}d.png")
-        await callback.message.answer_photo(
+        await cb_msg.answer_photo(
             photo=photo,
             caption=f"📈 <b>График динамики активности за {period_title}</b>",
             parse_mode="HTML",
         )
     except Exception as e:
         logger.error(f"Error generating stats chart: {e}")
-        await callback.message.answer("❌ Не удалось сгенерировать график. Проверьте логи.")
+        await cb_msg.answer("❌ Не удалось сгенерировать график. Проверьте логи.")
 
 
 _BROADCAST_KIND_LABELS = {
@@ -1142,9 +1152,9 @@ async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: An
 
 
 async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
-    udm: UserDataManager = manager.middleware_data.get("user_data_manager")
+    udm = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     payload = manager.dialog_data.get("broadcast_payload") or {}
     user_ids = manager.dialog_data.get("broadcast_user_ids") or []
     target = manager.dialog_data.get("broadcast_target") or "all"
@@ -1222,14 +1232,14 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
     await manager.switch_to(Admin.menu)
 
 
-async def on_user_id_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
+async def on_user_id_input(message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str) -> None:
     try:
-        user_id = int(message.text)
+        user_id = int(cast(str, message.text))
     except (ValueError, TypeError):
         await message.answer("❌ ID пользователя должно быть числом.")
         return
 
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_info = await user_data_manager.get_full_user_info(user_id)
 
     if not user_info:
@@ -1246,16 +1256,16 @@ async def on_user_id_input(message: Message, widget: TextInput, manager: DialogM
     await manager.switch_to(Admin.user_manage)
 
 
-async def on_new_group_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
-    new_group = message.text.upper()
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+async def on_new_group_input(message: Message, widget: ManagedTextInput[str], manager: DialogManager, data: str) -> None:
+    new_group = (message.text or "").upper()
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
     if new_group not in timetable_manager._schedules:
         await message.answer(f"❌ Группа <b>{html.escape(new_group)}</b> не найдена в расписании.")
         return
 
     user_id = manager.dialog_data["found_user_info"]["user_id"]
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
 
     await user_data_manager.set_user_group(user_id, new_group)
     await user_data_manager.set_user_type(user_id, "student")
@@ -1296,10 +1306,10 @@ async def get_semester_settings_data(dialog_manager: DialogManager, **kwargs: An
 
 async def on_force_update_schedule(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Принудительное обновление расписания."""
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
-    user_data_manager = manager.middleware_data.get("user_data_manager")
-    redis_client = manager.middleware_data.get("redis_client")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
+    redis_client: Any = manager.middleware_data.get("redis_client")
 
     from bot.scheduler import monitor_schedule_changes
     from core import parser
@@ -1331,7 +1341,7 @@ async def on_force_update_schedule(callback: CallbackQuery, button: Button, mana
 
 
 async def on_clear_cache(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     admin_id = callback.from_user.id
 
     await callback.answer("🧹 Очищаю кэш картинок...")
@@ -1402,7 +1412,8 @@ async def on_cancel_generation(callback: CallbackQuery) -> None:
 
         # Обновляем сообщение
         try:
-            await callback.message.edit_text(
+            cb_msg: Any = callback.message
+            await cb_msg.edit_text(
                 "⏹️ <b>Генерация отменена</b>\n\n" "Процесс остановлен пользователем.",
                 parse_mode="HTML",
             )
@@ -1423,7 +1434,7 @@ async def on_send_message_to_user(callback: CallbackQuery, button: Button, manag
 
 async def on_message_to_user_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Обработчик ввода сообщения для отправки пользователю."""
-    bot: Bot = manager.middleware_data.get("bot")
+    bot = cast(Bot, manager.middleware_data.get("bot"))
     user_id = manager.dialog_data.get("found_user_info", {}).get("user_id")
 
     if not user_id:
@@ -1434,7 +1445,7 @@ async def on_message_to_user_input(message: Message, message_input: MessageInput
     try:
         # Отправляем сообщение пользователю
         if message.content_type == ContentType.TEXT:
-            await bot.send_message(user_id, message.text)
+            await bot.send_message(user_id, message.text or "")
         else:
             # Копируем медиа-сообщение
             await bot.copy_message(
@@ -1590,7 +1601,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите критерии сегментации в формате PREFIX|DAYS (например: О7|7). Пусто — все."),
-        TextInput(id="segment_input", on_success=on_segment_criteria_input),
+        TextInput(id="segment_input", type_factory=str, on_success=on_segment_criteria_input),
         SwitchTo(Const("◀️ В админ-панель"), id="segment_back", state=Admin.menu),
         state=Admin.segment_menu,
     ),
@@ -1659,7 +1670,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите ID пользователя для управления:"),
-        TextInput(id="input_user_id", on_success=on_user_id_input),
+        TextInput(id="input_user_id", type_factory=str, on_success=on_user_id_input),
         SwitchTo(Const("◀️ В админ-панель"), id="user_id_back", state=Admin.menu),
         state=Admin.enter_user_id,
     ),
@@ -1690,7 +1701,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите новый номер группы для пользователя:"),
-        TextInput(id="input_new_group", on_success=on_new_group_input),
+        TextInput(id="input_new_group", type_factory=str, on_success=on_new_group_input),
         SwitchTo(Const("◀️ Назад"), id="change_group_back", state=Admin.user_manage),
         state=Admin.change_group_confirm,
     ),
@@ -1713,13 +1724,13 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите дату начала осеннего семестра в формате ДД.ММ.ГГГГ (например, 01.09.2024):"),
-        TextInput(id="fall_semester_input", on_success=on_fall_semester_input),
+        TextInput(id="fall_semester_input", type_factory=str, on_success=on_fall_semester_input),
         SwitchTo(Const("◀️ Назад"), id="fall_semester_back", state=Admin.semester_settings),
         state=Admin.edit_fall_semester,
     ),
     Window(
         Const("Введите дату начала весеннего семестра в формате ДД.ММ.ГГГГ (например, 09.02.2025):"),
-        TextInput(id="spring_semester_input", on_success=on_spring_semester_input),
+        TextInput(id="spring_semester_input", type_factory=str, on_success=on_spring_semester_input),
         SwitchTo(Const("◀️ Назад"), id="spring_semester_back", state=Admin.semester_settings),
         state=Admin.edit_spring_semester,
     ),
@@ -1765,7 +1776,7 @@ admin_dialog = Dialog(
             "⚠️ <i>Убедитесь, что бот предварительно добавлен в администраторы канала!</i>\n\n"
             "Отправьте /cancel для отмены."
         ),
-        TextInput(id="add_sub_channel_input", on_success=on_add_channel_input),
+        TextInput(id="add_sub_channel_input", type_factory=str, on_success=on_add_channel_input),
         SwitchTo(Const("◀️ Назад"), id="back_add_sub_channel", state=Admin.sub_filter_menu),
         state=Admin.sub_filter_add_channel,
         parse_mode="HTML",

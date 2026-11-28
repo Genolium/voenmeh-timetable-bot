@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from aiogram.types import CallbackQuery, Message
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
@@ -25,8 +25,9 @@ async def get_find_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[st
         dialog_manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
     current_date = date.fromisoformat(dialog_manager.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
-    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    manager = cast(TimetableManager, dialog_manager.middleware_data.get("manager"))
+    user_data_manager: UserDataManager | None = dialog_manager.middleware_data.get("user_data_manager")
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
 
     # CRITICAL: Fetch user language from DB for proper localization
@@ -58,21 +59,22 @@ async def get_find_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[st
     if teacher_name := dialog_manager.dialog_data.get(DialogDataKeys.TEACHER_NAME):
         canonical = manager.resolve_canonical_teacher(teacher_name) or teacher_name
         schedule_info = await manager.get_teacher_schedule(canonical, current_date)
-        data["result_text"] = format_teacher_schedule_text(schedule_info, lang=user_lang)
+        data["result_text"] = format_teacher_schedule_text(cast(dict[str, Any], schedule_info), lang=user_lang)
     elif classroom_number := dialog_manager.dialog_data.get(DialogDataKeys.CLASSROOM_NUMBER):
         schedule_info = await manager.get_classroom_schedule(classroom_number, current_date)
-        data["result_text"] = format_classroom_schedule_text(schedule_info, lang=user_lang)
+        data["result_text"] = format_classroom_schedule_text(cast(dict[str, Any], schedule_info), lang=user_lang)
 
     return data
 
 
 async def get_history_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager: UserDataManager | None = dialog_manager.middleware_data.get("user_data_manager")
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
     user_lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     items = []
-    lookup = []
+    lookup: list[tuple[str, str]] = []
     labels = {"group": "🎓", "teacher": "🧑‍🏫", "room": "🚪"}
     if user_data_manager:
         for item_type in ("group", "teacher", "room"):
@@ -110,7 +112,7 @@ async def on_history_selected(callback: CallbackQuery, widget: Any, manager: Dia
 
 async def on_group_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     """Открывает расписание найденной группы, не меняя сохранённую группу пользователя."""
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
     query = (message.text or "").strip()
     if not query:
@@ -126,7 +128,7 @@ async def on_group_input(message: Message, message_input: MessageInput, manager:
         return
 
     if len(found) == 1:
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
         if user_data_manager and message.from_user:
             await user_data_manager.add_to_history(message.from_user.id, "group", found[0])
         await manager.start(
@@ -142,7 +144,7 @@ async def on_group_input(message: Message, message_input: MessageInput, manager:
 
 
 async def on_teacher_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
 
     query = (message.text or "").strip()
@@ -176,7 +178,7 @@ async def on_teacher_input(message: Message, message_input: MessageInput, manage
         manager.dialog_data[DialogDataKeys.TEACHER_NAME] = found_teachers[0]
         manager.dialog_data.pop(DialogDataKeys.CLASSROOM_NUMBER, None)
         # Сохраняем в историю
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
         if user_data_manager and message.from_user:
             await user_data_manager.add_to_history(message.from_user.id, "teacher", found_teachers[0])
         await manager.switch_to(FindMenu.view_result)
@@ -187,7 +189,7 @@ async def on_teacher_input(message: Message, message_input: MessageInput, manage
 
 async def on_classroom_input(message: Message, message_input: MessageInput, manager: DialogManager) -> None:
     _ = manager.middleware_data.get("_", lambda k, **kw: k)
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
     query = (message.text or "").strip()
     if not query:
@@ -215,7 +217,7 @@ async def on_classroom_input(message: Message, message_input: MessageInput, mana
         manager.dialog_data[DialogDataKeys.CLASSROOM_NUMBER] = found_classrooms[0]
         manager.dialog_data.pop(DialogDataKeys.TEACHER_NAME, None)
         # Сохраняем в историю
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
         if user_data_manager and message.from_user:
             await user_data_manager.add_to_history(message.from_user.id, "room", found_classrooms[0])
         await manager.switch_to(FindMenu.view_result)
@@ -230,7 +232,7 @@ async def on_item_selected(callback: CallbackQuery, widget: Any, manager: Dialog
     search_type = manager.dialog_data.get(DialogDataKeys.SEARCH_TYPE)
 
     if search_type == "group":
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
         if user_data_manager and callback.from_user:
             await user_data_manager.add_to_history(callback.from_user.id, "group", resolved)
         await manager.start(
@@ -253,7 +255,7 @@ async def on_item_selected(callback: CallbackQuery, widget: Any, manager: Dialog
 
     # Сохраняем в историю
     if history_type:
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager = manager.middleware_data.get("user_data_manager")
         if user_data_manager and callback.from_user:
             await user_data_manager.add_to_history(callback.from_user.id, history_type, resolved)
 
