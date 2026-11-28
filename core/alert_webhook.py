@@ -1,21 +1,34 @@
+import asyncio
+import hmac
+import html
 import logging
 import os
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List
 
 from aiohttp import web
 from sqlalchemy import text
 
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+MAX_ALERTS_PER_PAYLOAD = 50
+READINESS_PROBE_TIMEOUT_SEC = 3.0
+
 
 def format_alertmanager_message(payload: Dict[str, Any]) -> str:
     """Formats Alertmanager webhook payload into a readable message for admins."""
-    status = payload.get("status", "unknown").upper()
-    alerts = payload.get("alerts", [])
+    raw_status = payload.get("status")
+    status = str(raw_status if raw_status is not None else "unknown").upper()
+    raw_alerts = payload.get("alerts")
+    alerts = raw_alerts[:MAX_ALERTS_PER_PAYLOAD] if isinstance(raw_alerts, list) else []
     lines: List[str] = [f"ALERTMANAGER: {status} ({len(alerts)} alert(s))"]
 
     for alert in alerts:
-        labels = alert.get("labels", {})
-        annotations = alert.get("annotations", {})
+        if not isinstance(alert, dict):
+            continue
+        raw_labels = alert.get("labels")
+        raw_annotations = alert.get("annotations")
+        labels: Dict[str, Any] = raw_labels if isinstance(raw_labels, dict) else {}
+        annotations: Dict[str, Any] = raw_annotations if isinstance(raw_annotations, dict) else {}
         name = labels.get("alertname", "unknown")
         severity = labels.get("severity", "unknown")
         startsAt = alert.get("startsAt", "")
@@ -44,7 +57,7 @@ def create_alert_app(
     db_session_maker: Any = None,
 ) -> web.Application:
     """Создаёт aiohttp приложение с health checks и webhook для алертов."""
-    app = web.Application()
+    app = web.Application(client_max_size=64 * 1024)
     logger = logging.getLogger(__name__)
 
     # --- Health Check Endpoints ---
@@ -55,7 +68,7 @@ def create_alert_app(
             {
                 "status": "ok",
                 "service": "voenmeh-timetable-bot",
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             }
         )
 
@@ -67,31 +80,37 @@ def create_alert_app(
         # Проверка Redis
         if redis_client:
             try:
-                await redis_client.ping()
+                await asyncio.wait_for(redis_client.ping(), timeout=READINESS_PROBE_TIMEOUT_SEC)
                 checks["redis"] = True
             except Exception as e:
-                details["redis_error"] = str(e)
+                logger.warning("Readiness Redis check failed: %s", e)
+                details["redis_error"] = "unavailable"
         else:
             details["redis_error"] = "Redis client not provided"
 
         # Проверка Database
         if db_session_maker:
             try:
-                async with db_session_maker() as session:
-                    await session.execute(text("SELECT 1"))
+
+                async def _probe_db() -> None:
+                    async with db_session_maker() as session:
+                        await session.execute(text("SELECT 1"))
+
+                await asyncio.wait_for(_probe_db(), timeout=READINESS_PROBE_TIMEOUT_SEC)
                 checks["database"] = True
             except Exception as e:
-                details["database_error"] = str(e)
+                logger.warning("Readiness DB check failed: %s", e)
+                details["database_error"] = "unavailable"
         else:
             details["database_error"] = "Database session maker not provided"
 
         all_ok = all(checks.values())
         status_code = 200 if all_ok else 503
 
-        response_data = {
+        response_data: Dict[str, Any] = {
             "status": "ready" if all_ok else "not_ready",
             "checks": checks,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         }
         if details:
             response_data["details"] = details
@@ -101,11 +120,12 @@ def create_alert_app(
     # --- Alertmanager Webhook ---
 
     async def handle_alert(request: web.Request) -> web.Response:
-        # Простая авторизация по ключу: Header "Authorization: Bearer <ALERT_WEBHOOK_API_KEY>"
+        # Авторизация по ключу: Header "Authorization: Bearer <ALERT_WEBHOOK_API_KEY>"
         expected_key = os.getenv("ALERT_WEBHOOK_API_KEY")
         if expected_key:
             auth_header = request.headers.get("Authorization", "")
-            if not auth_header.startswith("Bearer ") or auth_header.split(" ", 1)[1] != expected_key:
+            token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+            if not token or not hmac.compare_digest(token.encode("utf-8"), expected_key.encode("utf-8")):
                 return web.Response(status=401, text="unauthorized")
 
         try:
@@ -113,15 +133,19 @@ def create_alert_app(
         except Exception:
             return web.Response(status=400, text="invalid json")
 
-        text_msg = format_alertmanager_message(payload)
+        if not isinstance(payload, dict):
+            return web.Response(status=400, text="invalid json")
+
+        text_msg = html.escape(format_alertmanager_message(payload), quote=False)
+        if len(text_msg) > TELEGRAM_MAX_MESSAGE_LENGTH:
+            text_msg = text_msg[: TELEGRAM_MAX_MESSAGE_LENGTH - 3] + "..."
 
         # fan-out to admins sequentially (простая и надежная доставка)
         for admin_id in admin_ids:
             try:
                 await bot.send_message(admin_id, text_msg)
-            except Exception:
-                # best-effort; ignore failures
-                pass
+            except Exception as e:
+                logger.warning("Failed to deliver alert to admin %s: %s", admin_id, e)
 
         return web.Response(status=200, text="ok")
 
@@ -140,7 +164,7 @@ async def run_alert_webhook_server(
     port: int = 8010,
     redis_client: Any = None,
     db_session_maker: Any = None,
-) -> None:
+) -> web.AppRunner:
     """Запускает HTTP-сервер для health checks и alertmanager webhook."""
     app = create_alert_app(
         bot,
@@ -150,6 +174,12 @@ async def run_alert_webhook_server(
     )
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    logging.info(f"Health check server started on http://0.0.0.0:{port}/health")
+    host = os.getenv("ALERT_WEBHOOK_HOST", "127.0.0.1")
+    site = web.TCPSite(runner, host, port)
+    try:
+        await site.start()
+    except Exception:
+        await runner.cleanup()
+        raise
+    logging.info(f"Health check server started on http://{host}:{port}/health")
+    return runner

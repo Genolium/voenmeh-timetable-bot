@@ -1,8 +1,7 @@
-import os
 from datetime import timedelta
 from pathlib import Path
 
-import pytz
+import pytz  # type: ignore[import-untyped]
 from pydantic_settings import BaseSettings
 
 # Определяем базовую директорию проекта
@@ -55,6 +54,7 @@ class Settings(BaseSettings):
     OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
     OTEL_EXPORTER_OTLP_HEADERS: str | None = None
     OTEL_ENABLED: bool = True
+    CUSTOM_EMOJIS_ENABLED: bool = True
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
@@ -71,6 +71,7 @@ SCREENSHOTS_PATH = Path(settings.SCREENSHOTS_PATH)
 # Основные медиа
 WELCOME_IMAGE_PATH = MEDIA_PATH / "welcome.png"
 NO_LESSONS_IMAGE_PATH = MEDIA_PATH / "no_lessons.png"
+THEMES_SHOWCASE_IMAGE_PATH = MEDIA_PATH / "themes_showcase.jpg"
 
 # Медиа для диалога поиска
 SEARCH_IMAGE_PATH = MEDIA_PATH / "search_main.png"

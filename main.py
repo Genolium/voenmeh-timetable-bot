@@ -2,20 +2,16 @@ import asyncio
 import html
 import logging
 import os
-import sys
-import time
 from typing import Any
 
 from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.storage.base import DefaultKeyBuilder
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault, Message
 from aiogram_dialog import DialogManager, StartMode, setup_dialogs
 from aiogram_dialog.api.exceptions import UnknownIntent
-from aiohttp import ClientTimeout
 from dotenv import load_dotenv
 from prometheus_client import start_http_server
 from pythonjsonlogger.json import JsonFormatter
@@ -36,7 +32,7 @@ from bot.dialogs.schedule_view import (
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
 from bot.handlers.feedback_reply_handler import feedback_reply_router
 
 # --- Импорты бота ---
@@ -44,6 +40,7 @@ from bot.handlers.inline_handlers import inline_query_handler
 from bot.middlewares.i18n_middleware import I18nMiddleware
 from bot.middlewares.logging_middleware import LoggingMiddleware
 from bot.middlewares.manager_middleware import ManagerMiddleware
+from bot.middlewares.network_retry_middleware import FastConnectAiohttpSession as AiohttpSession
 from bot.middlewares.rate_limit_middleware import RateLimitMiddleware
 from bot.middlewares.session_middleware import SessionMiddleware
 from bot.middlewares.subscription_filter_middleware import SubscriptionFilterMiddleware
@@ -77,7 +74,7 @@ def setup_logging() -> TelemetryHandles | None:
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str))
 
-    handlers = [stream_handler]
+    handlers: list[logging.Handler] = [stream_handler]
     if telemetry_handles and telemetry_handles.log_handler:
         handlers.append(telemetry_handles.log_handler)
 
@@ -336,7 +333,7 @@ async def error_handler(event: Any = None, exception: Exception | None = None, *
             except Exception:
                 pass
             try:
-                bot: Bot = getattr(event, "bot", None)
+                bot: Bot | None = getattr(event, "bot", None)
                 if cb is not None and bot is not None:
                     await bot.send_message(cb.chat.id, "Меню обновлено. Нажмите /start")
             except Exception:
@@ -387,6 +384,10 @@ async def main():
     timetable_manager = await TimetableManager.create(redis_client=redis_client)
     if not timetable_manager:
         logging.critical("Критическая ошибка: не удалось инициализировать TimetableManager. Запуск отменен.")
+        try:
+            await redis_client.close()
+        except Exception:
+            pass
         return
 
     user_data_manager = UserDataManager(db_url=db_url or "", redis_url=redis_url)
@@ -404,10 +405,14 @@ async def main():
     # Увеличиваем таймаут HTTP-запросов к Telegram API (число секунд)
     # Важно: aiogram ожидает, что session.timeout будет числом, а не ClientTimeout
     http_session = AiohttpSession(timeout=180)
-    bot = Bot(
-        token=bot_token or "",
-        default=default_properties,
-        session=http_session,
+    from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
+
+    bot = attach_custom_emoji_middleware(
+        Bot(
+            token=bot_token or "",
+            default=default_properties,
+            session=http_session,
+        )
     )
     dp = Dispatcher(storage=storage)
 
@@ -419,6 +424,7 @@ async def main():
     )
 
     # Подключение Middleware
+    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд (до БД и телеметрии)
     dp.update.middleware(ManagerMiddleware(timetable_manager))
     dp.update.middleware(UserDataMiddleware(user_data_manager))
     dp.update.middleware(SessionMiddleware(user_data_manager.async_session_maker))
@@ -428,7 +434,6 @@ async def main():
     dp.update.middleware(LoggingMiddleware())  # Middleware для сбора метрик и логов
     # Автоочистка чатов полностью отключена
     dp.update.middleware(I18nMiddleware())  # Интернационализация (после UserData!)
-    dp.update.middleware(RateLimitMiddleware(redis_client=redis_client))  # Улучшенный анти-флуд
     dp.update.middleware(
         lambda handler, event, data: handler(
             event,
@@ -443,9 +448,12 @@ async def main():
     )
     dp.errors.register(error_handler)
 
+    from bot.handlers.group_chat_router import group_chat_router
+
     # Регистрация диалогов и хэндлеров
-    # Регистрируем feedback_reply_router первым, чтобы он обрабатывал сообщения в FEEDBACK_CHAT_ID
+    # Регистрируем feedback_reply_router и group_chat_router до диалогов
     dp.include_router(feedback_reply_router)
+    dp.include_router(group_chat_router)
 
     all_dialogs = [
         main_menu_dialog,
@@ -459,25 +467,33 @@ async def main():
     for dialog in all_dialogs:
         dp.include_router(dialog)
     setup_dialogs(dp)
-    dp.update.middleware(AdminDialogGuardMiddleware())
+    admin_guard = AdminDialogGuardMiddleware()
+    dp.message.middleware(admin_guard)
+    dp.callback_query.middleware(admin_guard)
 
-    dp.message.register(start_command_handler, CommandStart())
-    dp.message.register(about_command_handler, Command("about"))
-    dp.message.register(feedback_command_handler, Command("feedback"))
+    dp.message.register(start_command_handler, CommandStart(), F.chat.type == "private")
+    dp.message.register(about_command_handler, Command("about"), F.chat.type == "private")
+    dp.message.register(feedback_command_handler, Command("feedback"), F.chat.type == "private")
     if ADMIN_IDS:
-        dp.message.register(admin_command_handler, Command("admin"), F.from_user.id.in_(ADMIN_IDS))
-        dp.message.register(override_command_handler, Command("override"), F.from_user.id.in_(ADMIN_IDS))
+        dp.message.register(admin_command_handler, Command("admin"), F.chat.type == "private", F.from_user.id.in_(ADMIN_IDS))
+        dp.message.register(
+            override_command_handler, Command("override"), F.chat.type == "private", F.from_user.id.in_(ADMIN_IDS)
+        )
     dp.inline_query.register(inline_query_handler)
     # Обработчик inline-кнопки "Назад" на медиа-сообщениях
     dp.callback_query.register(on_inline_back, F.data == "back_to_day_img")
     # Обработчики кнопок оригинала и проверки подписки
     dp.callback_query.register(on_send_original_file_callback, F.data == "send_original_file")
     dp.callback_query.register(on_check_subscription_callback, F.data == "check_sub")
-    # Обработчик отмены генерации изображений
-    dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
+    # Обработчик отмены генерации изображений (только для администраторов)
+    if ADMIN_IDS:
+        dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation", F.from_user.id.in_(ADMIN_IDS))
+    else:
+        dp.callback_query.register(on_cancel_generation, F.data == "cancel_generation")
     # Времено отключено: кнопки "полное качество" и проверка подписки
 
     logging.info("Запуск бота, планировщика и сервера метрик и webhooks Alertmanager...")
+    background_tasks: list[asyncio.Task[Any]] = []
     try:
         # На всякий случай удаляем webhook, чтобы polling получал апдейты
         try:
@@ -497,19 +513,27 @@ async def main():
                     except Exception:
                         pass
 
-        # Сначала запускаем фоновые сервисы, затем начинаем polling
-        logging.info("Starting background services...")
-        asyncio.create_task(run_metrics_server())
-        asyncio.create_task(
-            run_alert_webhook_server(
+        # Запускаем HTTP-сервер алертов и сохраняем runner для корректной остановки
+        alert_runner = None
+        try:
+            alert_runner = await run_alert_webhook_server(
                 bot,
                 ADMIN_IDS,
                 redis_client=redis_client,
                 db_session_maker=user_data_manager.async_session_maker,
             )
+        except Exception as e:
+            logging.error(f"Failed to start alert webhook server: {e}")
+
+        # Сначала запускаем фоновые сервисы, затем начинаем polling
+        logging.info("Starting background services...")
+        background_tasks.extend(
+            [
+                asyncio.create_task(run_metrics_server()),
+                asyncio.create_task(start_business_monitoring()),
+                asyncio.create_task(_notify_admins_start()),
+            ]
         )
-        asyncio.create_task(start_business_monitoring())
-        asyncio.create_task(_notify_admins_start())
 
         # Запускаем бота отдельно для лучшего контроля
         logging.info("Starting bot polling...")
@@ -519,6 +543,16 @@ async def main():
             logging.error(f"Bot polling failed: {e}")
             raise
     finally:
+        for task in background_tasks:
+            if not task.done():
+                task.cancel()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+        if "alert_runner" in locals() and alert_runner is not None:
+            try:
+                await alert_runner.cleanup()
+            except Exception:
+                pass
         # Корректно останавливаем планировщик и ресурсы
         try:
             scheduler.shutdown()
@@ -530,6 +564,13 @@ async def main():
             pass
         try:
             await bot.session.close()
+        except Exception:
+            pass
+        try:
+            if hasattr(user_data_manager, "close"):
+                await user_data_manager.close()
+            else:
+                await user_data_manager.engine.dispose()
         except Exception:
             pass
         # Закрываем Playwright/Chromium, чтобы избежать утечек

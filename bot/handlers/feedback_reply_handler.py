@@ -40,6 +40,11 @@ if FEEDBACK_CHAT_ID_INT is not None:
         if not message.reply_to_message:
             return
 
+        from core.config import ADMIN_IDS
+
+        if ADMIN_IDS and (not message.from_user or message.from_user.id not in ADMIN_IDS):
+            return
+
         replied_msg = message.reply_to_message
         user_id = None
 
@@ -48,21 +53,10 @@ if FEEDBACK_CHAT_ID_INT is not None:
             user_id = replied_msg.forward_from.id
             logger.info(f"Found user_id from forward_from: {user_id}")
 
-        # Вариант 2: Пытаемся извлечь ID из текста сообщения (user info message от бота)
-        if not user_id and (replied_msg.text or replied_msg.caption):
-            text = replied_msg.text or replied_msg.caption
-            # Ищем паттерн "ID: <code>123456</code>" или "ID: 123456"
-            match = re.search(r"ID:\s*(?:<code>)?(\d+)(?:</code>)?", text)
-            if match:
-                user_id = int(match.group(1))
-                logger.info(f"Found user_id from text pattern: {user_id}")
-
-        # Вариант 3: Если это reply на пересланное сообщение со скрытым отправителем,
-        # ищем следующее сообщение в цепочке (сообщение с info от бота)
+        # Вариант 2 (пересылка со скрытым отправителем проверяется ДО regex по тексту,
+        # чтобы исключить подмену user_id через "ID: <victim>" в тексте самого пользователя)
         if not user_id and (replied_msg.forward_sender_name or replied_msg.forward_from_chat):
             logger.info("Forward from hidden user, trying to find user_id from next message")
-            # В этом случае бот должен был отправить следующее сообщение с информацией о пользователе
-            # Но мы не можем легко получить следующее сообщение, поэтому просим админа ответить на сообщение с информацией
             await message.reply(
                 "⚠️ <b>Пользователь скрыл пересылку сообщений</b>\n\n"
                 "Пожалуйста, ответьте на следующее сообщение от бота с информацией о пользователе "
@@ -70,6 +64,16 @@ if FEEDBACK_CHAT_ID_INT is not None:
                 parse_mode="HTML",
             )
             return
+
+        # Вариант 3: Пытаемся извлечь ID из текста сервисного сообщения от бота
+        if not user_id and (replied_msg.text or replied_msg.caption):
+            text = replied_msg.text or replied_msg.caption
+            assert text is not None
+            # Ищем паттерн "ID: <code>123456</code>" или "ID: 123456"
+            match = re.search(r"ID:\s*(?:<code>)?(\d+)(?:</code>)?", text)
+            if match:
+                user_id = int(match.group(1))
+                logger.info(f"Found user_id from text pattern: {user_id}")
 
         if not user_id:
             await message.reply(
@@ -83,23 +87,27 @@ if FEEDBACK_CHAT_ID_INT is not None:
 
         # Отправляем ответ пользователю
         try:
+            import html as html_lib
+
             admin_response = message.text or message.caption or "Администратор прислал вам сообщение"
+            escaped_response = html_lib.escape(admin_response)
 
             if message.content_type == "text":
                 await bot.send_message(
                     chat_id=user_id,
                     text=(
                         "📬 <b>Ответ на ваш фидбек</b>\n\n"
-                        f"🔄 <b>Ответ администратора:</b>\n{admin_response}\n\n"
+                        f"🔄 <b>Ответ администратора:</b>\n{escaped_response}\n\n"
                         "Спасибо за обращение! Мы всегда рады помочь. 🤖"
                     ),
                     parse_mode="HTML",
                 )
             else:
                 # Копируем медиа-сообщение
+                escaped_caption = html_lib.escape(message.caption or "")
                 caption_text = (
                     "📬 <b>Ответ на ваш фидбек</b>\n\n"
-                    f"🔄 <b>Ответ администратора:</b>\n{message.caption or ''}\n\n"
+                    f"🔄 <b>Ответ администратора:</b>\n{escaped_caption}\n\n"
                     "Спасибо за обращение! Мы всегда рады помочь. 🤖"
                 )
                 await bot.copy_message(
@@ -121,13 +129,15 @@ if FEEDBACK_CHAT_ID_INT is not None:
 
                     result = await session.execute(
                         select(Feedback)
-                        .where(Feedback.user_id == user_id, Feedback.is_answered == False)
+                        .where(Feedback.user_id == user_id, Feedback.is_answered.is_(False))
                         .order_by(Feedback.created_at.desc())
+                        .limit(1)
                     )
                     feedback = result.scalar_one_or_none()
 
                     if feedback:
-                        await feedback_manager.answer_feedback(feedback.id, message.from_user.id, admin_response)
+                        responder_id = message.from_user.id if message.from_user else 0
+                        await feedback_manager.answer_feedback(feedback.id, responder_id, admin_response)
                         logger.info(f"Marked feedback #{feedback.id} as answered")
             except Exception as e:
                 logger.error(f"Error marking feedback as answered: {e}")
@@ -139,9 +149,13 @@ if FEEDBACK_CHAT_ID_INT is not None:
             )
 
         except Exception as e:
+            import html as html_lib
+
             logger.error(f"Error sending reply to user {user_id}: {e}")
             await message.reply(
-                f"❌ <b>Ошибка при отправке ответа</b>\n\n" f"User ID: <code>{user_id}</code>\n" f"Ошибка: {str(e)}",
+                f"❌ <b>Ошибка при отправке ответа</b>\n\n"
+                f"User ID: <code>{user_id}</code>\n"
+                f"Ошибка: {html_lib.escape(str(e))}",
                 parse_mode="HTML",
             )
 

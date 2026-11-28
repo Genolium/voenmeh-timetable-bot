@@ -23,12 +23,14 @@ def lessons_sample():
         {
             "time": "09:00-10:30",
             "subject": "Матан",
+            "room": "322",
             "start_time_raw": "09:00",
             "end_time_raw": "10:30",
         },
         {
             "time": "10:40-12:10",
             "subject": "Физика",
+            "room": "325*",
             "start_time_raw": "10:40",
             "end_time_raw": "12:10",
         },
@@ -38,10 +40,11 @@ def lessons_sample():
 @pytest.mark.parametrize(
     "mock_time_str, expected_header",
     [
-        ("08:00", "☀️ <b>Доброе утро!</b> Первая пара в 09:00."),
-        ("09:30", "⏳ <b>Идет пара:</b> Матан.\nЗакончится в 10:30."),
-        ("10:35", "☕️ <b>Перерыв до 10:40.</b>\nСледующая пара: Физика."),
-        ("11:00", "⏳ <b>Идет пара:</b> Физика.\nЗакончится в 12:10."),
+        ("05:30", "☀️ <b>Доброе утро!</b> Первая пара в 09:00."),
+        ("08:00", "☀️ <b>До первой пары 1 ч</b> · в 09:00 (ауд. 322)"),
+        ("09:30", "🟢 <b>Сейчас:</b> Матан (ауд. 322) · до конца 1 ч"),
+        ("10:35", "☕️ <b>Перерыв 5 мин</b> · следующая в 10:40 — Физика (ауд. 325*)"),
+        ("11:42", "🟢 <b>Сейчас:</b> Физика (ауд. 325*) · до конца 28 мин"),
         ("13:00", "✅ <b>Пары на сегодня закончились.</b> Отдыхайте!"),
         ("04:00", "🌙 <b>Поздняя ночь.</b> Скоро утро!"),
     ],
@@ -364,7 +367,7 @@ class TestNotificationFormatters:
         assert "Добрый вечер!" in text
         assert "Завтра понедельник — начинаем неделю с чистого листа!" in text
         assert "Прогноз на завтра: Снег, -5°C" in text
-        assert "не забудьте шапку и перчатки" in text
+        assert "пуховик, шарф" in text
         assert "Совет:" not in text
         assert "Цитата:" not in text
         assert "Вопрос:" not in text
@@ -406,9 +409,9 @@ class TestNotificationFormatters:
 
         # Тестируем разные температурные диапазоны
         test_cases = [
-            (-10, "морозно"),
-            (5, "прохладно"),
-            (15, "тепло"),
+            (-10, "мороз"),
+            (5, "прохлад"),
+            (15, "свежая"),
             (25, "жарко"),
         ]
 
@@ -423,14 +426,14 @@ class TestNotificationFormatters:
         text = generate_morning_intro(weather_forecast)
 
         assert "Доброе утро! ☀️" in text
-        assert "За окном сейчас Ясно, 22°C." in text
+        assert "Погода на день: Ясно, 22°C" in text
 
     def test_generate_morning_intro_no_weather(self, mocker):
         mocker.patch("bot.text_formatters.random.choice", lambda x: x[0])
         text = generate_morning_intro(None)
 
         assert "Доброе утро! ☀️" in text
-        assert "За окном сейчас" not in text
+        assert "Погода на день" not in text
 
     def test_generate_reminder_text(self, mocker):
         mocker.patch("bot.text_formatters.random.choice", lambda x: x[0])
@@ -514,13 +517,9 @@ class TestNotificationFormatters:
 
         text = generate_evening_intro(weather_forecast, target_date, user_type="teacher")
 
-        # Проверяем, что используется формальное приветствие
         assert "Добрый вечер!" in text
-        # Проверяем, что используется формальный контекст
         assert "понедельник" in text.lower()
-        # Проверяем, что погода отображается без советов по одежде
-        assert "Прогноз погоды на завтра: Облачно, 10°C" in text
-        assert "куртка" not in text.lower()
+        assert "Прогноз на завтра: Облачно, 10°C" in text
         assert "свитер" not in text.lower()
 
     def test_generate_evening_intro_student(self, mocker):
@@ -532,11 +531,9 @@ class TestNotificationFormatters:
 
         text = generate_evening_intro(weather_forecast, target_date, user_type="student")
 
-        # Проверяем, что используется неформальное приветствие
         assert "Добрый вечер!" in text
-        # Проверяем, что есть советы по одежде для студентов
         assert "Прогноз на завтра: Облачно, 10°C" in text
-        assert "куртка" in text.lower() or "свитер" in text.lower() or "прохладно" in text.lower()
+        assert "куртка" in text.lower() or "свитер" in text.lower() or "свежая" in text.lower()
 
     def test_generate_morning_intro_teacher(self, mocker):
         """Тест утреннего приветствия для преподавателя"""
@@ -545,10 +542,8 @@ class TestNotificationFormatters:
         weather_forecast = {"temperature": 15, "description": "солнечно", "emoji": "☀️"}
         text = generate_morning_intro(weather_forecast, user_type="teacher")
 
-        # Проверяем формальное приветствие
         assert "Доброе утро!" in text
-        # Проверяем формальный стиль погоды
-        assert "Текущая погода: Солнечно, 15°C" in text
+        assert "Погода на день: Солнечно, 15°C" in text
         assert "За окном" not in text
 
     def test_generate_morning_intro_student(self, mocker):
@@ -558,10 +553,8 @@ class TestNotificationFormatters:
         weather_forecast = {"temperature": 15, "description": "солнечно", "emoji": "☀️"}
         text = generate_morning_intro(weather_forecast, user_type="student")
 
-        # Проверяем неформальное приветствие
         assert "Доброе утро! ☀️" in text
-        # Проверяем неформальный стиль погоды
-        assert "За окном сейчас Солнечно, 15°C" in text
+        assert "Погода на день: Солнечно, 15°C" in text
 
 
 def test_format_schedule_text_edge_cases():
@@ -642,3 +635,18 @@ def test_generate_dynamic_header_edge_cases():
 
 def test_unsubscribe_footer_constant():
     assert UNSUBSCRIBE_FOOTER == "\n\n<tg-spoiler><i>Отключить эту рассылку можно в «⚙️ Настройки»</i></tg-spoiler>"
+
+
+def test_format_minutes_delta_and_room_badge_variants():
+    from bot.text_formatters import _format_minutes_delta, _format_room_badge
+
+    assert _format_minutes_delta(75, "en") == "1h 15m"
+    assert _format_minutes_delta(20, "en") == "20 min"
+    assert _format_minutes_delta(75, "zh") == "1小时15分"
+    assert _format_minutes_delta(20, "zh") == "20 分钟"
+    assert _format_minutes_delta(75, "ru") == "1 ч 15 мин"
+    assert _format_minutes_delta(60, "ru") == "1 ч"
+
+    assert _format_room_badge("кабинет не указан", "ru") == ""
+    assert _format_room_badge("дистант", "ru") == " (дистант)"
+    assert _format_room_badge("online", "en") == " (online)"

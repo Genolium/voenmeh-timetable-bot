@@ -55,14 +55,32 @@ async def test_track_feature_click_error():
 # ---------------------------------------------------------------------------
 
 
+class FakePipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.keys = []
+
+    def hgetall(self, key):
+        self.keys.append(key)
+
+    async def execute(self):
+        return [await self.redis.hgetall(k) for k in self.keys]
+
+
 class FakeRedis:
-    def __init__(self, daily=None, total=None):
+    def __init__(self, daily=None, total=None, *, non_dict=False):
         self.daily = daily or {}
         self.total = total or {}
+        self.non_dict = non_dict
         self.calls = []
+
+    def pipeline(self):
+        return FakePipeline(self)
 
     async def hgetall(self, key):
         self.calls.append(key)
+        if self.non_dict:
+            return None
         if key.endswith(":total"):
             return self.total
         return self.daily.get(key, {})
@@ -77,6 +95,30 @@ async def test_get_top_features_daily_aggregation():
     result = await get_top_features(redis, days=2, limit=5)
     assert result[0] == ("day_nav", "Переход по дням недели", 4)
     assert result[1][0] == "teacher_search"
+
+
+async def test_get_top_features_async_pipeline():
+    base = FakeRedis(daily={_daily_key(0): {"day_nav": 2}})
+    redis = MagicMock()
+    redis.pipeline = AsyncMock(return_value=FakePipeline(base))
+    result = await get_top_features(redis, days=1)
+    assert result == [("day_nav", "Переход по дням недели", 2)]
+
+
+async def test_get_top_features_zero_days_and_non_dict():
+    redis = FakeRedis(non_dict=True)
+    assert await get_top_features(redis, days=0) == []
+
+
+async def test_get_top_features_daily_non_dict_fallback_total():
+    base = FakeRedis(total={"image_export": 3})
+    pipe = MagicMock()
+    pipe.execute = AsyncMock(return_value=[None])
+    redis = MagicMock()
+    redis.pipeline = MagicMock(return_value=pipe)
+    redis.hgetall = base.hgetall
+    result = await get_top_features(redis, days=1)
+    assert result == [("image_export", "Генерация расписания картинкой", 3)]
 
 
 async def test_get_top_features_invalid_count_defaults_to_one():
@@ -110,7 +152,7 @@ async def test_get_top_features_unknown_feature_name():
 
 async def test_get_top_features_error():
     redis = MagicMock()
-    redis.hgetall = AsyncMock(side_effect=Exception("boom"))
+    redis.pipeline = MagicMock(side_effect=Exception("boom"))
     assert await get_top_features(redis, days=2) == []
 
 

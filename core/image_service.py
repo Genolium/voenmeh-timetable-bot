@@ -1,10 +1,5 @@
 import asyncio
 import logging
-
-# Глобальный семафор для ограничения количества одновременных генераций изображений
-# Используем threading.Semaphore для работы в разных event loop'ах Dramatiq
-import os
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -20,6 +15,13 @@ from core.metrics import SCHEDULE_GENERATION_TIME
 
 logger = logging.getLogger(__name__)
 
+_TRANSIENT_SEND_TOKENS = ("timeout", "connect", "network", "reset", "disconnected")
+
+
+def _is_transient_send_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(token in msg for token in _TRANSIENT_SEND_TOKENS)
+
 
 class ImageService:
     """
@@ -27,7 +29,7 @@ class ImageService:
     Обрабатывает генерацию, кэширование и отправку изображений.
     """
 
-    def __init__(self, cache_manager: ImageCacheManager, bot: Bot):
+    def __init__(self, cache_manager: ImageCacheManager, bot: Optional[Bot]):
         self.cache_manager = cache_manager
         self.bot = bot
 
@@ -43,6 +45,7 @@ class ImageService:
         final_caption: Optional[str] = None,
         lang: str = "ru",
         exec_locally: bool = False,
+        rules_hash: str = "",
     ) -> Tuple[bool, Optional[str]]:
         """
         Получает изображение из кэша или генерирует новое.
@@ -61,44 +64,53 @@ class ImageService:
         Returns:
             Tuple[success, file_path]
         """
-        # Ключ кэша: для пользовательских тем учитываем тему
-        # Приводим группу к верхнему регистру для консистентности имен файлов
-        safe_group = group.upper()
-        if user_theme and user_theme != "standard":
-            cache_key = f"{safe_group}_{week_key}_{user_theme}_{lang}"
+        # Ключ кэша: нормализуем группу, тему и параметры для защиты от path traversal
+        from core.image_cache_manager import sanitize_group_key
+        from core.themes import get_theme_meta
+
+        safe_group = sanitize_group_key(group)
+        safe_week = "odd" if week_key == "odd" else ("even" if week_key == "even" else sanitize_group_key(week_key).lower())
+        normalized_theme = get_theme_meta(user_theme).id if user_theme else "standard"
+        safe_lang = lang if lang in ("ru", "en", "zh") else "ru"
+        if normalized_theme != "standard":
+            cache_key = f"{safe_group}_{safe_week}_{normalized_theme}_{safe_lang}"
         else:
-            cache_key = f"{safe_group}_{week_key}_{lang}"
+            cache_key = f"{safe_group}_{safe_week}_{safe_lang}"
+        if rules_hash:
+            safe_rules = "".join(ch for ch in str(rules_hash) if ch.isalnum())[:32]
+            if safe_rules:
+                cache_key = f"{cache_key}_u{safe_rules}"
 
         logger.info(f"🎨 Requesting week image for {cache_key} (theme={user_theme or 'standard'})")
 
         # Проверяем кэш
         if await self.cache_manager.is_cached(cache_key):
             logger.info(f"✅ Cache HIT for {cache_key}")
-            file_path = self.cache_manager.get_file_path(cache_key)
+            cached_path = self.cache_manager.get_file_path(cache_key)
 
             # Проверяем, что файл действительно существует
-            if not file_path.exists():
-                logger.warning(f"⚠️ Cache hit but file missing: {file_path}")
+            if not cached_path.exists():
+                logger.warning(f"⚠️ Cache hit but file missing: {cached_path}")
                 # Удаляем из кэша и генерируем заново
                 await self.cache_manager.invalidate_cache(cache_key)
             else:
                 if user_id:
                     send_success = await self._send_image_to_user(
-                        file_path, user_id, placeholder_msg_id, final_caption, lang=lang
+                        str(cached_path), user_id, placeholder_msg_id, final_caption, lang=lang
                     )
                     if not send_success:
-                        logger.warning(f"⚠️ Failed to send cached image, will regenerate")
+                        logger.warning("⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
                         await self.cache_manager.invalidate_cache(cache_key)
                     else:
-                        return True, str(file_path)
+                        return True, str(cached_path)
                 else:
-                    return True, str(file_path)
+                    return True, str(cached_path)
 
         logger.info(f"❌ Cache MISS for {cache_key}, generating...")
 
         # Генерируем изображение
-        success, file_path = await self._generate_and_cache_image(
+        success, generated_path = await self._generate_and_cache_image(
             cache_key,
             week_schedule,
             week_name,
@@ -113,9 +125,9 @@ class ImageService:
         )
 
         if success and user_id:
-            await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption, lang=lang)
+            await self._send_image_to_user(str(generated_path), user_id, placeholder_msg_id, final_caption, lang=lang)
 
-        return success, file_path
+        return success, generated_path
 
     async def _generate_and_cache_image(
         self,
@@ -194,6 +206,7 @@ class ImageService:
                         placeholder_msg_id=placeholder_msg_id,
                         final_caption=final_caption,
                         lang=lang,
+                        user_theme=user_theme,
                     )
 
                     # Метрика отправки в очередь
@@ -314,8 +327,8 @@ class ImageService:
 
             logger.info(f"📁 Sending file: {file_path} ({file_size} bytes)")
 
-            # Сжимаем изображение для Telegram если нужно
-            safe_image_path = get_telegram_safe_image_path(file_path)
+            # Сжимаем изображение для Telegram если нужно (в отдельном потоке, чтобы не блокировать event loop)
+            safe_image_path = await asyncio.to_thread(get_telegram_safe_image_path, file_path)
             safe_path_obj = Path(safe_image_path)
 
             if not safe_path_obj.exists():
@@ -323,6 +336,7 @@ class ImageService:
                 return False
 
             photo = FSInputFile(safe_image_path)
+            assert self.bot is not None
 
             # Клавиатура: оригинал файла + назад (в одном сообщении)
             from core.i18n import i18n
@@ -353,27 +367,46 @@ class ImageService:
                         message_id=placeholder_msg_id,
                         media=media,
                         reply_markup=kb,
+                        request_timeout=15,
                     )
                     logger.info(f"✅ Image edited for user {user_id}")
                     return True
 
                 except Exception as e:
-                    # Фолбэк при сетевых таймаутах и несущественных ошибках: отправим как новое
-                    if "message is not modified" not in str(e).lower():
-                        logger.warning(f"Failed to edit message for user {user_id}: {e}")
-                        # Продолжаем с отправкой нового сообщения
+                    # Если сообщение не изменилось — фото уже актуально, не шлём дубликат
+                    if "message is not modified" in str(e).lower():
+                        logger.info(f"Image message not modified for user {user_id}")
+                        return True
+                    logger.warning(f"Failed to edit message for user {user_id}: {e}")
+                    # Продолжаем с отправкой нового сообщения
 
-            # Отправляем новое сообщение
-            try:
-                await self.bot.send_photo(
-                    chat_id=user_id,
-                    photo=photo,
-                    caption=final_caption or "",
-                    reply_markup=kb,
-                )
-            except Exception as e:
+            # Отправляем новое сообщение с ретраями на транзиентных сетевых сбоях
+            last_error: Optional[Exception] = None
+            max_attempts = 3
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    await self.bot.send_photo(
+                        chat_id=user_id,
+                        photo=FSInputFile(safe_image_path),
+                        caption=final_caption or "",
+                        reply_markup=kb,
+                        request_timeout=15,
+                    )
+                    last_error = None
+                    break
+                except Exception as e:
+                    last_error = e
+                    if not _is_transient_send_error(e):
+                        break
+                    if attempt < max_attempts:
+                        logger.warning(
+                            f"Photo send attempt {attempt}/{max_attempts} failed for user {user_id}: {e}; retrying..."
+                        )
+                        await asyncio.sleep(0.5 * attempt)
+
+            if last_error is not None:
                 # Если не удалось отправить фото — отправим текст и ссылку на оригинал (если есть)
-                logger.warning(f"Photo send failed for user {user_id}: {e}")
+                logger.warning(f"Photo send failed for user {user_id}: {last_error}")
                 fallback_text = (final_caption or "") + "\n\n⚠️ Не удалось отправить изображение. Попробуйте позже."
                 try:
                     await self.bot.send_message(chat_id=user_id, text=fallback_text, parse_mode="HTML")

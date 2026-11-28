@@ -28,16 +28,20 @@ class AlertSender:
         }
 
     async def __aenter__(self):
-        self.session = aiohttp.ClientSession()
+        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    async def close(self) -> None:
         if self.session:
             await self.session.close()
+            self.session = None
 
     async def send(self, alert_data: Dict[str, Any]) -> bool:
-        if not self.session:
-            self.session = aiohttp.ClientSession()
+        if not self.session or getattr(self.session, "closed", False):
+            self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10))
         success = False
         severity = alert_data.get("severity", "info")
         try:
@@ -66,18 +70,18 @@ class AlertSender:
 
     async def _send_slack(self, alert_data: Dict[str, Any]) -> bool:
         try:
-            emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
-            blocks = [
+            emoji = {"info": "ℹ️", "warning": "⚠️", "error": "❗", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
+            blocks: list[Dict[str, Any]] = [
                 {
                     "type": "header",
                     "text": {
                         "type": "plain_text",
-                        "text": f"{emoji} {alert_data.get('title', 'Alert')}",
+                        "text": f"{emoji} {alert_data.get('title', 'Alert')}"[:150],
                     },
                 },
                 {
                     "type": "section",
-                    "text": {"type": "mrkdwn", "text": alert_data.get("message", "")},
+                    "text": {"type": "mrkdwn", "text": str(alert_data.get("message", ""))[:3000]},
                 },
             ]
             if alert_data.get("tags"):
@@ -85,7 +89,7 @@ class AlertSender:
                 blocks.append(
                     {
                         "type": "section",
-                        "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"},
+                        "text": {"type": "mrkdwn", "text": f"*Details:*\n{tags}"[:3000]},
                     }
                 )
             blocks.append(
@@ -100,49 +104,66 @@ class AlertSender:
                 }
             )
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
-            cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(str(self.webhooks["slack"]), json=payload))
             async with cm as r:
                 return cast(bool, r.status == 200)
-        except Exception:
+        except Exception as e:
+            logging.warning("Slack alert send failed: %s", type(e).__name__)
             return False
 
     async def _send_discord(self, alert_data: Dict[str, Any]) -> bool:
         try:
-            color = {"info": 0x3498DB, "warning": 0xF39C12, "critical": 0xE74C3C}.get(
+            color = {"info": 0x3498DB, "warning": 0xF39C12, "error": 0xE67E22, "critical": 0xE74C3C}.get(
                 alert_data.get("severity", "info"), 0x95A5A6
             )
             embed = {
-                "title": alert_data.get("title", "Alert"),
-                "description": alert_data.get("message", ""),
+                "title": str(alert_data.get("title", "Alert"))[:256],
+                "description": str(alert_data.get("message", ""))[:4096],
                 "color": color,
                 "timestamp": datetime.now(MOSCOW_TZ).isoformat(),
             }
             if alert_data.get("tags"):
-                embed["fields"] = [{"name": k, "value": str(v), "inline": True} for k, v in alert_data["tags"].items()]
-            cm = await self._normalize_ctx(self.session.post(self.webhooks["discord"], json={"embeds": [embed]}))
+                embed["fields"] = [
+                    {"name": str(k)[:256], "value": str(v)[:1024], "inline": True}
+                    for k, v in list(alert_data["tags"].items())[:25]
+                ]
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(str(self.webhooks["discord"]), json={"embeds": [embed]}))
             async with cm as r:
                 return r.status in (200, 204)
-        except Exception:
+        except Exception as e:
+            logging.warning("Discord alert send failed: %s", type(e).__name__)
             return False
 
     async def _send_telegram(self, alert_data: Dict[str, Any]) -> bool:
         try:
+            import html as html_lib
+
             chat_id = self.settings.get("TELEGRAM_ALERT_CHAT_ID")
             if not chat_id:
                 return False
-            emoji = {"info": "ℹ️", "warning": "⚠️", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
-            text = f"{emoji} <b>{alert_data.get('title', 'Alert')}</b>\n\n{alert_data.get('message', '')}"
+            emoji = {"info": "ℹ️", "warning": "⚠️", "error": "❗", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
+            title = html_lib.escape(str(alert_data.get("title", "Alert")))
+            message = html_lib.escape(str(alert_data.get("message", "")))
+            text = f"{emoji} <b>{title}</b>\n\n{message}"
             if alert_data.get("tags"):
-                text += "\n\n" + "\n".join([f"• {k}: {v}" for k, v in alert_data["tags"].items()])
+                text += "\n\n" + "\n".join(
+                    [f"• {html_lib.escape(str(k))}: {html_lib.escape(str(v))}" for k, v in alert_data["tags"].items()]
+                )
+            if len(text) > 4096:
+                text = text[:4093] + "..."
             url = f"https://api.telegram.org/bot{self.webhooks['telegram']}/sendMessage"
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-            cm = await self._normalize_ctx(self.session.post(url, json=payload))
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(url, json=payload))
             async with cm as r:
                 if r.status == 200:
                     data = await r.json()
                     return bool(data.get("ok"))
                 return False
-        except Exception:
+        except Exception as e:
+            logging.warning("Telegram alert send failed: %s", type(e).__name__)
             return False
 
     async def _send_http(self, alert_data: Dict[str, Any]) -> bool:
@@ -151,14 +172,16 @@ class AlertSender:
             api_key = self.settings.get("ALERT_WEBHOOK_API_KEY")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+            session = cast(aiohttp.ClientSession, self.session)
             cm = await self._normalize_ctx(
-                self.session.post(
-                    self.settings.get("ALERT_WEBHOOK_URL"),
+                session.post(
+                    str(self.settings.get("ALERT_WEBHOOK_URL")),
                     json=alert_data,
                     headers=headers,
                 )
             )
             async with cm as r:
                 return r.status in (200, 201, 202)
-        except Exception:
+        except Exception as e:
+            logging.warning("HTTP alert send failed: %s", type(e).__name__)
             return False

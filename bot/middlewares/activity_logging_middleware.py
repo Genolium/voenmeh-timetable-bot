@@ -1,11 +1,10 @@
 import json
 import logging
 import time
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import TelegramObject
 
 from bot.middlewares.event_utils import (
     extract_callback_data,
@@ -20,7 +19,6 @@ from core.metrics import (
     DIALOG_USAGE,
     FEATURE_POPULARITY,
     NEW_USERS_DAILY,
-    USER_ACTION_INTERVAL,
     USER_ACTIONS,
     USER_ACTIVITY_DAILY,
     USER_ACTIVITY_HOURLY,
@@ -55,7 +53,6 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if from_user is not None and getattr(from_user, "id", None):
             user_id = str(from_user.id)
             username = getattr(from_user, "username", "unknown")
-            user_full_name = getattr(from_user, "full_name", "unknown")
 
         # Получаем тип пользователя из данных (если доступно)
         # В UserDataMiddleware данные пользователя уже должны быть в middleware_data
@@ -77,7 +74,23 @@ class ActivityLoggingMiddleware(BaseMiddleware):
         if text_value and not str(text_value).startswith("<MagicMock"):
             if str(text_value).startswith("/"):
                 action = "command"
-                BOT_COMMANDS.labels(command=str(text_value)[1:], user_type=user_type).inc()
+                raw_cmd = str(text_value)[1:].split()[0].split("@")[0].lower()[:32] if str(text_value)[1:].strip() else ""
+                known_commands = {
+                    "start",
+                    "help",
+                    "about",
+                    "feedback",
+                    "admin",
+                    "override",
+                    "group",
+                    "settings",
+                    "find",
+                    "today",
+                    "tomorrow",
+                    "week",
+                }
+                safe_cmd = raw_cmd if raw_cmd in known_commands else "other"
+                BOT_COMMANDS.labels(command=safe_cmd, user_type=user_type).inc()
             else:
                 action = "text_message"
         elif callback_data is not None and not str(callback_data).startswith("<MagicMock"):
@@ -89,7 +102,12 @@ class ActivityLoggingMiddleware(BaseMiddleware):
                 if hasattr(dialog_manager, "current_dialog"):
                     dialog_name = getattr(dialog_manager.current_dialog, "__name__", "unknown")
                 if hasattr(dialog_manager, "current_context"):
-                    state = str(dialog_manager.current_context.state)
+                    ctx_attr = dialog_manager.current_context
+                    try:
+                        ctx = ctx_attr() if callable(ctx_attr) else ctx_attr
+                        state = str(getattr(ctx, "state", "unknown"))
+                    except Exception:
+                        state = "unknown"
 
                 DIALOG_USAGE.labels(dialog_name=dialog_name, state=state, user_type=user_type).inc()
 
@@ -145,9 +163,13 @@ class ActivityLoggingMiddleware(BaseMiddleware):
             },
         )
 
-        # Обновляем время последнего действия для расчета интервалов
+        # Обновляем время последнего действия для расчета интервалов (с ограничением памяти)
         if user_id != "unknown":
-            self.last_user_actions[user_id] = time.time()
+            now_action_ts = time.time()
+            self.last_user_actions[user_id] = now_action_ts
+            if len(self.last_user_actions) > 10000:
+                cutoff = now_action_ts - 86400
+                self.last_user_actions = {uid: ts for uid, ts in self.last_user_actions.items() if ts >= cutoff}
 
         try:
             return await handler(event, data)

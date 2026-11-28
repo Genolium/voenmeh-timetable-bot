@@ -362,6 +362,35 @@ jobs:
 
     steps:
     - name: Notify on failure
+      env:
+        TG_BOT_TOKEN: ${{ secrets.TELEGRAM_ALERT_BOT_TOKEN || secrets.BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+        CI_REPO: ${{ github.repository }}
+        CI_REF: ${{ github.ref_name }}
+        CI_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        TEST_RESULT: ${{ needs.test.result }}
+        LINT_RESULT: ${{ needs.lint.result }}
+        BUILD_RESULT: ${{ needs.build.result }}
       run: |
         echo "Pipeline failed! Check the logs for details."
-        # Здесь можно добавить уведомления в Slack, Telegram, email и т.д.
+        if [ -z "$TG_BOT_TOKEN" ] || [ -z "$TG_CHAT_ID" ]; then
+          echo "::notice::Telegram-уведомления CI не настроены (задайте TELEGRAM_ALERT_BOT_TOKEN и TELEGRAM_ALERT_CHAT_ID в secrets)"
+          exit 0
+        fi
+        python3 - <<'PY'
+        import json, os, urllib.request
+        msg = (
+            f"🚨 CI/CD Pipeline failed\n"
+            f"Repo: {os.environ['CI_REPO']} ({os.environ['CI_REF']})\n"
+            f"test={os.environ['TEST_RESULT']} | lint={os.environ['LINT_RESULT']} | build={os.environ['BUILD_RESULT']}\n"
+            f"{os.environ['CI_RUN_URL']}"
+        )
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{os.environ['TG_BOT_TOKEN']}/sendMessage",
+            data=json.dumps({"chat_id": os.environ["TG_CHAT_ID"], "text": msg}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print("Telegram notify status:", resp.status)
+        PY

@@ -528,7 +528,7 @@ class TestOnSendOriginalFile:
         bot.send_document.assert_not_awaited()
         callback.answer.assert_awaited()
 
-    async def test_subscription_helper_exception_is_swallowed(self):
+    async def test_subscription_helper_exception_is_fail_closed(self):
         bot = AsyncMock()
         dm = self._dm(bot=bot)
         callback = make_callback()
@@ -538,7 +538,8 @@ class TestOnSendOriginalFile:
             patch("pathlib.Path.exists", return_value=True),
         ):
             await sv.on_send_original_file(callback, None, dm)
-        bot.send_document.assert_awaited()
+        bot.send_document.assert_not_awaited()
+        callback.answer.assert_awaited()
 
     async def test_subscribed_file_exists_sends_document(self):
         bot = AsyncMock()
@@ -596,7 +597,7 @@ class TestOnSendOriginalFile:
         svc.get_or_generate_week_image.return_value = (True, "/tmp/x.png")
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
-            patch("pathlib.Path.exists", side_effect=[False, False, False]),
+            patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
             patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
@@ -614,7 +615,7 @@ class TestOnSendOriginalFile:
         svc.get_or_generate_week_image.side_effect = RuntimeError("gen failed")
         with (
             patch.object(sv, "SUBSCRIPTION_CHANNEL", "@chan"),
-            patch("pathlib.Path.exists", side_effect=[False, False, False]),
+            patch("pathlib.Path.exists", return_value=False),
             patch("core.image_cache_manager.ImageCacheManager"),
             patch("core.image_service.ImageService", return_value=svc),
             patch("bot.tasks.send_week_original_if_subscribed_task") as send_task,
@@ -869,7 +870,31 @@ class TestMoreMenuAndOwnGroup:
     async def test_on_change_group_click_teacher(self):
         dm = sched_dm(dialog_data={"user_type": "teacher"})
         await sv.on_change_group_click(make_callback(), MagicMock(), dm)
-        assert dm.start.await_args.args[0] == MainMenu.enter_teacher
+        assert dm.start.await_args.args[0] == MainMenu.choose_user_type
+
+    async def test_on_make_my_group_click_saves_student_group(self):
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(udm=udm, dialog_data={"group": "О735Б", "is_group_target": True})
+        callback = make_callback()
+        await sv.on_make_my_group_click(callback, MagicMock(), dm)
+        udm.set_user_group.assert_awaited_once_with(user_id=123, group="О735Б")
+        udm.set_user_type.assert_awaited_once_with(user_id=123, user_type="student")
+        callback.answer.assert_awaited_once()
+        assert "О735Б" in callback.answer.await_args.args[0]
+
+    async def test_on_make_my_group_click_saves_teacher_and_handles_missing(self):
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(udm=udm, dialog_data={"group": "Иванов И.И.", "is_group_target": False})
+        callback = make_callback()
+        await sv.on_make_my_group_click(callback, MagicMock(), dm)
+        udm.set_user_type.assert_awaited_once_with(user_id=123, user_type="teacher")
+
+        dm_empty = sched_dm(udm=udm, dialog_data={"group": "N/A"})
+        cb_empty = make_callback()
+        await sv.on_make_my_group_click(cb_empty, MagicMock(), dm_empty)
+        cb_empty.answer.assert_awaited_once_with()
 
     async def test_teacher_searching_group_uses_group_lookup(self):
         tm = make_timetable_manager()
@@ -948,8 +973,10 @@ class TestMoreMenuAndOwnGroup:
         dm = sched_dm(dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"})
         await sv.on_help_click(make_callback(), MagicMock(), dm)
         await sv.on_feedback_click(make_callback(), MagicMock(), dm)
-        await sv.on_report_error_click(make_callback(), MagicMock(), dm)
-        assert dm.start.await_count == 3
+        dm_no_group = sched_dm(dialog_data={})
+        await sv.on_feedback_click(make_callback(), MagicMock(), dm_no_group)
+        assert dm.start.await_count == 2
+        assert dm_no_group.start.await_count == 1
 
     async def test_check_subscription_button_delegates(self):
         bot = AsyncMock()
@@ -969,6 +996,39 @@ class TestMoreMenuAndOwnGroup:
         callback = make_callback()
         callback.answer.side_effect = RuntimeError("toast failed")
         await sv.on_my_group_click(callback, MagicMock(), dm)
+
+    async def test_on_export_ics_click_success_and_empty(self):
+        from core.semester_calendar import SemesterInfo
+
+        tm = make_timetable_manager()
+        tm._schedules = {
+            "О735Б": {
+                "odd": {"Понедельник": [{"subject": "НИР", "time": "14:55-16:25", "room": "219*а"}]},
+                "even": {},
+            }
+        }
+        tm.get_semester_info_for = AsyncMock(
+            return_value=SemesterInfo(semester="fall", semester_start=date(2026, 9, 1), week_number=13, week_key="odd")
+        )
+        udm = AsyncMock()
+        udm.get_user_language.return_value = "ru"
+        dm = sched_dm(tm=tm, udm=udm, dialog_data={DialogDataKeys.GROUP: "О735Б", "is_group_target": True})
+        cb = make_callback()
+        await sv.on_export_ics_click(cb, MagicMock(), dm)
+        cb.message.answer_document.assert_awaited_once()
+
+        # Пустое расписание
+        tm._schedules = {"О735Б": {"odd": {}, "even": {}}}
+        cb_empty = make_callback()
+        await sv.on_export_ics_click(cb_empty, MagicMock(), dm)
+        cb_empty.answer.assert_awaited_once()
+        assert cb_empty.answer.await_args.kwargs.get("show_alert") is True
+
+        # Нет группы
+        dm_no_group = sched_dm(tm=tm, udm=udm, dialog_data={})
+        cb_no_group = make_callback()
+        await sv.on_export_ics_click(cb_no_group, MagicMock(), dm_no_group)
+        cb_no_group.answer.assert_awaited_once()
 
 
 class TestDeadShims:

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import TIMESTAMP, BigInteger, Boolean, Date, Index, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
 
@@ -37,7 +37,7 @@ class User(Base):
 
     # Статус блокировки бота пользователем (отток / Churn)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="f", nullable=False)
-    blocked_date: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+    blocked_date: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
 
     # Индексы для оптимизации частых запросов
     __table_args__ = (
@@ -52,6 +52,13 @@ class User(Base):
             "morning_summary",
             "lesson_reminders",
         ),  # Для рассылок
+        Index(
+            "idx_user_notifications_active",
+            "is_blocked",
+            "evening_notify",
+            "morning_summary",
+            "lesson_reminders",
+        ),  # Для рассылок активным пользователям
         Index("idx_user_theme", "theme"),  # Для поиска по теме
     )
 
@@ -133,6 +140,7 @@ class FailedMessage(Base):
         Index("idx_failed_msg_user", "user_id"),
         Index("idx_failed_msg_status", "status"),
         Index("idx_failed_msg_created", "created_at"),
+        Index("idx_failed_msg_status_created", "status", "created_at"),
     )
 
 
@@ -160,3 +168,55 @@ class RequiredChannel(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (Index("idx_required_channels_channel_id", "channel_id"),)
+
+
+class UserLessonRule(Base):
+    """Персональные правила редактирования расписания пользователем (скрытие, заметки, свои пары)."""
+
+    __tablename__ = "user_lesson_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    rule_type: Mapped[str] = mapped_column(String(20), nullable=False)  # hide_subject, note, custom_lesson
+    target_group: Mapped[str] = mapped_column(String(100), nullable=False)
+    week_key: Mapped[str | None] = mapped_column(String(10), nullable=True)  # odd, even, None
+    day_name: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    start_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    subject: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_user_lesson_rules_user", "user_id", "target_group"),
+        Index("idx_user_lesson_rules_type", "user_id", "rule_type"),
+    )
+
+
+class GroupChat(Base):
+    """Настройки групповых чатов Telegram (только автоматические и админские рассылки)."""
+
+    __tablename__ = "group_chats"
+
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    target_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    language: Mapped[str] = mapped_column(String(5), nullable=False, default="ru", server_default="ru")
+
+    morning_summary: Mapped[bool] = mapped_column(Boolean, default=True, server_default="t", nullable=False)
+    evening_notify: Mapped[bool] = mapped_column(Boolean, default=True, server_default="t", nullable=False)
+    lesson_reminders: Mapped[bool] = mapped_column(Boolean, default=False, server_default="f", nullable=False)
+    schedule_diff_notify: Mapped[bool] = mapped_column(Boolean, default=True, server_default="t", nullable=False)
+
+    morning_time: Mapped[str] = mapped_column(String(5), default="08:00", server_default="08:00", nullable=False)
+    evening_time: Mapped[str] = mapped_column(String(5), default="20:00", server_default="20:00", nullable=False)
+    reminder_time_minutes: Mapped[int] = mapped_column(Integer, default=20, server_default="20", nullable=False)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="t", nullable=False)
+    added_by_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP, onupdate=func.now(), server_default=func.now())
+
+    __table_args__ = (
+        Index("idx_group_chats_active", "is_active", "target_group"),
+        Index("idx_group_chats_notify", "is_active", "morning_summary", "evening_notify", "lesson_reminders"),
+    )

@@ -85,7 +85,7 @@ if [ $# -eq 0 ]; then
 
     # Проверяем состояние основных сервисов
     log "Проверка состояния сервисов..."
-    check_service "postgres"
+    check_service "db"
     check_service "redis"
     check_service "rabbitmq"
     check_service "bot"

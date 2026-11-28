@@ -4,15 +4,15 @@ import json
 import logging
 import os
 import re
-import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import quote
 
 import aiohttp
+import defusedxml.ElementTree as ET
 
-from core.config import API_URL, DAY_MAP, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT, VOENMEH_SU_API_URL
+from core.config import API_URL, FALLBACK_API_URL, MOSCOW_TZ, USER_AGENT
 from core.metrics import ERRORS_TOTAL, EXTERNAL_SERVICE_STATUS, PARSER_DURATION, PARSER_STATS, RETRIES_TOTAL
 
 # Заготовки для условного кэширования
@@ -37,7 +37,8 @@ def resolve_lesson_end(start_dt: datetime, item: dict | None = None) -> str:
     if item:
         raw_end = item.get("end") or item.get("end_time")
         if raw_end:
-            token = str(raw_end).split()[0]
+            parts = str(raw_end).split()
+            token = parts[0] if parts else ""
             try:
                 return datetime.strptime(token, "%H:%M").strftime("%H:%M")
             except ValueError:
@@ -96,18 +97,23 @@ def save_fallback_schedule(data: dict) -> bool:
     Returns:
         True если сохранение успешно, False в случае ошибки
     """
+    tmp_path = None
     try:
         # Создаем директорию если её нет
         FALLBACK_SCHEDULE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-        # Сохраняем данные в файл
-        with open(FALLBACK_SCHEDULE_PATH, "w", encoding="utf-8") as f:
+        # Пишем атомарно во временный файл и заменяем целевой через os.replace
+        tmp_path = FALLBACK_SCHEDULE_PATH.with_name(f".{FALLBACK_SCHEDULE_PATH.name}.{os.getpid()}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, FALLBACK_SCHEDULE_PATH)
 
         logging.info(f"Updated fallback schedule file: {FALLBACK_SCHEDULE_PATH}")
         return True
 
     except Exception as e:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         logging.error(f"Failed to save fallback schedule: {e}")
         return False
 
@@ -156,7 +162,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             logging.error("voenmeh.su вернул пустой список групп")
             return None
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -199,7 +205,8 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
                 week = item.get("week")
                 time_raw = item.get("time", "N/A")
-                start_time_token = time_raw.split()[0] if time_raw else "N/A"
+                time_parts = str(time_raw).split() if time_raw else []
+                start_time_token = time_parts[0] if time_parts else "N/A"
                 try:
                     start_dt = datetime.strptime(start_time_token, "%H:%M")
                     start_time_str = start_dt.strftime("%H:%M")
@@ -210,7 +217,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
 
                 kind = item.get("kind") or ""
                 subject = item.get("subject") or ""
-                lecturers = [l.strip() for l in item.get("teachers", []) if l and l.strip()]
+                lecturers = [teacher.strip() for teacher in item.get("teachers", []) if teacher and teacher.strip()]
                 rooms = [r.strip() for r in item.get("rooms", []) if r and r.strip()]
                 classroom = ", ".join(rooms) if rooms else None
 
@@ -315,7 +322,7 @@ async def fetch_and_parse_from_voenmeh_su(session: aiohttp.ClientSession | None 
             "source": "voenmeh.su",
         }
         hash_seed = f"{meta.get('updated_at', '')}_{period_str}_{len(all_schedules)}"
-        all_schedules["__current_xml_hash__"] = hashlib.md5(hash_seed.encode("utf-8")).hexdigest()
+        all_schedules["__current_xml_hash__"] = hashlib.md5(hash_seed.encode("utf-8"), usedforsecurity=False).hexdigest()
 
         _LAST_VOENMEH_SU_UPDATED_AT = meta_updated_at
 
@@ -364,6 +371,8 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
     try:
         attempts = 0
         xml_bytes = None
+        new_etag = None
+        new_last_modified = None
         while attempts < 3:
             attempts += 1
             try:
@@ -372,8 +381,8 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     if response.status == 304:
                         return NOT_MODIFIED
                     xml_bytes = await response.read()
-                    _LAST_ETAG = response.headers.get("ETag") or _LAST_ETAG
-                    _LAST_MODIFIED = response.headers.get("Last-Modified") or _LAST_MODIFIED
+                    new_etag = response.headers.get("ETag")
+                    new_last_modified = response.headers.get("Last-Modified")
                     break
             except Exception:
                 ERRORS_TOTAL.labels(source="parser").inc()
@@ -385,9 +394,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if not xml_bytes:
             return None
 
-        # Ограничиваем общее время декодирования и парсинга XML
+        # Ограничиваем общее время декодирования и парсинга XML (utf-8-sig первым, чтобы снять BOM)
         xml_data = None
-        for encoding in ("utf-8", "utf-16", "windows-1251", "utf-8-sig"):
+        for encoding in ("utf-8-sig", "utf-8", "utf-16", "windows-1251"):
             try:
                 candidate = xml_bytes.decode(encoding).strip()
                 if "<Timetable" in candidate or "<?xml" in candidate:
@@ -399,10 +408,10 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if xml_data is None:
             xml_data = xml_bytes.decode("utf-8", errors="replace").strip()
 
-        current_hash = hashlib.md5(xml_bytes).hexdigest()
+        current_hash = hashlib.md5(xml_bytes, usedforsecurity=False).hexdigest()
         root = ET.fromstring(xml_data)
 
-        all_schedules = {}
+        all_schedules: dict[str, Any] = {}
         teachers_index: dict[str, dict[str, dict[str, Any]]] = {}
         classrooms_index: dict[str, dict[str, dict[str, Any]]] = {}
 
@@ -413,13 +422,22 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
         if API_URL == "https://voenmeh.ru/wp-content/themes/Avada-Child-Theme-Voenmeh/_voenmeh_grafics/TimetableGroup50.xml":
             now = datetime.now(MOSCOW_TZ)
             current_academic_year = now.year if now.month >= 8 else now.year - 1
-            xml_start_year = int(period_meta.get("StartYear", 0))
+            try:
+                xml_start_year = int(period_meta.get("StartYear", 0))
+            except (TypeError, ValueError):
+                xml_start_year = 0
             if xml_start_year and xml_start_year < current_academic_year:
                 logging.warning(
                     f"XML с {API_URL} содержит устаревшее расписание за {xml_start_year} год "
                     f"(текущий учебный год: {current_academic_year}). Файл отклонён во избежание сброса расписания."
                 )
                 return None
+
+        # Обновляем условные заголовки только после успешного парсинга и проверки актуальности года
+        if new_etag:
+            _LAST_ETAG = new_etag
+        if new_last_modified:
+            _LAST_MODIFIED = new_last_modified
 
         all_schedules["__metadata__"] = {
             "period": period_meta,
@@ -452,9 +470,9 @@ async def _fetch_and_parse_legacy_xml(session: aiohttp.ClientSession | None = No
                     disc_parts = discipline_raw.split(" ", 1)
 
                     lecturers = [
-                        l.text.strip()
-                        for l in lesson_element.findall("Lecturers/Lecturer/ShortName")
-                        if l.text and l.text.strip()
+                        lecturer_el.text.strip()
+                        for lecturer_el in lesson_element.findall("Lecturers/Lecturer/ShortName")
+                        if lecturer_el.text and lecturer_el.text.strip()
                     ]
                     classroom = (
                         classroom_tag.text.strip("; ")
@@ -594,7 +612,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if voenmeh_su_data:
             logging.info("Расписание успешно получено с основного API voenmeh.su.")
-            save_fallback_schedule(voenmeh_su_data)
+            save_fallback_schedule(cast(dict[str, Any], voenmeh_su_data))
             return voenmeh_su_data
         logging.warning("voenmeh.su не вернул данные. Переход к резервному источнику XML...")
     except Exception as e:
@@ -609,7 +627,7 @@ async def _fetch_and_parse_all_schedules_impl(session: Any = None, force: bool =
             return NOT_MODIFIED
         if xml_data:
             logging.info("Расписание успешно получено с резервного XML источника.")
-            save_fallback_schedule(xml_data)
+            save_fallback_schedule(cast(dict[str, Any], xml_data))
             return xml_data
     except Exception as e:
         ERRORS_TOTAL.labels(source="parser_xml").inc()

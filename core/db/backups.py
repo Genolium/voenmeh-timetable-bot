@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 import gzip
 import os
-from dataclasses import dataclass
+import re
+import sys
+import tempfile
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -13,8 +17,37 @@ from sqlalchemy.engine import make_url
 from core.config import MOSCOW_TZ
 
 DEFAULT_TIMEOUT_SECONDS = 300
-DEFAULT_OUTPUT_DIR = Path("/tmp")
+DEFAULT_OUTPUT_DIR = Path(tempfile.gettempdir())
+MAX_DECOMPRESSED_BYTES = 256 * 1024 * 1024  # 256 MiB gzip-bomb protection
+_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 UNSUPPORTED_SETTINGS = {"transaction_timeout"}
+UNSUPPORTED_META_PREFIXES = ("\\restrict ", "\\unrestrict ")
+_SAFE_ENV_KEYS = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LC_MESSAGES",
+    "TZ",
+    "TMP",
+    "TEMP",
+    "TMPDIR",
+    "SYSTEMROOT",
+    "SystemRoot",
+    "COMSPEC",
+    "ComSpec",
+    "PATHEXT",
+    "WINDIR",
+    "PYTHONPATH",
+)
+_COPY_STDIN_RE = re.compile(r"^\s*COPY\b.*\bFROM\s+stdin\s*;", re.IGNORECASE)
+_DANGEROUS_PSQL_META_RE = re.compile(
+    r"^\s*\\(?:!|i\b|ir\b|include\b|include_relative\b|o\b|out\b|w\b|write\b"
+    r"|g\b|gx\b|s\b|e\b|ef\b|ev\b|copy\b|lo_import\b|lo_export\b)",
+    re.IGNORECASE,
+)
 
 
 class BackupError(RuntimeError):
@@ -26,7 +59,7 @@ class DatabaseConnectionInfo:
     host: str
     port: int
     user: str
-    password: str
+    password: str = field(repr=False)
     database: str
 
     @classmethod
@@ -59,38 +92,72 @@ async def _run_subprocess(
     except asyncio.TimeoutError as exc:
         process.kill()
         await process.communicate()
-        raise BackupError(f"Command {' '.join(cmd)} timed out after {timeout} seconds") from exc
+        raise BackupError(f"Command {cmd[0]} timed out after {timeout} seconds") from exc
+    except BaseException:
+        process.kill()
+        await process.wait()
+        raise
 
     if process.returncode != 0:
-        stderr_text = stderr.decode("utf-8", errors="replace")
-        stdout_text = stdout.decode("utf-8", errors="replace")
+        stderr_text = stderr.decode("utf-8", errors="replace")[:1000]
+        stdout_text = stdout.decode("utf-8", errors="replace")[:1000]
         raise BackupError(
-            f"Command {' '.join(cmd)} failed with exit code {process.returncode}.\n"
-            f"stdout: {stdout_text}\nstderr: {stderr_text}"
+            f"Command {cmd[0]} failed with exit code {process.returncode}.\n" f"stdout: {stdout_text}\nstderr: {stderr_text}"
         )
 
 
 def _prepare_connection_env(info: DatabaseConnectionInfo) -> dict[str, str]:
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS or k.startswith("PG")}
     env["PGPASSWORD"] = info.password
+    env["PGCLIENTENCODING"] = "UTF8"
+    return env
+
+
+def _prepare_migrate_env(db_url: str) -> dict[str, str]:
+    env = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
+    env["DATABASE_URL"] = db_url
     return env
 
 
 def _sanitize_dump_file(sql_path: Path) -> None:
     try:
-        original = sql_path.read_text(encoding="utf-8")
+        original = sql_path.read_text(encoding="utf-8-sig")
     except FileNotFoundError:
         return
+    except UnicodeDecodeError as exc:
+        raise BackupError("Backup file must be valid UTF-8 encoded SQL.") from exc
 
     lines = original.splitlines(keepends=True)
-    filtered = [
-        line
-        for line in lines
-        if not any(line.strip().lower().startswith(f"set {setting}".lower()) for setting in UNSUPPORTED_SETTINGS)
-    ]
+    filtered: list[str] = []
+    in_copy_block = False
+    for line in lines:
+        if in_copy_block:
+            filtered.append(line)
+            if line.strip() == "\\.":
+                in_copy_block = False
+            continue
+
+        stripped = line.lstrip()
+        if _DANGEROUS_PSQL_META_RE.match(stripped):
+            raise BackupError("Backup file contains disallowed psql meta-command.")
+
+        if any(stripped.lower().startswith(f"set {setting}") for setting in UNSUPPORTED_SETTINGS) or any(
+            stripped.startswith(prefix) for prefix in UNSUPPORTED_META_PREFIXES
+        ):
+            continue
+
+        filtered.append(line)
+        if _COPY_STDIN_RE.match(line):
+            in_copy_block = True
 
     if filtered != lines:
         sql_path.write_text("".join(filtered), encoding="utf-8")
+
+
+def _needs_schema_reset(sql_path: Path) -> bool:
+    """Возвращает True, если дамп создаёт таблицы без предварительного DROP."""
+    text = sql_path.read_text(encoding="utf-8-sig", errors="replace").upper()
+    return "CREATE TABLE" in text and "DROP TABLE" not in text and "DROP SCHEMA" not in text
 
 
 async def create_db_backup(
@@ -103,12 +170,16 @@ async def create_db_backup(
     if not db_url:
         raise BackupError("DATABASE_URL environment variable is not set.")
 
+    if not _PREFIX_RE.match(filename_prefix):
+        raise BackupError("Invalid backup filename prefix.")
+
     conn = DatabaseConnectionInfo.from_url(db_url)
     backup_dir = Path(output_dir or DEFAULT_OUTPUT_DIR)
     backup_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now(MOSCOW_TZ).strftime("%Y%m%d_%H%M%S")
-    backup_path = backup_dir / f"{filename_prefix}_{timestamp}.sql"
+    unique_suffix = uuid.uuid4().hex[:8]
+    backup_path = backup_dir / f"{filename_prefix}_{timestamp}_{unique_suffix}.sql"
 
     cmd = [
         "pg_dump",
@@ -128,10 +199,16 @@ async def create_db_backup(
         str(backup_path),
     ]
 
-    await _run_subprocess(*cmd, env=_prepare_connection_env(conn), timeout=timeout)
+    try:
+        await _run_subprocess(*cmd, env=_prepare_connection_env(conn), timeout=timeout)
+    except Exception:
+        backup_path.unlink(missing_ok=True)
+        raise
 
     if not backup_path.exists():
         raise BackupError("Backup file was not created by pg_dump.")
+
+    os.chmod(backup_path, 0o600)
 
     _sanitize_dump_file(backup_path)
     return backup_path
@@ -154,7 +231,7 @@ async def restore_db_backup(
 
     _sanitize_dump_file(sql_file)
 
-    cmd = [
+    psql_base = [
         "psql",
         "-h",
         conn.host,
@@ -166,17 +243,52 @@ async def restore_db_backup(
         conn.database,
         "-v",
         "ON_ERROR_STOP=1",
-        "-f",
-        str(sql_file),
     ]
 
-    await _run_subprocess(*cmd, env=env, timeout=timeout)
+    if _needs_schema_reset(sql_file):
+        await _run_subprocess(
+            *psql_base,
+            "-c",
+            "DROP SCHEMA public CASCADE; CREATE SCHEMA public;",
+            env=env,
+            timeout=timeout,
+        )
+
+    await _run_subprocess(*psql_base, "-f", str(sql_file), env=env, timeout=timeout)
+    await _run_subprocess(sys.executable, "-m", "core.db.migrate", env=_prepare_migrate_env(db_url), timeout=timeout)
 
 
-def maybe_decompress_gzip(source: Path) -> Path:
+def compress_file_gzip(source: Path) -> Path:
+    """Сжимает SQL-дамп в .gz и возвращает путь к архиву."""
+    import shutil
+
+    target = source.with_suffix(source.suffix + ".gz")
+    with open(source, "rb") as src, gzip.open(target, "wb", compresslevel=6) as dst:
+        shutil.copyfileobj(src, dst)
+    os.chmod(target, 0o600)
+    return target
+
+
+def maybe_decompress_gzip(source: Path, *, max_bytes: int = MAX_DECOMPRESSED_BYTES) -> Path:
     if source.suffix.lower() != ".gz":
         return source
+
     target = source.with_suffix("")
-    with gzip.open(source, "rb") as src, open(target, "wb") as dst:
-        dst.write(src.read())
+    total = 0
+    try:
+        with gzip.open(source, "rb") as src, open(target, "wb") as dst:
+            while True:
+                chunk = src.read(65536)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise BackupError(f"Decompressed backup exceeds maximum allowed size ({max_bytes} bytes).")
+                dst.write(chunk)
+    except BackupError:
+        target.unlink(missing_ok=True)
+        raise
+    except (OSError, EOFError) as exc:
+        target.unlink(missing_ok=True)
+        raise BackupError("Failed to decompress gzip backup archive.") from exc
     return target

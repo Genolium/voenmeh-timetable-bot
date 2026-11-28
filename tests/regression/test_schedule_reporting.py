@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from bot.dialogs.admin_menu import on_override_input
-from bot.dialogs.schedule_view import on_report_error_click
+from bot.dialogs.schedule_view import on_feedback_click
 from bot.dialogs.states import Feedback
 from core.manager import TimetableManager
 from core.schedule_overrides import clear_group_override, get_group_override, set_group_override
@@ -79,7 +79,7 @@ async def test_report_error_opens_feedback_with_context():
     }
     dm.start = AsyncMock()
 
-    await on_report_error_click(MagicMock(), MagicMock(), dm)
+    await on_feedback_click(MagicMock(), MagicMock(), dm)
 
     dm.start.assert_awaited_once()
     assert dm.start.call_args.args[0] is Feedback.enter_feedback

@@ -48,6 +48,8 @@ cycler==0.12.1
     # via matplotlib
 cyrtranslit==1.2.0
     # via -r requirements.txt
+defusedxml==0.7.1
+    # via -r requirements.txt
 dramatiq==1.18.0
     # via -r requirements.txt
 fonttools==4.67.0

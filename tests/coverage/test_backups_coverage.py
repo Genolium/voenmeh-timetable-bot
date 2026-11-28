@@ -95,10 +95,12 @@ def test_sanitize_dump_file_missing(tmp_path):
 
 def test_sanitize_dump_file_filters_unsupported(tmp_path):
     sql = tmp_path / "dump.sql"
-    sql.write_text("SET transaction_timeout = 0;\nSELECT 1;\n", encoding="utf-8")
+    sql.write_text("\\restrict abc\nSET transaction_timeout = 0;\nSELECT 1;\n\\unrestrict abc\n", encoding="utf-8")
     _sanitize_dump_file(sql)
     content = sql.read_text(encoding="utf-8")
     assert "transaction_timeout" not in content
+    assert "\\restrict" not in content
+    assert "\\unrestrict" not in content
     assert "SELECT 1;" in content
 
 
@@ -156,15 +158,34 @@ async def test_restore_db_backup_success(monkeypatch, tmp_path):
     monkeypatch.setenv("DATABASE_URL", DB_URL)
     sql = tmp_path / "restore.sql"
     sql.write_text("SET transaction_timeout = 0;\nSELECT 1;\n", encoding="utf-8")
-    captured = {}
+    commands = []
 
     async def fake_run(*cmd, **kwargs):
-        captured["cmd"] = cmd
+        commands.append(cmd)
 
     monkeypatch.setattr(backups, "_run_subprocess", fake_run)
     await restore_db_backup(sql)
-    assert str(sql) in captured["cmd"]
+    assert len(commands) == 2
+    assert str(sql) in commands[0]
+    assert "core.db.migrate" in commands[1]
     assert "transaction_timeout" not in sql.read_text(encoding="utf-8")
+
+
+async def test_restore_db_backup_resets_schema_for_non_clean_dump(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", DB_URL)
+    sql = tmp_path / "plain_dump.sql"
+    sql.write_text("CREATE TABLE public.alembic_version (version_num varchar(64));\n", encoding="utf-8")
+    commands = []
+
+    async def fake_run(*cmd, **kwargs):
+        commands.append(cmd)
+
+    monkeypatch.setattr(backups, "_run_subprocess", fake_run)
+    await restore_db_backup(sql)
+    assert len(commands) == 3
+    assert "DROP SCHEMA public CASCADE; CREATE SCHEMA public;" in commands[0]
+    assert str(sql) in commands[1]
+    assert "core.db.migrate" in commands[2]
 
 
 # ---------------------------------------------------------------------------
@@ -185,3 +206,12 @@ def test_maybe_decompress_gzip_compressed(tmp_path):
     result = maybe_decompress_gzip(gz_path)
     assert result == tmp_path / "backup.sql"
     assert result.read_bytes() == b"SELECT 1;"
+
+
+def test_compress_file_gzip(tmp_path):
+    sql = tmp_path / "db_backup.sql"
+    sql.write_text("SELECT 42;\n", encoding="utf-8")
+    gz_path = backups.compress_file_gzip(sql)
+    assert gz_path == tmp_path / "db_backup.sql.gz"
+    with gzip.open(gz_path, "rb") as handle:
+        assert handle.read() == b"SELECT 42;\n"

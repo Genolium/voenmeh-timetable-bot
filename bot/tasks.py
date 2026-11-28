@@ -5,15 +5,15 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional, cast
 
-import aiohttp
 import dramatiq
 from aiogram import Bot
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from dramatiq import Broker
 from dramatiq.errors import RateLimitExceeded
+
+from bot.middlewares.network_retry_middleware import FastConnectAiohttpSession as AiohttpSession
 
 # Compatibility layer for RetryAfter across aiogram versions
 try:
@@ -25,26 +25,23 @@ except Exception:
         from aiogram.utils.exceptions import RetryAfter  # type: ignore
     except Exception:  # Fallback: define a stub to keep logic working
 
-        class RetryAfter(Exception):
+        class RetryAfter(Exception):  # type: ignore[no-redef]
             pass
 
 
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
 from aiolimiter import AsyncLimiter
 from dotenv import load_dotenv
 from dramatiq.brokers.rabbitmq import RabbitmqBroker
 from dramatiq.encoder import JSONEncoder
-from dramatiq.errors import RateLimitExceeded
-from dramatiq.middleware import Middleware
 from dramatiq.middleware.retries import Retries
 from dramatiq.middleware.time_limit import TimeLimit
-from dramatiq.results.backends import RedisBackend
 from pythonjsonlogger.json import JsonFormatter
 from redis import asyncio as redis
 
+from bot.middlewares.custom_emoji_middleware import attach_custom_emoji_middleware
 from bot.text_formatters import generate_reminder_text
-from bot.utils.image_compression import get_telegram_safe_image_path
 from bot.utils.worker_loop import run_async
 from core.config import MEDIA_PATH, SUBSCRIPTION_CHANNEL, settings
 from core.image_cache_manager import ImageCacheManager
@@ -59,8 +56,11 @@ load_dotenv()
 
 def _create_bot_with_timeout():
     """Create a Bot instance with proper HTTP client timeout settings."""
+    assert BOT_TOKEN is not None
     session = AiohttpSession(timeout=60.0, limit=15)
-    return Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+    return attach_custom_emoji_middleware(
+        Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+    )
 
 
 TELEMETRY_HANDLES = None
@@ -98,8 +98,9 @@ def get_redis_client(decode_responses: bool = False) -> Any:
     Важно: не переиспользуем глобальные пулы между потоками/лупами Dramatiq,
     чтобы избежать ошибок вида "Future attached to a different loop".
     """
-    return redis.Redis.from_url(
-        redis_url,
+    from_url: Any = redis.Redis.from_url
+    return from_url(
+        cast(str, redis_url),
         password=redis_password,
         decode_responses=decode_responses,
         retry_on_timeout=True,
@@ -129,15 +130,15 @@ class RobustRetries(Retries):
                     "amqp connection error",
                 ]
             ):
-                # Exponential backoff for connection issues
-                retries_left = message.options.get("retries", self.max_retries)
-                if retries_left > 0:
-                    # Increase backoff for connection issues
+                # Exponential backoff for connection issues (consistent upward retry counter with Dramatiq Retries)
+                retries = message.options.get("retries", 0)
+                max_retries = message.options.get("max_retries", self.max_retries)
+                if max_retries is None or retries < max_retries:
                     backoff = min(
                         self.max_backoff,
-                        self.min_backoff * (2 ** (self.max_retries - retries_left)),
+                        self.min_backoff * (2**retries),
                     )
-                    message.options["retries"] = retries_left - 1
+                    message.options["retries"] = retries + 1
                     broker.enqueue(message, delay=backoff)
                     return
 
@@ -231,6 +232,7 @@ def _compose_hostname_outside_docker(broker_url: str) -> bool:
 
 def _create_broker(broker_url: str | None) -> "Broker":
     """Создаёт брокер Dramatiq: RabbitMQ в production, stub — в тестах/CI."""
+    broker: Broker
     if broker_url and not _compose_hostname_outside_docker(broker_url):
         # Connection parameters are handled via rabbitmq.conf and retry middleware
         broker = RabbitmqBroker(url=broker_url, confirm_delivery=True)
@@ -311,43 +313,63 @@ if not BOT_TOKEN:
 BOT_INSTANCE = None  # Не используется напрямую; бот создаётся внутри задач
 rate_limiter = AsyncLimiter(25, 1)
 
-_worker_bot = None
+_worker_bot: Optional[Bot] = None
+_worker_bot_loop: asyncio.AbstractEventLoop | None = None
 
 
 async def get_worker_bot() -> Bot:
     """Возвращает единый экземпляр бота с общим пулом соединений для воркера."""
-    global _worker_bot
-    if _worker_bot is None:
+    global _worker_bot, _worker_bot_loop
+    current_loop = asyncio.get_running_loop()
+    if _worker_bot is None or _worker_bot_loop is not current_loop:
+        assert BOT_TOKEN is not None
         # limit=15 ограничивает количество одновременных TCP-соединений
         session = AiohttpSession(timeout=45.0, limit=15)
-        _worker_bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        _worker_bot = attach_custom_emoji_middleware(
+            Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"), session=session)
+        )
+        _worker_bot_loop = current_loop
 
     return _worker_bot
 
 
 async def _mark_user_as_blocked(user_id: int) -> None:
-    """Помечает пользователя как заблокировавшего бота (is_blocked = True)."""
+    """Помечает пользователя как заблокировавшего бота (или отключает групповой чат при user_id < 0)."""
     udm = None
     try:
         udm = UserDataManager(db_url=settings.DATABASE_URL, redis_url=settings.REDIS_URL)
-        await udm.set_user_blocked(user_id, True)
-        log.info(f"User {user_id} marked as is_blocked=True in database.")
+        if user_id < 0:
+            from core.group_chat_manager import GroupChatManager
+
+            await GroupChatManager(udm.async_session_maker).set_active(user_id, False)
+            log.info(f"Group chat {user_id} marked as is_active=False in database.")
+        else:
+            await udm.set_user_blocked(user_id, True)
+            log.info(f"User {user_id} marked as is_blocked=True in database.")
     except Exception as e:
-        log.warning(f"Failed to mark user {user_id} as blocked in DB: {e}")
+        log.warning(f"Failed to mark target {user_id} as inactive/blocked in DB: {e}")
     finally:
         if udm is not None:
             try:
-                await udm.engine.dispose()
+                if hasattr(udm, "close"):
+                    await udm.close()
+                else:
+                    await udm.engine.dispose()
             except Exception:
                 pass
 
 
-async def _send_message(user_id: int, text: str) -> None:
+async def _send_message(user_id: int, text: str, reply_markup_json: str | None = None) -> None:
     """Отправка сообщения с защитой от дублирования."""
     try:
         bot = await get_worker_bot()
+        kwargs: Dict[str, Any] = {"disable_web_page_preview": True}
+        if reply_markup_json:
+            from aiogram.types import InlineKeyboardMarkup
+
+            kwargs["reply_markup"] = InlineKeyboardMarkup.model_validate_json(reply_markup_json)
         async with rate_limiter:
-            await bot.send_message(user_id, text, disable_web_page_preview=True)
+            await bot.send_message(user_id, text, **kwargs)
 
         log.info(f"[SEND_OK] Сообщение успешно отправлено пользователю {user_id}")
         try:
@@ -384,7 +406,7 @@ async def _send_message(user_id: int, text: str) -> None:
 
         # Если это Read Timeout (мы отправили данные, но ответ завис) - НЕ РЕТРАИМ!
         # Telegram с вероятностью 99% уже доставил сообщение. Ретрай вызовет дубликат.
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
 
@@ -424,7 +446,7 @@ async def _copy_message(user_id: int, from_chat_id: int, message_id: int) -> Non
             raise
 
         # Если это Read Timeout - НЕ РЕТРАИМ!
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
 
@@ -445,20 +467,44 @@ _MEDIA_SEND_METHODS = {
 _MEDIA_NO_CAPTION_KINDS = {"sticker", "video_note"}
 
 
-async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
-    """Отправка медиа с HTML-подписью. copy_message теги не разбирает."""
+async def _send_media(
+    user_id: int,
+    kind: str,
+    file_id: str,
+    caption: str = "",
+    followup_text: str = "",
+    reply_markup_json: str | None = None,
+) -> None:
+    """Отправка медиа с HTML-подписью и опциональным вторым сообщением при длинной подписи."""
     method_name = _MEDIA_SEND_METHODS.get(kind)
     if not method_name:
         raise ValueError(f"Unsupported broadcast media kind: {kind}")
     try:
         bot = await get_worker_bot()
         method = getattr(bot, method_name)
+        markup = None
+        if reply_markup_json:
+            from aiogram.types import InlineKeyboardMarkup
+
+            markup = InlineKeyboardMarkup.model_validate_json(reply_markup_json)
+
         kwargs: Dict[str, Any] = {}
         if caption and kind not in _MEDIA_NO_CAPTION_KINDS:
             kwargs["caption"] = caption
             kwargs["parse_mode"] = "HTML"
+        if markup and not followup_text:
+            kwargs["reply_markup"] = markup
+
         async with rate_limiter:
             await method(user_id, file_id, **kwargs)
+            if followup_text:
+                await bot.send_message(
+                    user_id,
+                    followup_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
         log.info(f"[SEND_OK] Медиа ({kind}) отправлено пользователю {user_id}")
         return
     except TelegramForbiddenError:
@@ -480,7 +526,7 @@ async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") 
         if "connect call failed" in error_msg or "cannot connect" in error_msg:
             log.warning(f"Connection failed for {user_id}, returning to Dramatiq queue: {e}")
             raise
-        if "timeout" in error_msg:
+        if isinstance(e, (asyncio.TimeoutError, TimeoutError)) or "timeout" in error_msg:
             log.error(f"Read Timeout for {user_id}. Message likely delivered. Skipping retry to avoid duplicates.")
             return
         log.error(f"[SEND_FAIL] Unknown error sending media to {user_id}: {e}")
@@ -490,8 +536,8 @@ async def _send_media(user_id: int, kind: str, file_id: str, caption: str = "") 
 @dramatiq.actor(
     queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=900000
 )  # 15 мин (достаточно для сетевых задержек)
-def send_message_task(user_id: int, text: str) -> None:
-    run_async(_send_message(user_id, text))
+def send_message_task(user_id: int, text: str, reply_markup_json: str | None = None) -> None:
+    run_async(_send_message(user_id, text, reply_markup_json=reply_markup_json))
 
 
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)  # 5 мин
@@ -500,8 +546,24 @@ def copy_message_task(user_id: int, from_chat_id: int, message_id: int) -> None:
 
 
 @dramatiq.actor(queue_name="high_priority", max_retries=5, min_backoff=1000, time_limit=300000)
-def send_media_task(user_id: int, kind: str, file_id: str, caption: str = "") -> None:
-    run_async(_send_media(user_id, kind, file_id, caption))
+def send_media_task(
+    user_id: int,
+    kind: str,
+    file_id: str,
+    caption: str = "",
+    followup_text: str = "",
+    reply_markup_json: str | None = None,
+) -> None:
+    run_async(
+        _send_media(
+            user_id,
+            kind,
+            file_id,
+            caption,
+            followup_text=followup_text,
+            reply_markup_json=reply_markup_json,
+        )
+    )
 
 
 @dramatiq.actor(
@@ -544,6 +606,7 @@ def generate_week_image_task(
     placeholder_msg_id: int | None = None,
     final_caption: str | None = None,
     lang: str = "ru",
+    user_theme: str | None = None,
 ) -> None:
     # CRITICAL: Acquire semaphore in the Dramatiq thread to avoid blocking the background loop
     with _generation_semaphore:
@@ -560,14 +623,27 @@ def generate_week_image_task(
                 # Создаём бота в текущем лупе только если он действительно понадобится
                 bot_for_images: Bot | None = None
                 if not is_auto_generation:
-                    bot_for_images = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+                    assert BOT_TOKEN is not None
+                    bot_for_images = attach_custom_emoji_middleware(
+                        Bot(
+                            token=BOT_TOKEN,
+                            default=DefaultBotProperties(parse_mode="HTML"),
+                            session=AiohttpSession(timeout=20.0),
+                        )
+                    )
                 image_service = ImageService(cache_manager, bot_for_images)
 
                 # week_key now passed explicitly
 
                 if is_auto_generation:
                     success, _ = await image_service._generate_and_cache_image(
-                        cache_key, week_schedule, week_name, group, generated_by="mass", exec_locally=True
+                        cache_key,
+                        week_schedule,
+                        week_name,
+                        group,
+                        generated_by="mass",
+                        user_theme=user_theme,
+                        exec_locally=True,
                     )
                     if success:
                         log.info(f"✅ [АВТО] Изображение {cache_key} успешно сгенерировано и сохранено в кэш")
@@ -579,27 +655,31 @@ def generate_week_image_task(
                     async with bot_for_images:
                         # Вычисляем тему пользователя. В этой ветке user_id всегда задан,
                         # т.к. авто-генерация обрабатывается выше.
-                        user_theme = None
+                        resolved_theme = user_theme
                         assert user_id is not None
-                        db_url = os.getenv("DATABASE_URL")
-                        if db_url:
-                            udm = UserDataManager(db_url=db_url, redis_url=redis_url)
-                            try:
-                                user_theme = await udm.get_user_theme(user_id)
-                            except Exception:
-                                user_theme = None
-                            finally:
+                        if resolved_theme is None:
+                            db_url = os.getenv("DATABASE_URL")
+                            if db_url:
+                                udm = UserDataManager(db_url=db_url, redis_url=redis_url)
                                 try:
-                                    await udm.engine.dispose()
+                                    resolved_theme = await udm.get_user_theme(user_id)
                                 except Exception:
-                                    pass
+                                    resolved_theme = None
+                                finally:
+                                    try:
+                                        if hasattr(udm, "close"):
+                                            await udm.close()
+                                        else:
+                                            await udm.engine.dispose()
+                                    except Exception:
+                                        pass
                         success, _ = await image_service.get_or_generate_week_image(
                             group=group,
                             week_key=week_key,
                             week_name=week_name,
                             week_schedule=week_schedule,
                             user_id=user_id,
-                            user_theme=user_theme,
+                            user_theme=resolved_theme,
                             placeholder_msg_id=placeholder_msg_id,
                             final_caption=final_caption,
                             lang=lang,
@@ -620,13 +700,12 @@ def generate_week_image_task(
                     except Exception:
                         pass
 
-    run_async(_inner())
+        run_async(_inner())
 
 
 async def _send_error_message(user_id: int, error_text: str) -> None:
     """Отправляет сообщение об ошибке пользователю."""
     try:
-        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_day_img")]])
         error_message = f"❌ {error_text}\n\nПопробуйте позже или обратитесь к администратору."
         await _send_message(user_id, error_message)
         log.info(f"⚠️ Отправлено сообщение об ошибке пользователю {user_id}")
@@ -637,7 +716,7 @@ async def _send_error_message(user_id: int, error_text: str) -> None:
 @dramatiq.actor(
     queue_name="high_priority", max_retries=3, min_backoff=1500, time_limit=300000
 )  # 5 мин (для проверки подписки и отправки сообщений)
-def check_theme_subscription_task(user_id: int, callback_data: str = None) -> None:
+def check_theme_subscription_task(user_id: int, callback_data: Optional[str] = None) -> None:
     """
     Проверяет подписку пользователя на канал для доступа к темам.
     Кэширует результат проверки на 6 часов для подписанных, на 1 минуту для неподписанных.
@@ -779,12 +858,16 @@ def send_week_original_if_subscribed_task(user_id: int, cache_key: str) -> None:
                     await bot.send_message(user_id, "Доступ к полному качеству по подписке на канал.", reply_markup=kb)
                     return
 
-                # Use correct cache_key based path
-                file_path = MEDIA_PATH / "generated" / f"{cache_key}.png"
-                if not file_path.exists():
+                # Use sanitized cache_key with path containment check (path traversal defense)
+                from core.image_cache_manager import sanitize_cache_key
+
+                safe_key = sanitize_cache_key(cache_key)
+                gen_dir = (MEDIA_PATH / "generated").resolve()
+                file_path = (MEDIA_PATH / "generated" / f"{safe_key}.png").resolve()
+                if not file_path.is_relative_to(gen_dir) or not file_path.exists():
                     return
                 # Добавляем имя файла и подпись для красоты и надежности
-                doc_file = FSInputFile(file_path, filename=f"Schedule_{cache_key}.png")
+                doc_file = FSInputFile(file_path, filename=f"Schedule_{safe_key}.png")
                 await bot.send_document(user_id, document=doc_file, caption="📄 Оригинал расписания (полное качество)")
         except Exception as e:
             log.error(f"send_week_original_if_subscribed_task failed: {e}")

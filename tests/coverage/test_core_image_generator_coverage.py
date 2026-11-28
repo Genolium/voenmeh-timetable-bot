@@ -255,6 +255,22 @@ def test_prepare_days_sort_exception():
     assert monday["firstStart"] == ""
 
 
+def test_prepare_days_sorts_lessons_chronologically():
+    days = ig._prepare_days(
+        {
+            "Понедельник": [
+                {"subject": "Late", "type": "лек", "room": "325*", "time": "14:55-16:25", "start_time_raw": "14:55"},
+                {"subject": "Mid", "type": "пр", "room": "451", "time": "10:50-12:20", "start_time_raw": "10:50"},
+                {"subject": "Early", "type": "пр", "room": "", "time": "09:00-10:30", "start_time_raw": "09:00"},
+            ]
+        },
+        lang="ru",
+    )
+    monday = next(d for d in days if d["name"] == "Понедельник")
+    assert [l["time"] for l in monday["lessons"]] == ["09:00-10:30", "10:50-12:20", "14:55-16:25"]
+    assert monday["firstStart"] == "09:00"
+
+
 # ---------------------------------------------------------------------------
 # generate_schedule_image - success paths
 # ---------------------------------------------------------------------------
@@ -369,7 +385,7 @@ async def test_generate_bg_read_failure(monkeypatch, tmp_path):
 
     monkeypatch.setattr(Path, "read_bytes", fake_read)
     assert await ig.generate_schedule_image(_schedule(), "Нечетная", "G1", str(tmp_path / "o.png"), user_theme="light") is True
-    assert ig._bg_images_cache["light"] == ""
+    assert "light" not in ig._bg_images_cache
 
 
 @pytest.mark.asyncio

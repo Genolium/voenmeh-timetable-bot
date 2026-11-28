@@ -3,17 +3,26 @@ import html
 import logging
 import os
 import random
+import re
 import tempfile
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, CallbackQuery, ContentType, FSInputFile, Message
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    ContentType,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 from aiogram_dialog import Dialog, DialogManager, Window
 from aiogram_dialog.widgets.input import MessageInput, TextInput
-from aiogram_dialog.widgets.kbd import Back, Button, Column, Row, Select, SwitchTo
+from aiogram_dialog.widgets.kbd import Button, Column, Row, Select, SwitchTo
 from aiogram_dialog.widgets.text import Const, Format, Jinja
 
 from bot.dialogs.schedule_view import cleanup_old_cache, get_cache_info
@@ -22,7 +31,6 @@ from bot.tasks import copy_message_task, send_media_task, send_message_task
 from bot.text_formatters import generate_reminder_text
 from core.config import ADMIN_IDS, MOSCOW_TZ
 from core.db.backups import BackupError, create_db_backup, maybe_decompress_gzip, restore_db_backup
-from core.feedback_manager import FeedbackManager
 from core.manager import TimetableManager
 from core.metrics import TASKS_SENT_TO_QUEUE
 from core.semester_settings import SemesterSettingsManager
@@ -131,11 +139,13 @@ async def on_test_reminders_for_week(callback: CallbackQuery, button: Button, ma
     test_user_id, test_group_name, _, _ = random.choice(test_users)
     await bot.send_message(
         admin_id,
-        f"ℹ️ Тестирую логику для случайного пользователя: <code>{test_user_id}</code> (группа <code>{test_group_name}</code>)",
+        f"ℹ️ Тестирую логику для случайного пользователя: <code>{test_user_id}</code> "
+        f"(группа <code>{html.escape(str(test_group_name), quote=False)}</code>)",
     )
 
+    today_msk = datetime.now(MOSCOW_TZ).date()
     for i in range(7):
-        test_date = date.today() + timedelta(days=i)
+        test_date = today_msk + timedelta(days=i)
         await bot.send_message(
             admin_id,
             f"--- 🗓️ <b>Тест для даты: {test_date.strftime('%A, %d.%m.%Y')}</b> ---",
@@ -192,8 +202,6 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
     timetable_manager = manager.middleware_data.get("manager")
 
     # Создаем правильный Redis-клиент
-    import os
-
     from redis.asyncio import Redis
 
     redis_url = os.getenv("REDIS_URL")
@@ -211,10 +219,11 @@ async def on_check_graduated_groups(callback: CallbackQuery, button: Button, man
         await handle_graduated_groups(user_data_manager, timetable_manager, redis_client)
         await bot.send_message(admin_id, "✅ Проверка выпустившихся групп завершена!")
     except Exception as e:
-        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {e}")
+        await bot.send_message(admin_id, f"❌ Ошибка при проверке выпустившихся групп: {html.escape(str(e))}")
         import traceback
 
-        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{traceback.format_exc()}</code>")
+        tb_text = html.escape(traceback.format_exc()[-3500:])
+        await bot.send_message(admin_id, f"🔍 Детали ошибки:\n<code>{tb_text}</code>")
     finally:
         try:
             if redis_client is not None:
@@ -280,6 +289,24 @@ MAX_RESTORE_BYTES = 20 * 1024 * 1024
 RESTORE_CONFIRM_WORD = "RESTORE"
 
 
+_restore_lock = asyncio.Lock()
+
+
+def _cleanup_restore_dir(raw_path: str | None) -> None:
+    if not raw_path:
+        return
+    import shutil
+
+    path = Path(raw_path)
+    try:
+        if path.parent.name.startswith("voenmeh_restore_"):
+            shutil.rmtree(path.parent, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def _is_sql_backup_name(name: str | None) -> bool:
     lower = (name or "").lower()
     return lower.endswith(".sql") or lower.endswith(".sql.gz") or lower.endswith(".gz")
@@ -301,9 +328,15 @@ async def on_backup_upload_received(message: Message, widget: MessageInput, mana
         await message.answer("❌ Файл слишком большой (лимит 20 МБ).")
         return
 
+    _cleanup_restore_dir(manager.dialog_data.pop("backup_restore_path", None))
     tmp_dir = Path(tempfile.mkdtemp(prefix="voenmeh_restore_"))
-    tmp_path = tmp_dir / (file_name or "backup.sql")
+    safe_name = "backup.sql.gz" if file_name.lower().endswith(".gz") else "backup.sql"
+    tmp_path = tmp_dir / safe_name
     await message.bot.download(document, destination=tmp_path)
+    if tmp_path.exists() and tmp_path.stat().st_size > MAX_RESTORE_BYTES:
+        _cleanup_restore_dir(str(tmp_path))
+        await message.answer("❌ Файл слишком большой (лимит 20 МБ).")
+        return
     manager.dialog_data["backup_restore_path"] = str(tmp_path)
     manager.dialog_data["backup_upload_status"] = (
         f"Файл <code>{html.escape(file_name, quote=False)}</code> принят.\n"
@@ -324,25 +357,21 @@ async def on_backup_restore_typed(message: Message, widget: MessageInput, manage
         return
 
     tmp_path = Path(raw_path)
-    try:
-        target_path = maybe_decompress_gzip(tmp_path)
-        await restore_db_backup(target_path)
-        status = (
-            "✅ База данных успешно восстановлена из резервной копии.\n"
-            "Перезагрузите сервисы, если изменения не применились автоматически."
-        )
-    except BackupError as exc:
-        status = f"❌ Не удалось применить резервную копию: {exc}"
-    except Exception as exc:
-        status = f"❌ Не удалось применить резервную копию: {exc}"
-    finally:
+    async with _restore_lock:
         try:
-            if tmp_path.exists():
-                tmp_path.unlink()
-            tmp_path.parent.rmdir()
-        except OSError:
-            pass
-        manager.dialog_data.pop("backup_restore_path", None)
+            target_path = await asyncio.to_thread(maybe_decompress_gzip, tmp_path)
+            await restore_db_backup(target_path)
+            status = (
+                "✅ База данных успешно восстановлена из резервной копии.\n"
+                "Перезагрузите сервисы, если изменения не применились автоматически."
+            )
+        except BackupError as exc:
+            status = f"❌ Не удалось применить резервную копию: {html.escape(str(exc), quote=False)}"
+        except Exception as exc:
+            status = f"❌ Не удалось применить резервную копию: {html.escape(str(exc), quote=False)}"
+        finally:
+            _cleanup_restore_dir(raw_path)
+            manager.dialog_data.pop("backup_restore_path", None)
 
     manager.dialog_data["backup_upload_status"] = status
     manager.dialog_data["backup_status"] = status
@@ -372,9 +401,9 @@ async def get_sub_filter_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     if channels:
         lines = []
         for i, ch in enumerate(channels, 1):
-            title = ch.get("title", "Без названия")
-            link = ch.get("invite_link") or ""
-            cid = ch.get("channel_id", "")
+            title = html.escape(str(ch.get("title", "Без названия")))
+            link = html.escape(str(ch.get("invite_link") or ""), quote=True)
+            cid = html.escape(str(ch.get("channel_id", "")))
             lines.append(f"{i}. <a href='{link}'>{title}</a> (<code>{cid}</code>)")
         channels_text = "\n".join(lines)
     else:
@@ -451,7 +480,8 @@ async def on_add_channel_input(message: Message, widget: TextInput, manager: Dia
         except Exception as e:
             logger.warning(f"Failed to get_chat for {clean_target}: {e}")
             await message.answer(
-                f"⚠️ <i>Не удалось получить информацию о канале от Telegram API.\nКанал добавлен с введённым значением: {clean_target}</i>",
+                "⚠️ <i>Не удалось получить информацию о канале от Telegram API.\n"
+                f"Канал добавлен с введённым значением: {clean_target}</i>",
                 parse_mode="HTML",
             )
 
@@ -488,10 +518,8 @@ async def on_edit_spring_semester(callback: CallbackQuery, button: Button, manag
 async def on_fall_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты осеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -520,10 +548,8 @@ async def on_fall_semester_input(message: Message, widget: TextInput, manager: D
 async def on_spring_semester_input(message: Message, widget: TextInput, manager: DialogManager, data: str) -> None:
     """Обработка ввода даты весеннего семестра."""
     try:
-        from datetime import datetime
-
         # Парсим дату в формате DD.MM.YYYY
-        date_obj = datetime.strptime(message.text.strip(), "%d.%m.%Y").date()
+        date_obj = datetime.strptime((message.text or "").strip(), "%d.%m.%Y").date()
 
         # Получаем менеджер настроек
         session_factory = manager.middleware_data.get("session_factory")
@@ -554,41 +580,19 @@ async def build_segment_users(
     user_data_manager: UserDataManager,
     group_prefix: str | None,
     days_active: int | None,
-) -> Any:
-    """Строит список пользователей для сегментированной рассылки с оптимизацией."""
-    group_prefix_up = (group_prefix or "").upper().strip()
-    all_ids = await user_data_manager.get_all_user_ids()
-    selected_ids: list[int] = []
-    from datetime import datetime as dt
-
-    threshold = None
-    if days_active and days_active > 0:
-        threshold = dt.now(MOSCOW_TZ).replace(tzinfo=None) - timedelta(days=days_active)
-
-    processed_count = 0
-    for uid in all_ids:
-        processed_count += 1
-        info = await user_data_manager.get_full_user_info(uid)
-        if not info:
-            continue
-        if group_prefix_up and not (info.group or "").upper().startswith(group_prefix_up):
-            continue
-        if threshold and (not info.last_active_date or info.last_active_date < threshold):
-            continue
-        selected_ids.append(uid)
-
-        # Периодически освобождаем event loop для обработки других событий
-        if processed_count % 100 == 0:
-            await asyncio.sleep(0)
-
-    return selected_ids
+    user_type: str | None = None,
+) -> list[int]:
+    """Строит список пользователей для сегментированной рассылки одним SQL-запросом."""
+    return await user_data_manager.get_segment_user_ids(
+        group_prefix=group_prefix, days_active=days_active, user_type=user_type
+    )
 
 
 def render_template(template_text: str, user_info: Any) -> str:
     placeholders = {
         "user_id": str(user_info.user_id),
-        "username": user_info.username or "N/A",
-        "group": user_info.group or "N/A",
+        "username": html.escape(str(user_info.username or "N/A")),
+        "group": html.escape(str(user_info.group or "N/A")),
         "last_active": (user_info.last_active_date.strftime("%d.%m.%Y") if user_info.last_active_date else "N/A"),
     }
     text = template_text
@@ -880,31 +884,93 @@ _BROADCAST_PREVIEW_METHODS = {
 }
 
 _BROADCAST_NO_CAPTION_KINDS = {"sticker", "video_note"}
+_URL_BTN_RE = re.compile(r"^\[([^|\]]+)\|\s*(https?://[^\s\]]+)\]\s*$")
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _plain_text_len(html_text: str) -> int:
+    if not html_text:
+        return 0
+    return len(html.unescape(_HTML_TAG_RE.sub("", html_text)))
+
+
+def _extract_rich_text(message: Message, *, is_caption: bool) -> str:
+    raw = (message.caption if is_caption else message.text) or ""
+    entities = getattr(message, "caption_entities" if is_caption else "entities", None)
+    if isinstance(entities, (list, tuple)) and len(entities) > 0:
+        html_val = getattr(message, "html_text", None)
+        if isinstance(html_val, str) and html_val:
+            return html_val
+    return raw
+
+
+def _split_inline_url_button(raw_text: str) -> tuple[str, dict[str, str] | None]:
+    if not raw_text:
+        return "", None
+    lines = raw_text.rstrip().splitlines()
+    if not lines:
+        return raw_text, None
+    match = _URL_BTN_RE.match(lines[-1].strip())
+    if not match:
+        return raw_text, None
+    body = "\n".join(lines[:-1]).rstrip()
+    return body, {"text": match.group(1).strip(), "url": match.group(2).strip()}
+
+
+def _build_broadcast_markup(button_data: dict[str, str] | None) -> InlineKeyboardMarkup | None:
+    if not button_data or not button_data.get("text") or not button_data.get("url"):
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=button_data["text"], url=button_data["url"])]])
+
+
+def _markup_json(button_data: dict[str, str] | None) -> str | None:
+    markup = _build_broadcast_markup(button_data)
+    return markup.model_dump_json() if markup else None
 
 
 def extract_broadcast_payload(message: Message) -> dict[str, Any]:
-    """Сериализует сообщение админа для повторной HTML-отправки, а не copy_message."""
-    caption = message.caption or ""
+    """Сериализует сообщение админа для повторной HTML-отправки с поддержкой длинных подписей и URL-кнопки."""
     content_type = message.content_type
     if content_type == ContentType.TEXT:
-        return {"kind": "text", "text": message.text or ""}
+        rich_text = _extract_rich_text(message, is_caption=False)
+        body, btn = _split_inline_url_button(rich_text)
+        payload: dict[str, Any] = {"kind": "text", "text": body}
+        if btn:
+            payload["button"] = btn
+        return payload
+
+    rich_caption = _extract_rich_text(message, is_caption=True)
+    caption, btn = _split_inline_url_button(rich_caption)
+    followup_text = ""
+    if caption and _plain_text_len(caption) > 1024:
+        followup_text = caption
+        caption = ""
+
+    def _media_payload(kind: str, file_id: str) -> dict[str, Any]:
+        res: dict[str, Any] = {"kind": kind, "file_id": file_id, "caption": caption}
+        if followup_text:
+            res["followup_text"] = followup_text
+        if btn:
+            res["button"] = btn
+        return res
+
     if content_type == ContentType.PHOTO and message.photo:
-        return {"kind": "photo", "file_id": message.photo[-1].file_id, "caption": caption}
+        return _media_payload("photo", message.photo[-1].file_id)
     video = message.video
     if content_type == ContentType.VIDEO and video:
-        return {"kind": "video", "file_id": video.file_id, "caption": caption}
+        return _media_payload("video", video.file_id)
     animation = message.animation
     if content_type == ContentType.ANIMATION and animation:
-        return {"kind": "animation", "file_id": animation.file_id, "caption": caption}
+        return _media_payload("animation", animation.file_id)
     document = message.document
     if content_type == ContentType.DOCUMENT and document:
-        return {"kind": "document", "file_id": document.file_id, "caption": caption}
+        return _media_payload("document", document.file_id)
     audio = message.audio
     if content_type == ContentType.AUDIO and audio:
-        return {"kind": "audio", "file_id": audio.file_id, "caption": caption}
+        return _media_payload("audio", audio.file_id)
     voice = message.voice
     if content_type == ContentType.VOICE and voice:
-        return {"kind": "voice", "file_id": voice.file_id, "caption": caption}
+        return _media_payload("voice", voice.file_id)
     video_note = message.video_note
     if content_type == ContentType.VIDEO_NOTE and video_note:
         return {"kind": "video_note", "file_id": video_note.file_id}
@@ -919,10 +985,14 @@ def extract_broadcast_payload(message: Message) -> dict[str, Any]:
 
 
 async def send_broadcast_preview(message: Message, payload: dict[str, Any]) -> None:
-    """Показывает админу, как Telegram разберёт HTML, до подтверждения."""
+    """Показывает админу, как Telegram разберёт HTML, кнопку и перенос длинной подписи, до подтверждения."""
     kind = payload.get("kind")
+    markup = _build_broadcast_markup(payload.get("button"))
     if kind == "text":
-        await message.reply(payload.get("text") or "(пусто)", parse_mode="HTML")
+        kwargs_text: dict[str, Any] = {"parse_mode": "HTML"}
+        if markup:
+            kwargs_text["reply_markup"] = markup
+        await message.reply(payload.get("text") or "(пусто)", **kwargs_text)
         return
     if kind == "copy":
         await message.reply("📎 Это сообщение будет скопировано как есть. HTML-теги в нём не разберутся.")
@@ -937,10 +1007,22 @@ async def send_broadcast_preview(message: Message, payload: dict[str, Any]) -> N
         await method(file_id)
         return
     caption = payload.get("caption") or ""
+    followup_text = payload.get("followup_text") or ""
     kwargs: dict[str, Any] = {"parse_mode": "HTML"}
     if caption:
         kwargs["caption"] = caption
+    if markup and not followup_text:
+        kwargs["reply_markup"] = markup
     await method(file_id, **kwargs)
+    if followup_text:
+        follow_kwargs: dict[str, Any] = {"parse_mode": "HTML"}
+        if markup:
+            follow_kwargs["reply_markup"] = markup
+        await message.answer(followup_text, **follow_kwargs)
+        await message.answer(
+            "ℹ️ <i>Подпись длиннее 1024 символов — бот автоматически отправит медиа и следом полный HTML-текст.</i>",
+            parse_mode="HTML",
+        )
 
 
 def _parse_broadcast_handler_args(*args, **kwargs):
@@ -951,25 +1033,66 @@ def _parse_broadcast_handler_args(*args, **kwargs):
     return kwargs.get("message"), kwargs.get("manager")
 
 
+_BROADCAST_TARGET_LABELS: dict[str, str] = {
+    "all": "Всем пользователям",
+    "student": "Только студентам (группам)",
+    "teacher": "Только преподавателям",
+    "groups": "Групповым чатам (беседам)",
+}
+
+_BROADCAST_TARGET_BY_WIDGET: dict[str, str] = {
+    "go_broadcast_all": "all",
+    "go_broadcast_students": "student",
+    "go_broadcast_teachers": "teacher",
+    "go_broadcast_groups": "groups",
+}
+
+
+async def on_broadcast_target_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    target = _BROADCAST_TARGET_BY_WIDGET.get(button.widget_id or "", "all")
+    manager.dialog_data["broadcast_target"] = target
+    await manager.switch_to(Admin.broadcast)
+
+
 async def on_broadcast_received(*args, **kwargs):
     # Support both aiogram-dialog callback signature (message, message_input, manager)
     # and test signature (message, manager)
     message, manager = _parse_broadcast_handler_args(*args, **kwargs)
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = extract_broadcast_payload(message)
-    all_users = await user_data_manager.get_all_user_ids()
+    target = manager.dialog_data.get("broadcast_target", "all")
+    if target == "groups":
+        from core.group_chat_manager import GroupChatManager
+
+        gcm = GroupChatManager(user_data_manager.async_session_maker)
+        all_users = await gcm.get_active_chat_ids()
+    elif target in ("student", "teacher"):
+        all_users = await user_data_manager.get_segment_user_ids(user_type=target)
+    else:
+        all_users = await user_data_manager.get_all_user_ids()
     manager.dialog_data["broadcast_payload"] = payload
     manager.dialog_data["broadcast_user_ids"] = all_users
 
     try:
         await send_broadcast_preview(message, payload)
     except TelegramBadRequest as e:
+        err_text = str(e)
+        lower_err = err_text.lower()
+        if "too long" in lower_err:
+            prefix = "❌ Telegram отклонил сообщение. Никому не отправлено."
+            hint = "Превышен лимит длины Telegram (4096 символов для текста)."
+        elif "url" in lower_err or "button" in lower_err:
+            prefix = "❌ Telegram отклонил сообщение. Никому не отправлено."
+            hint = "Некорректная ссылка в кнопке. Формат: <code>[Текст | https://example.com]</code>."
+        else:
+            prefix = "❌ Telegram не разобрал HTML. Сообщение никому не отправлено."
+            hint = (
+                "Проверьте HTML-теги. Допустимы: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
+                "<code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, "
+                '<code>&lt;pre&gt;</code>, <code>&lt;a href="https://..."&gt;</code>.'
+            )
         await message.reply(
-            "❌ Telegram не разобрал HTML. Сообщение никому не отправлено.\n"
-            f"<code>{html.escape(str(e))}</code>\n\n"
-            "Допустимы теги: <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, "
-            "<code>&lt;u&gt;</code>, <code>&lt;s&gt;</code>, <code>&lt;code&gt;</code>, "
-            '<code>&lt;pre&gt;</code>, <code>&lt;a href="https://..."&gt;</code>.',
+            f"{prefix}\n<code>{html.escape(err_text)}</code>\n\n{hint}",
             parse_mode="HTML",
         )
         return
@@ -981,13 +1104,40 @@ async def on_broadcast_received(*args, **kwargs):
     await manager.switch_to(Admin.confirm_send)
 
 
+async def on_test_broadcast_self(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+    """Отправляет превью-тест текущей рассылки в личку самому администратору."""
+    payload = manager.dialog_data.get("broadcast_payload") or {}
+    if not payload or not callback.from_user:
+        await callback.answer("Нет данных рассылки", show_alert=True)
+        return
+    markup_json = _markup_json(payload.get("button"))
+    kind = payload.get("kind")
+    uid = callback.from_user.id
+    if kind == "text":
+        send_message_task.send(uid, payload.get("text") or "", markup_json)
+    elif kind == "copy" and payload.get("from_chat_id") and payload.get("message_id"):
+        copy_message_task.send(uid, payload["from_chat_id"], payload["message_id"])
+    elif payload.get("file_id"):
+        send_media_task.send(
+            uid,
+            str(kind or ""),
+            str(payload["file_id"]),
+            payload.get("caption") or "",
+            payload.get("followup_text") or "",
+            markup_json,
+        )
+    await callback.answer("🧪 Тест поставлен в очередь — придёт в личку!")
+
+
 async def get_broadcast_confirm_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     payload = dialog_manager.dialog_data.get("broadcast_payload") or {}
     user_ids = dialog_manager.dialog_data.get("broadcast_user_ids") or []
     kind = payload.get("kind") or "text"
+    target = dialog_manager.dialog_data.get("broadcast_target") or "all"
     return {
         "recipient_count": len(user_ids),
         "kind_label": _BROADCAST_KIND_LABELS.get(kind, kind),
+        "target_label": _BROADCAST_TARGET_LABELS.get(target, target),
     }
 
 
@@ -997,6 +1147,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
     udm: UserDataManager = manager.middleware_data.get("user_data_manager")
     payload = manager.dialog_data.get("broadcast_payload") or {}
     user_ids = manager.dialog_data.get("broadcast_user_ids") or []
+    target = manager.dialog_data.get("broadcast_target") or "all"
 
     if not payload:
         await callback.answer("Нет данных рассылки", show_alert=True)
@@ -1004,6 +1155,7 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
         return
 
     await callback.answer("🚀 Рассылка поставлена в очередь...")
+    markup_json = _markup_json(payload.get("button"))
 
     async def _process_broadcast():
         sent_count = 0
@@ -1012,11 +1164,17 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
             if kind == "text":
                 template = payload.get("text") or ""
                 for user_id in user_ids:
-                    user_info = await udm.get_full_user_info(user_id)
-                    if not user_info:
-                        continue
-                    text = render_template(template, user_info)
-                    send_message_task.send(user_id, text)
+                    if target == "groups":
+                        text = template
+                    else:
+                        user_info = await udm.get_full_user_info(user_id)
+                        if not user_info:
+                            continue
+                        text = render_template(template, user_info)
+                    if markup_json:
+                        send_message_task.send(user_id, text, markup_json)
+                    else:
+                        send_message_task.send(user_id, text)
                     TASKS_SENT_TO_QUEUE.labels(actor_name="send_message_task").inc()
                     sent_count += 1
                     if sent_count % 50 == 0:
@@ -1034,15 +1192,23 @@ async def on_confirm_broadcast_send(callback: CallbackQuery, button: Button, man
             else:
                 file_id = payload.get("file_id")
                 caption_template = payload.get("caption") or ""
+                followup_template = payload.get("followup_text") or ""
                 media_kind = str(kind or "")
                 if file_id:
                     for user_id in user_ids:
                         caption = caption_template
-                        if caption:
+                        followup = followup_template
+                        if target != "groups" and (caption or followup):
                             user_info = await udm.get_full_user_info(user_id)
                             if user_info:
-                                caption = render_template(caption, user_info)
-                        send_media_task.send(user_id, media_kind, str(file_id), caption)
+                                if caption:
+                                    caption = render_template(caption, user_info)
+                                if followup:
+                                    followup = render_template(followup, user_info)
+                        if followup or markup_json:
+                            send_media_task.send(user_id, media_kind, str(file_id), caption, followup, markup_json)
+                        else:
+                            send_media_task.send(user_id, media_kind, str(file_id), caption)
                         TASKS_SENT_TO_QUEUE.labels(actor_name="send_media_task").inc()
                         sent_count += 1
                         if sent_count % 50 == 0:
@@ -1074,8 +1240,8 @@ async def on_user_id_input(message: Message, widget: TextInput, manager: DialogM
         "user_id": user_info.user_id,
         "username": user_info.username,
         "group": user_info.group,
-        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M"),
-        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M"),
+        "reg_date": user_info.registration_date.strftime("%Y-%m-%d %H:%M") if user_info.registration_date else "N/A",
+        "last_active": user_info.last_active_date.strftime("%Y-%m-%d %H:%M") if user_info.last_active_date else "N/A",
     }
     await manager.switch_to(Admin.user_manage)
 
@@ -1085,14 +1251,17 @@ async def on_new_group_input(message: Message, widget: TextInput, manager: Dialo
     timetable_manager: TimetableManager = manager.middleware_data.get("manager")
 
     if new_group not in timetable_manager._schedules:
-        await message.answer(f"❌ Группа <b>{new_group}</b> не найдена в расписании.")
+        await message.answer(f"❌ Группа <b>{html.escape(new_group)}</b> не найдена в расписании.")
         return
 
     user_id = manager.dialog_data["found_user_info"]["user_id"]
     user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
 
     await user_data_manager.set_user_group(user_id, new_group)
-    await message.answer(f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{new_group}</b>.")
+    await user_data_manager.set_user_type(user_id, "student")
+    await message.answer(
+        f"✅ Группа для пользователя <code>{user_id}</code> успешно изменена на <b>{html.escape(new_group)}</b>."
+    )
 
     manager.dialog_data["found_user_info"]["group"] = new_group
     await manager.switch_to(Admin.user_manage)
@@ -1185,15 +1354,12 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 
     # Формируем список файлов для отображения (ограничиваем до 5 файлов)
     files_before = cache_info_before.get("files", [])
-    files_after = cache_info_after.get("files", [])
 
     # Показываем только первые 5 файлов
     files_to_show = files_before[:5]
     files_text_before = "\n".join([f"   • {f}" for f in files_to_show]) if files_to_show else "   • Нет файлов"
     if len(files_before) > 5:
         files_text_before += f"\n   ... и еще {len(files_before) - 5} файлов"
-
-    files_text_after = "\n".join([f"   • {f}" for f in files_after]) if files_after else "   • Нет файлов"
 
     # Добавляем информацию о Redis кэше
     redis_before = cache_info_before.get("redis_keys", 0)
@@ -1222,6 +1388,12 @@ async def on_clear_cache(callback: CallbackQuery, button: Button, manager: Dialo
 
 async def on_cancel_generation(callback: CallbackQuery) -> None:
     """Отменяет генерацию изображений."""
+    from core.config import ADMIN_IDS
+
+    if not callback.from_user or (ADMIN_IDS and callback.from_user.id not in ADMIN_IDS):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
     admin_id = callback.from_user.id
 
     if admin_id in active_generations:
@@ -1230,16 +1402,15 @@ async def on_cancel_generation(callback: CallbackQuery) -> None:
 
         # Обновляем сообщение
         try:
-            status_msg_id = active_generations[admin_id]["status_msg_id"]
             await callback.message.edit_text(
                 "⏹️ <b>Генерация отменена</b>\n\n" "Процесс остановлен пользователем.",
                 parse_mode="HTML",
             )
-        except:
+        except Exception:
             pass
 
-        # Удаляем из активных генераций
-        del active_generations[admin_id]
+        # Удаляем из активных генераций безопасно (защита от повторного клика)
+        active_generations.pop(admin_id, None)
     else:
         await callback.answer("❌ Нет активной генерации для отмены")
 
@@ -1320,11 +1491,15 @@ admin_dialog = Dialog(
             SwitchTo(Const("📢 Обязательная подписка"), id="section_sub_filter", state=Admin.sub_filter_menu),
         ),
         state=Admin.menu,
+        parse_mode="HTML",
     ),
     # Раздел: Рассылки
     Window(
         Const("📬 Раздел ‘Рассылки’"),
-        SwitchTo(Const("📣 Массовая рассылка"), id="go_broadcast", state=Admin.broadcast),
+        Button(Const("📣 Всем пользователям"), id="go_broadcast_all", on_click=on_broadcast_target_selected),
+        Button(Const("🎓 Только студентам (группам)"), id="go_broadcast_students", on_click=on_broadcast_target_selected),
+        Button(Const("🧑‍🏫 Только преподавателям"), id="go_broadcast_teachers", on_click=on_broadcast_target_selected),
+        Button(Const("👥 Групповым чатам (беседам)"), id="go_broadcast_groups", on_click=on_broadcast_target_selected),
         SwitchTo(Const("🎯 Сегментированная"), id="go_segment", state=Admin.segment_menu),
         SwitchTo(Const("◀️ Назад к разделам"), id="back_sections_broadcasts", state=Admin.menu),
         state=Admin.broadcast_menu,
@@ -1421,7 +1596,7 @@ admin_dialog = Dialog(
     ),
     Window(
         Const("Введите шаблон сообщения. Доступные плейсхолдеры: {user_id}, {username}, {group}"),
-        MessageInput(on_template_input_message, content_types=[ContentType.TEXT]),
+        MessageInput(on_template_input_message, content_types=[ContentType.ANY]),
         SwitchTo(Const("◀️ Назад"), id="template_back", state=Admin.segment_menu),
         state=Admin.template_input,
     ),
@@ -1440,9 +1615,10 @@ admin_dialog = Dialog(
     Window(
         Const(
             "Введите сообщение для рассылки: текст, фото, видео или документ.\n\n"
-            "Текст и подписи уходят как Telegram HTML: "
-            "<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;code&gt;</code>, "
-            '<code>&lt;a href="https://..."&gt;</code>.\n'
+            "Текст и подписи уходят как Telegram HTML (при пересылке сохраняется форматирование!).\n"
+            "Подпись &gt; 1024 символов для медиа автоматически уйдёт отдельным текстом следом.\n"
+            "Опционально последней строкой добавьте кнопку-ссылку:\n"
+            "<code>[Открыть | https://t.me/bstu_timetable_bot]</code>\n"
             "Плейсхолдеры: {user_id}, {username}, {group}.\n\n"
             "Перед отправкой будет превью и подтверждение."
         ),
@@ -1454,15 +1630,21 @@ admin_dialog = Dialog(
     Window(
         Format(
             "⚠️ <b>Подтверждение рассылки</b>\n\n"
+            "Аудитория: <b>{target_label}</b>\n"
             "Тип: {kind_label}\n"
             "Получателей: <b>{recipient_count}</b>\n\n"
             "Превью уже отправлено сообщением выше — так это увидят пользователи.\n"
-            "Если HTML выглядит правильно, нажмите «Отправить всем»."
+            "Если всё выглядит правильно, нажмите «Отправить»."
         ),
         Button(
-            Const("✅ Отправить всем"),
+            Const("✅ Отправить"),
             id="confirm_broadcast_send",
             on_click=on_confirm_broadcast_send,
+        ),
+        Button(
+            Const("🧪 Отправить тест себе"),
+            id="test_broadcast_self",
+            on_click=on_test_broadcast_self,
         ),
         SwitchTo(Const("❌ Отмена"), id="cancel_broadcast_send", state=Admin.broadcast_menu),
         getter=get_broadcast_confirm_data,

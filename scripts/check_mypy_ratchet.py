@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-BASELINE_PATH = Path("mypy_baseline")
+BASELINE_PATH = Path(__file__).resolve().parents[1] / "mypy_baseline"
 
 
 def main() -> int:
@@ -26,7 +26,14 @@ def main() -> int:
         ],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
+    if result.returncode not in (0, 1):
+        print(f"mypy failed to execute properly (exit code {result.returncode})")
+        print(result.stdout)
+        print(result.stderr)
+        return result.returncode or 2
     errors = len(re.findall(r": error:", result.stdout + result.stderr))
     print(f"mypy errors: {errors}; baseline: {baseline}")
     if errors > baseline:

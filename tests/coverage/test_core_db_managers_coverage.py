@@ -133,9 +133,9 @@ async def test_feedback_delete():
 async def test_feedback_stats():
     session = _make_session(
         [
-            _Result(items=[1, 2, 3]),
-            _Result(items=[1]),
-            _Result(items=[1, 2]),
+            _Result(scalar=3),
+            _Result(scalar=1),
+            _Result(scalar=2),
         ]
     )
     manager = FeedbackManager(_make_factory(session))

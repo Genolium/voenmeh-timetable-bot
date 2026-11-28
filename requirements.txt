@@ -8,6 +8,7 @@ alembic==1.16.3
 APScheduler==3.11.0
 asyncpg==0.30.0
 cyrtranslit
+defusedxml==0.7.1
 dramatiq[rabbitmq]==1.18.0
 Jinja2==3.1.6
 matplotlib>=3.8.0

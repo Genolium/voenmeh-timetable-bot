@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from redis.asyncio.client import Redis
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.db.models import RequiredChannel, SubscriptionFilterSetting
 
@@ -189,8 +189,8 @@ class SubscriptionFilterManager:
         """Удаляет канал из списка обязательных по channel_id или ID записи."""
         clean_channel_id = str(channel_id).strip()
         async with self.session_factory() as session:
-            if clean_channel_id.isdigit():
-                # Пробуем удалить как PK, иначе как channel_id
+            if clean_channel_id.isdigit() and int(clean_channel_id) <= 2_147_483_647:
+                # Пробуем удалить как PK (в пределах 32-bit INT), иначе как channel_id
                 res = await session.execute(
                     delete(RequiredChannel).where(
                         (RequiredChannel.id == int(clean_channel_id)) | (RequiredChannel.channel_id == clean_channel_id)
@@ -213,10 +213,14 @@ class SubscriptionFilterManager:
                 pass
 
     async def invalidate_all_caches(self) -> None:
-        """Сбрасывает кэш каналов в Redis."""
+        """Сбрасывает кэш каналов и пользовательских статусов подписки в Redis."""
         if self.redis:
             try:
                 await self.redis.delete(KEY_CHANNELS_LIST)
+                if hasattr(self.redis, "scan_iter"):
+                    user_keys = [key async for key in self.redis.scan_iter(match=f"{KEY_USER_PREFIX}:*")]
+                    if user_keys:
+                        await self.redis.delete(*user_keys)
             except Exception:
                 pass
 
@@ -252,6 +256,7 @@ class SubscriptionFilterManager:
             return True, []
 
         missing_channels: List[Dict[str, Any]] = []
+        had_error = False
 
         for ch in channels:
             cid = ch["channel_id"]
@@ -259,8 +264,9 @@ class SubscriptionFilterManager:
             target_chat_id = int(cid) if (cid.startswith("-") and cid[1:].isdigit()) or cid.isdigit() else cid
             try:
                 member = await bot.get_chat_member(chat_id=target_chat_id, user_id=user_id)
-                # Статусы участника
-                if member.status not in ("member", "administrator", "creator", "restricted"):
+                # Статусы участника (для restricted дополнительно проверяем флаг is_member)
+                is_restricted_member = member.status == "restricted" and getattr(member, "is_member", True) is True
+                if member.status not in ("member", "administrator", "creator") and not is_restricted_member:
                     missing_channels.append(ch)
             except TelegramForbiddenError:
                 # Бот заблокирован или не имеет доступа к каналу
@@ -271,14 +277,16 @@ class SubscriptionFilterManager:
                 if "user not found" in err_msg or "participant_id_invalid" in err_msg or "chat not found" in err_msg:
                     missing_channels.append(ch)
                 else:
+                    had_error = True
                     logger.warning(f"BadRequest when checking sub for {user_id} in {cid}: {e}")
-                    # В случае неизвестной ошибки API не блокируем пользователя жестко
+                    # В случае неизвестной ошибки API не блокируем пользователя жестко, но и не кэшируем успех
             except Exception as e:
+                had_error = True
                 logger.error(f"Unexpected error checking sub for {user_id} in {cid}: {e}")
 
         if not missing_channels:
-            # Все каналы подписаны, кэшируем статус
-            if self.redis:
+            # Все каналы подписаны; кэшируем статус только если не было ошибок API
+            if not had_error and self.redis:
                 try:
                     await self.redis.set(user_cache_key, "1", ex=USER_CACHE_TTL)
                 except Exception as e:

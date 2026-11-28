@@ -28,6 +28,12 @@ def make_redis():
     lock.__aenter__ = AsyncMock(return_value=None)
     lock.__aexit__ = AsyncMock(return_value=None)
     redis.lock = MagicMock(return_value=lock)
+
+    async def _scan_iter(*args, **kwargs):
+        if False:
+            yield b""
+
+    redis.scan_iter = _scan_iter
     return redis
 
 
@@ -665,6 +671,35 @@ async def test_auto_backup_reads_gzip_json(monkeypatch, tmp_path):
     monkeypatch.setattr(sched.Path, "exists", lambda self: True)
     monkeypatch.setattr(sched, "Path", MagicMock(return_value=tmp_path))
     await sched.auto_backup(redis)
+
+
+async def test_auto_backup_sends_gzip_to_telegram(monkeypatch, tmp_path):
+    dump_file = tmp_path / "db_backup_20261123.sql"
+    dump_file.write_text("SELECT 1;\n", encoding="utf-8")
+    redis = make_redis()
+    redis.get.return_value = None
+    bot = AsyncMock()
+
+    monkeypatch.setattr(sched, "Path", MagicMock(return_value=tmp_path))
+    monkeypatch.setattr(sched, "create_db_backup", AsyncMock(return_value=dump_file))
+    monkeypatch.setattr(sched, "ADMIN_IDS", [1001, 1002])
+    monkeypatch.delenv("BACKUP_CHAT_ID", raising=False)
+    bot.send_document.side_effect = [None, RuntimeError("telegram error")]
+
+    await sched.auto_backup(redis, bot=bot)
+    assert bot.send_document.await_count == 2
+
+    # Пустой список получателей -> ничего не шлём
+    bot.send_document.reset_mock()
+    monkeypatch.setattr(sched, "ADMIN_IDS", [])
+    await sched._send_backup_to_telegram(bot, dump_file)
+    bot.send_document.assert_not_awaited()
+
+    # BACKUP_CHAT_ID переопределяет ADMIN_IDS
+    monkeypatch.setenv("BACKUP_CHAT_ID", "-100999")
+    bot.send_document.side_effect = None
+    await sched._send_backup_to_telegram(bot, dump_file)
+    assert bot.send_document.await_args.kwargs["chat_id"] == "-100999"
 
 
 async def test_diff_getter_type_error_falls_back(monkeypatch):

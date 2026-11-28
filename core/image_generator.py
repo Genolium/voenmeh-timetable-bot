@@ -5,7 +5,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -23,11 +23,12 @@ from core.transliteration import transliterate
 """
 
 # Экспортируемая ссылка на async_playwright (для тестов она мокается)
+_async_playwright: Any
 try:
     from playwright.async_api import async_playwright as _async_playwright
 except Exception:
     _async_playwright = None
-async_playwright = _async_playwright
+async_playwright: Any = _async_playwright
 
 
 def print_progress_bar(
@@ -47,6 +48,8 @@ def print_progress_bar(
         suffix: Суффикс сообщения
         length: Длина прогресс-бара
     """
+    if total <= 0:
+        return
     filled_length = int(length * current // total)
     bar = "█" * filled_length + "-" * (length - filled_length)
     percent = f"{100 * current // total}%"
@@ -72,7 +75,7 @@ def _background_path(key: str) -> Path | None:
     return None
 
 
-_template_cache = None
+_template_cache: Any = None
 _template_mtime: float | None = None
 
 # Параметры пула (настраиваются через ENV)
@@ -145,21 +148,20 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
         first = ""
         if lessons:
             try:
-                first = sorted(
+                lessons = sorted(
                     lessons,
-                    key=lambda l: _time_to_minutes(l.get("start_time_raw", "23:59")),
-                )[
-                    0
-                ].get("start_time_raw", "")
+                    key=lambda lesson: _time_to_minutes(lesson.get("start_time_raw", "23:59")),
+                )
+                first = lessons[0].get("start_time_raw", "")
             except Exception:
                 first = ""
         else:
             lessons = []  # Гарантируем список
 
         items = []
-        for l in lessons:
-            subject = l.get("subject", "")
-            lesson_type = l.get("type", "")
+        for lesson in lessons:
+            subject = lesson.get("subject", "")
+            lesson_type = lesson.get("type", "")
             # Build title with optional type
             if lesson_type:
                 title_raw = f"{subject} ({lesson_type})"
@@ -168,16 +170,16 @@ def _prepare_days(schedule_data: dict, lang: str = "ru") -> List[dict]:
             # Transliterate title for non-Russian languages
             title = transliterate(title_raw, lang)
 
-            room_raw = (l.get("room", "") or "").strip("; ")
+            room_raw = (lesson.get("room", "") or "").strip("; ")
             room_lower = room_raw.lower()
             if not room_raw or ("кабинет" in room_lower and "не указан" in room_lower):
                 # Room not specified - leave empty (don't show anything)
                 room_fmt = ""
             else:
-                room_fmt = transliterate(room_raw, lang)
-            teacher_raw = (l.get("teachers", "") or "").strip()
+                room_fmt = transliterate(room_raw, lang) or ""
+            teacher_raw = (lesson.get("teachers", "") or "").strip()
             teacher_fmt = transliterate(teacher_raw, lang) if teacher_raw else ""
-            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": l.get("time", "")})
+            items.append({"title": title, "room": room_fmt, "teacher": teacher_fmt, "time": lesson.get("time", "")})
 
         prepared.append({"name": localized_name, "title": localized_name, "firstStart": first, "lessons": items})
     return prepared
@@ -257,7 +259,6 @@ async def generate_schedule_image(
                 mime = "image/jpeg" if path.suffix == ".jpg" else "image/png"
                 encoded = f"data:{mime};base64,{b64encode(path.read_bytes()).decode()}"
             except Exception:
-                _bg_images_cache[target_key] = ""
                 return ""
             _bg_images_cache[target_key] = encoded
             return encoded
@@ -284,6 +285,10 @@ async def generate_schedule_image(
             font_family_body = "'Segoe UI', sans-serif"
             font_family_header = "'Saira', sans-serif"
 
+        from core.themes import get_theme_meta
+
+        safe_theme = get_theme_meta(user_theme).id
+
         html = _template_cache.render(
             week_type=week_type,
             week_slug=week_slug,
@@ -291,7 +296,8 @@ async def generate_schedule_image(
             schedule_days=_prepare_days(schedule_data, lang=current_lang),
             bg_image=bg_image_data,
             assets_base=(project_root / "assets").as_uri(),
-            user_theme=user_theme,
+            user_theme=safe_theme,
+            lang=current_lang,
             i18n_week_type=i18n_week_type,
             i18n_schedule_title=i18n_schedule_title,
             i18n_credits=i18n_credits,
@@ -369,6 +375,7 @@ async def generate_schedule_image(
             # Используем лок для обслуживания
             async with state.lock:
                 # Еще раз проверяем тайминг под локом (double check)
+                now = time.time()
                 if now - state.last_check_at < 30:
                     return state
 
@@ -411,6 +418,7 @@ async def generate_schedule_image(
                             state.pages_made = 0
                             logging.info(f"Browser pool rotated successfully (loop: {id(loop)})")
                         except Exception:
+                            state.last_check_at = 0.0
                             await new_ctx.stop()
                             raise
                 return state
@@ -540,20 +548,22 @@ async def generate_schedule_image(
                             await page.close()
                         except Exception:
                             pass
-                        # Если целевой краш — перезапустим пул и повторим
+                        # Если целевой краш — перезапустим пул под локом и повторим
                         if attempt < max_attempts:
                             try:
-                                try:
-                                    await state.browser.close()
-                                except Exception:
-                                    pass
-                                try:
-                                    await state.ctx.stop()
-                                except Exception:
-                                    pass
+                                async with state.lock:
+                                    try:
+                                        await state.browser.close()
+                                    except Exception:
+                                        pass
+                                    try:
+                                        await state.ctx.stop()
+                                    except Exception:
+                                        pass
+                                    state.last_check_at = 0.0
                             finally:
                                 state = await _ensure_browser()
-                                page = await state.browser.new_page()
+                                page = await asyncio.wait_for(state.browser.new_page(), timeout=15.0)
                                 page.set_default_timeout(60000)
                                 page.set_default_navigation_timeout(60000)
 

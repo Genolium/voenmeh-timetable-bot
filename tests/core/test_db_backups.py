@@ -44,16 +44,17 @@ async def test_restore_db_backup_success(monkeypatch, tmp_path: Path):
     sql_file = tmp_path / "restore.sql"
     sql_file.write_text("SET transaction_timeout = 0;\nSELECT 1;\n", encoding="utf-8")
 
-    captured = {}
+    commands = []
 
     async def fake_run(*cmd, **kwargs):
-        captured["cmd"] = cmd
+        commands.append(cmd)
 
     monkeypatch.setattr(backups, "_run_subprocess", fake_run)
 
     await restore_db_backup(sql_file)
 
-    assert str(sql_file) in captured["cmd"]
+    assert any(str(sql_file) in cmd for cmd in commands)
+    assert any("core.db.migrate" in cmd for cmd in commands)
     assert "transaction_timeout" not in sql_file.read_text(encoding="utf-8")
 
 
