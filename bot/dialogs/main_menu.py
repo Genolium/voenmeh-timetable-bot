@@ -1,6 +1,6 @@
 import html
 import random
-from typing import Any
+from typing import Any, cast
 
 from aiogram.types import CallbackQuery, Message
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
@@ -24,15 +24,16 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> di
     """
     Выбирает случайную группу для примера в приветственном сообщении.
     """
-    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
+    manager = cast(TimetableManager, dialog_manager.middleware_data.get("manager"))
     # Получаем список групп, исключая служебные ключи
     groups = [g for g in manager._schedules.keys() if not g.startswith("__")]
 
     # Выбираем случайную группу или используем запасной вариант
     random_group = random.choice(groups) if groups else "О735Б"
 
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
     user_lang = await user_data_manager.get_user_language(user_id)
 
     # Реинициализируем функцию перевода с актуальным языком из БД
@@ -66,8 +67,9 @@ async def get_main_menu_data(dialog_manager: DialogManager, **kwargs: Any) -> di
 
 async def on_lang_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Обрабатывает выбор языка при первом запуске."""
+    assert button.widget_id is not None
     lang_code = button.widget_id.replace("lang_", "")
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.set_user_language(callback.from_user.id, lang_code)
 
     # После выбора языка переходим к выбору роли
@@ -76,6 +78,7 @@ async def on_lang_selected(callback: CallbackQuery, button: Button, manager: Dia
 
 async def on_user_type_selected(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Обрабатывает выбор типа пользователя (студент/преподаватель)."""
+    assert callback.data is not None
     user_type = callback.data.replace("user_type_", "")  # Извлекаем тип из callback_data (student/teacher)
     manager.dialog_data["user_type"] = user_type
 
@@ -96,7 +99,7 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
     if not group_name:
         await message.answer(_("incorrect_group"))
         return
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
     all_groups = [g for g in timetable_manager._schedules.keys() if not g.startswith("__")]
 
     # Проверяем прямое совпадение
@@ -114,7 +117,8 @@ async def on_group_entered(message: Message, message_input: MessageInput, manage
         return  # В любом случае, если не было точного совпадения, выходим
 
     # Этот код выполнится только если было точное совпадение
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    assert message.from_user is not None
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.register_user(user_id=message.from_user.id, username=message.from_user.username)
     await user_data_manager.set_user_group(user_id=message.from_user.id, group=group_name)
     await user_data_manager.set_user_type(user_id=message.from_user.id, user_type="student")
@@ -135,7 +139,7 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
         await message.answer(_("incorrect_teacher"))
         return
 
-    timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+    timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
     # Резолвим каноническое имя через TimetableManager
     canonical = timetable_manager.resolve_canonical_teacher(teacher_name)
@@ -153,7 +157,8 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
     teacher_name = canonical
 
     # Регистрируем преподавателя
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    assert message.from_user is not None
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.register_user(user_id=message.from_user.id, username=message.from_user.username)
     await user_data_manager.set_user_group(user_id=message.from_user.id, group=teacher_name)
     await user_data_manager.set_user_type(user_id=message.from_user.id, user_type="teacher")
@@ -164,7 +169,7 @@ async def on_teacher_entered(message: Message, message_input: MessageInput, mana
 
 
 async def on_group_suggestion_selected(callback: CallbackQuery, widget: object, manager: DialogManager, item_id: str) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
     await user_data_manager.set_user_group(user_id=callback.from_user.id, group=item_id)
     await user_data_manager.set_user_type(user_id=callback.from_user.id, user_type="student")
@@ -178,7 +183,7 @@ async def on_teacher_suggestion_selected(
 ) -> None:
     suggestions = manager.dialog_data.get("teacher_suggestions", [])
     resolved = suggestions[int(item_id)] if item_id.isdigit() and int(item_id) < len(suggestions) else item_id
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.register_user(user_id=callback.from_user.id, username=callback.from_user.username)
     await user_data_manager.set_user_group(user_id=callback.from_user.id, group=resolved)
     await user_data_manager.set_user_type(user_id=callback.from_user.id, user_type="teacher")
