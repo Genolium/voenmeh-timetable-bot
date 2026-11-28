@@ -71,7 +71,7 @@ class AlertSender:
     async def _send_slack(self, alert_data: Dict[str, Any]) -> bool:
         try:
             emoji = {"info": "ℹ️", "warning": "⚠️", "error": "❗", "critical": "🚨"}.get(alert_data.get("severity", "info"), "ℹ️")
-            blocks = [
+            blocks: list[Dict[str, Any]] = [
                 {
                     "type": "header",
                     "text": {
@@ -104,7 +104,8 @@ class AlertSender:
                 }
             )
             payload = {"text": alert_data.get("title", "Alert"), "blocks": blocks}
-            cm = await self._normalize_ctx(self.session.post(self.webhooks["slack"], json=payload))
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(str(self.webhooks["slack"]), json=payload))
             async with cm as r:
                 return cast(bool, r.status == 200)
         except Exception as e:
@@ -127,7 +128,8 @@ class AlertSender:
                     {"name": str(k)[:256], "value": str(v)[:1024], "inline": True}
                     for k, v in list(alert_data["tags"].items())[:25]
                 ]
-            cm = await self._normalize_ctx(self.session.post(self.webhooks["discord"], json={"embeds": [embed]}))
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(str(self.webhooks["discord"]), json={"embeds": [embed]}))
             async with cm as r:
                 return r.status in (200, 204)
         except Exception as e:
@@ -153,7 +155,8 @@ class AlertSender:
                 text = text[:4093] + "..."
             url = f"https://api.telegram.org/bot{self.webhooks['telegram']}/sendMessage"
             payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
-            cm = await self._normalize_ctx(self.session.post(url, json=payload))
+            session = cast(aiohttp.ClientSession, self.session)
+            cm = await self._normalize_ctx(session.post(url, json=payload))
             async with cm as r:
                 if r.status == 200:
                     data = await r.json()
@@ -169,9 +172,10 @@ class AlertSender:
             api_key = self.settings.get("ALERT_WEBHOOK_API_KEY")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+            session = cast(aiohttp.ClientSession, self.session)
             cm = await self._normalize_ctx(
-                self.session.post(
-                    self.settings.get("ALERT_WEBHOOK_URL"),
+                session.post(
+                    str(self.settings.get("ALERT_WEBHOOK_URL")),
                     json=alert_data,
                     headers=headers,
                 )

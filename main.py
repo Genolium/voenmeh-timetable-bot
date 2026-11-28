@@ -32,7 +32,7 @@ from bot.dialogs.schedule_view import (
 from bot.dialogs.settings_menu import settings_dialog
 
 # --- Импорты состояний ---
-from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule, SettingsMenu
+from bot.dialogs.states import About, Admin, Feedback, MainMenu, Schedule
 from bot.handlers.feedback_reply_handler import feedback_reply_router
 
 # --- Импорты бота ---
@@ -74,7 +74,7 @@ def setup_logging() -> TelemetryHandles | None:
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s", json_default=str))
 
-    handlers = [stream_handler]
+    handlers: list[logging.Handler] = [stream_handler]
     if telemetry_handles and telemetry_handles.log_handler:
         handlers.append(telemetry_handles.log_handler)
 
@@ -333,7 +333,7 @@ async def error_handler(event: Any = None, exception: Exception | None = None, *
             except Exception:
                 pass
             try:
-                bot: Bot = getattr(event, "bot", None)
+                bot: Bot | None = getattr(event, "bot", None)
                 if cb is not None and bot is not None:
                     await bot.send_message(cb.chat.id, "Меню обновлено. Нажмите /start")
             except Exception:

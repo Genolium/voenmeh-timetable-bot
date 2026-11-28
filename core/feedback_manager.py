@@ -4,7 +4,6 @@ from typing import List, Optional, Tuple, cast
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
-from sqlalchemy.orm import selectinload
 
 from core.db.models import Feedback
 from core.metrics import FEATURE_POPULARITY, USER_ACTIONS
@@ -84,9 +83,9 @@ class FeedbackManager:
 
             # Фильтр по ответу
             if only_unanswered is True:
-                base = base.where(Feedback.is_answered == False)
+                base = base.where(Feedback.is_answered.is_(False))
             elif only_unanswered is False:
-                base = base.where(Feedback.is_answered == True)
+                base = base.where(Feedback.is_answered.is_(True))
 
             # Фильтр по пользователю
             if user_id:
@@ -95,9 +94,9 @@ class FeedbackManager:
             # Подсчет общего количества
             count_query = select(func.count(Feedback.id))
             if only_unanswered is True:
-                count_query = count_query.where(Feedback.is_answered == False)
+                count_query = count_query.where(Feedback.is_answered.is_(False))
             elif only_unanswered is False:
-                count_query = count_query.where(Feedback.is_answered == True)
+                count_query = count_query.where(Feedback.is_answered.is_(True))
             if user_id:
                 count_query = count_query.where(Feedback.user_id == user_id)
 
@@ -182,7 +181,7 @@ class FeedbackManager:
         async with self.session_factory() as session:
             total = (await session.execute(select(func.count(Feedback.id)))).scalar() or 0
             unanswered = (
-                await session.execute(select(func.count(Feedback.id)).where(Feedback.is_answered == False))
+                await session.execute(select(func.count(Feedback.id)).where(Feedback.is_answered.is_(False)))
             ).scalar() or 0
             week_ago = now_msk_naive() - timedelta(days=7)
             recent = (

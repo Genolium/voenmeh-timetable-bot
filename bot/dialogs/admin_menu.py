@@ -480,7 +480,8 @@ async def on_add_channel_input(message: Message, widget: TextInput, manager: Dia
         except Exception as e:
             logger.warning(f"Failed to get_chat for {clean_target}: {e}")
             await message.answer(
-                f"⚠️ <i>Не удалось получить информацию о канале от Telegram API.\nКанал добавлен с введённым значением: {clean_target}</i>",
+                "⚠️ <i>Не удалось получить информацию о канале от Telegram API.\n"
+                f"Канал добавлен с введённым значением: {clean_target}</i>",
                 parse_mode="HTML",
             )
 

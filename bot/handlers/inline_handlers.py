@@ -126,7 +126,7 @@ def _available_groups(manager: TimetableManager) -> list[str]:
     return [group for group in manager._schedules if not group.startswith("__")]
 
 
-async def _safe_answer(query: InlineQuery, results: list, **kwargs) -> None:
+async def _safe_answer(query: InlineQuery, results: list[Any], **kwargs: Any) -> None:
     try:
         await query.answer(results, **kwargs)
     except Exception as e:
@@ -251,6 +251,7 @@ async def _send_schedule_result(
     """Отправляет результат с расписанием группы."""
     # Получаем расписание
     schedule_info = await manager.get_schedule_for_day(group_name, target_date)
+    assert schedule_info is not None
 
     # Формируем ответ
     lang = _inline_lang(query)

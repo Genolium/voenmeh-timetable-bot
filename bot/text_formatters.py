@@ -1,8 +1,8 @@
 import html
 import logging
 import random
-from datetime import date, datetime, time, timedelta
-from typing import Any, Dict, List, Optional, Tuple, cast
+from datetime import date, datetime, time
+from typing import Any, Dict, cast
 
 from core.config import MOSCOW_TZ
 from core.i18n import i18n

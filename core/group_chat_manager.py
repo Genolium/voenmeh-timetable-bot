@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker

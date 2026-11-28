@@ -1,10 +1,5 @@
 import asyncio
 import logging
-
-# Глобальный семафор для ограничения количества одновременных генераций изображений
-# Используем threading.Semaphore для работы в разных event loop'ах Dramatiq
-import os
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
@@ -34,7 +29,7 @@ class ImageService:
     Обрабатывает генерацию, кэширование и отправку изображений.
     """
 
-    def __init__(self, cache_manager: ImageCacheManager, bot: Bot):
+    def __init__(self, cache_manager: ImageCacheManager, bot: Optional[Bot]):
         self.cache_manager = cache_manager
         self.bot = bot
 
@@ -91,31 +86,31 @@ class ImageService:
         # Проверяем кэш
         if await self.cache_manager.is_cached(cache_key):
             logger.info(f"✅ Cache HIT for {cache_key}")
-            file_path = self.cache_manager.get_file_path(cache_key)
+            cached_path = self.cache_manager.get_file_path(cache_key)
 
             # Проверяем, что файл действительно существует
-            if not file_path.exists():
-                logger.warning(f"⚠️ Cache hit but file missing: {file_path}")
+            if not cached_path.exists():
+                logger.warning(f"⚠️ Cache hit but file missing: {cached_path}")
                 # Удаляем из кэша и генерируем заново
                 await self.cache_manager.invalidate_cache(cache_key)
             else:
                 if user_id:
                     send_success = await self._send_image_to_user(
-                        file_path, user_id, placeholder_msg_id, final_caption, lang=lang
+                        str(cached_path), user_id, placeholder_msg_id, final_caption, lang=lang
                     )
                     if not send_success:
                         logger.warning("⚠️ Failed to send cached image, will regenerate")
                         # Если не удалось отправить, генерируем заново
                         await self.cache_manager.invalidate_cache(cache_key)
                     else:
-                        return True, str(file_path)
+                        return True, str(cached_path)
                 else:
-                    return True, str(file_path)
+                    return True, str(cached_path)
 
         logger.info(f"❌ Cache MISS for {cache_key}, generating...")
 
         # Генерируем изображение
-        success, file_path = await self._generate_and_cache_image(
+        success, generated_path = await self._generate_and_cache_image(
             cache_key,
             week_schedule,
             week_name,
@@ -130,9 +125,9 @@ class ImageService:
         )
 
         if success and user_id:
-            await self._send_image_to_user(file_path, user_id, placeholder_msg_id, final_caption, lang=lang)
+            await self._send_image_to_user(str(generated_path), user_id, placeholder_msg_id, final_caption, lang=lang)
 
-        return success, file_path
+        return success, generated_path
 
     async def _generate_and_cache_image(
         self,
@@ -341,6 +336,7 @@ class ImageService:
                 return False
 
             photo = FSInputFile(safe_image_path)
+            assert self.bot is not None
 
             # Клавиатура: оригинал файла + назад (в одном сообщении)
             from core.i18n import i18n

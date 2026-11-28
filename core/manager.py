@@ -2,7 +2,7 @@ import gzip
 import json
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Any, cast
 
 from rapidfuzz import fuzz, process
@@ -104,7 +104,7 @@ class TimetableManager:
             if new_data is NOT_MODIFIED:
                 new_data = None
             if new_data:
-                temp_instance = cls(new_data, redis_client)
+                temp_instance = cls(cast(dict[str, Any], new_data), redis_client)
                 await temp_instance.save_to_cache()
                 print("Новое расписание загружено и сохранено в кэш Redis.")
                 return temp_instance
@@ -186,9 +186,8 @@ class TimetableManager:
                 temp_instance._use_compression = True
                 backup_data = temp_instance._decompress_data(backup_data_raw)
 
-                print(
-                    f"Резервная копия успешно загружена. Групп: {len([k for k in backup_data.keys() if not k.startswith('__')])}"
-                )
+                groups_count = len([k for k in backup_data.keys() if not k.startswith("__")])
+                print(f"Резервная копия успешно загружена. Групп: {groups_count}")
                 return backup_data
             else:
                 print("Резервная копия пуста")
@@ -264,7 +263,7 @@ class TimetableManager:
         fall_semester_start, spring_semester_start = settings if settings else (None, None)
         return get_semester_info(target_date, fall_semester_start, spring_semester_start)
 
-    async def get_schedule_for_day(self, group_number: str, target_date: date = None) -> dict | None:
+    async def get_schedule_for_day(self, group_number: str, target_date: date | None = None) -> dict | None:
         """Возвращает расписание для группы на конкретный день."""
         target_date = target_date or datetime.now(MOSCOW_TZ).date()
         group_schedule = self._schedules.get(group_number.upper())

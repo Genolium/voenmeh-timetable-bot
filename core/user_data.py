@@ -1,13 +1,13 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from functools import wraps
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, Union, cast
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, TypeVar, cast
 
 from redis.asyncio.client import Redis
 from sqlalchemy import case, event, func, or_, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from core.config import MOSCOW_TZ
 from core.db import User
@@ -75,7 +75,7 @@ class UserDataManager:
         tz_name: str = str(MOSCOW_TZ)
 
         # Настраиваем пул соединений и часовой пояс на уровне соединения с PostgreSQL
-        engine_kwargs = {}
+        engine_kwargs: Dict[str, Any] = {}
         try:
             if db_url.startswith("postgresql"):
                 engine_kwargs.update(
@@ -116,7 +116,7 @@ class UserDataManager:
 
         # Redis клиент для кэширования
         self._redis_url = redis_url
-        self._redis_client = None
+        self._redis_client: Optional[Redis] = None
 
     async def init_db(self) -> None:
         """Инициализирует схему.
@@ -156,7 +156,7 @@ class UserDataManager:
         """Корректно освобождает пул подключений к БД и Redis."""
         if self._redis_client is not None:
             try:
-                await self._redis_client.aclose()
+                await self._redis_client.aclose()  # type: ignore[attr-defined]
             except Exception as e:
                 logger.warning(f"Failed to close Redis client in UserDataManager: {e}")
             finally:
@@ -630,7 +630,7 @@ class UserDataManager:
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language).where(
                 or_(User.user_type != "teacher", User.user_type.is_(None)),
-                User.schedule_diff_notify == True,
+                User.schedule_diff_notify.is_(True),
             )
             result = await session.execute(stmt)
             return [(row.user_id, row.group, row.language or "ru") for row in result.fetchall()]
@@ -658,9 +658,9 @@ class UserDataManager:
         """Считает количество пользователей, отписавшихся от ВСЕХ рассылок."""
         async with self.async_session_maker() as session:
             stmt = select(func.count(User.user_id)).where(
-                User.evening_notify == False,
-                User.morning_summary == False,
-                User.lesson_reminders == False,
+                User.evening_notify.is_(False),
+                User.morning_summary.is_(False),
+                User.lesson_reminders.is_(False),
             )
             result = await session.scalar(stmt)
             return result or 0
@@ -669,9 +669,9 @@ class UserDataManager:
         """Возвращает разбивку по типам подписок."""
         async with self.async_session_maker() as session:
             stmt = select(
-                func.count(User.user_id).filter(User.evening_notify == True).label("evening"),
-                func.count(User.user_id).filter(User.morning_summary == True).label("morning"),
-                func.count(User.user_id).filter(User.lesson_reminders == True).label("reminders"),
+                func.count(User.user_id).filter(User.evening_notify.is_(True)).label("evening"),
+                func.count(User.user_id).filter(User.morning_summary.is_(True)).label("morning"),
+                func.count(User.user_id).filter(User.lesson_reminders.is_(True)).label("reminders"),
             )
             result = await session.execute(stmt)
             row = result.one_or_none()
@@ -724,7 +724,7 @@ class UserDataManager:
             target_time = f"{hour:02d}:00"
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
-                User.evening_notify == True,
+                User.evening_notify.is_(True),
                 User.group.isnot(None),
                 User.is_blocked.is_(False),
                 User.evening_time == target_time,
@@ -746,7 +746,7 @@ class UserDataManager:
             target_time = f"{hour:02d}:00"
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.language, User.user_type).where(
-                User.morning_summary == True,
+                User.morning_summary.is_(True),
                 User.group.isnot(None),
                 User.is_blocked.is_(False),
                 User.morning_time == target_time,
@@ -759,7 +759,7 @@ class UserDataManager:
         """Получает пользователей для напоминаний о парах (только студентов), включая время напоминания с кэшированием."""
         async with self.async_session_maker() as session:
             stmt = select(User.user_id, User.group, User.reminder_time_minutes, User.language).where(
-                User.lesson_reminders == True,
+                User.lesson_reminders.is_(True),
                 User.group.isnot(None),
                 User.is_blocked.is_(False),
                 or_(User.user_type != "teacher", User.user_type.is_(None)),

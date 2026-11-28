@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import TIMESTAMP, BigInteger, Boolean, Date, Index, Integer, String, Text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
 
 
@@ -37,7 +37,7 @@ class User(Base):
 
     # Статус блокировки бота пользователем (отток / Churn)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="f", nullable=False)
-    blocked_date: Mapped[datetime] = mapped_column(TIMESTAMP, nullable=True)
+    blocked_date: Mapped[datetime | None] = mapped_column(TIMESTAMP, nullable=True)
 
     # Индексы для оптимизации частых запросов
     __table_args__ = (

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from typing import Optional, Tuple
 
 from sqlalchemy import func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.db.models import SemesterSettings
 

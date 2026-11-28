@@ -7,8 +7,8 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from redis.asyncio.client import Redis
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from core.db.models import RequiredChannel, SubscriptionFilterSetting
 

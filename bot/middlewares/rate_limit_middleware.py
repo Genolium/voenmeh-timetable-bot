@@ -144,7 +144,7 @@ class RateLimitMiddleware(BaseMiddleware):
         except Exception:
             pass
 
-    async def __call__(
+    async def __call__(  # type: ignore[override]
         self,
         handler: Callable[[Update, Dict[str, Any]], Awaitable[Any]],
         event: Update,

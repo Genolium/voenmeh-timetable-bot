@@ -1,7 +1,5 @@
-import asyncio
 import html
 import logging
-import os
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -13,7 +11,6 @@ from aiogram.types import (
     FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
     Message,
 )
 from aiogram_dialog import Dialog, DialogManager, StartMode, Window
@@ -29,7 +26,6 @@ from bot.text_formatters import (
     format_teacher_schedule_text,
     generate_dynamic_header,
 )
-from bot.utils.image_compression import get_telegram_safe_image_path
 from core.config import (
     MEDIA_PATH,
     MOSCOW_TZ,
@@ -40,9 +36,8 @@ from core.config import (
 from core.i18n import i18n
 from core.ics_exporter import build_ics_filename, collect_target_weeks, generate_schedule_ics
 from core.image_cache_manager import ImageCacheManager
-from core.image_generator import generate_schedule_image
 from core.manager import TimetableManager
-from core.metrics import GROUP_POPULARITY, IMAGE_CACHE_HITS, IMAGE_CACHE_MISSES, SCHEDULE_GENERATION_TIME, USER_ACTIVITY_DAILY
+from core.metrics import GROUP_POPULARITY, USER_ACTIVITY_DAILY
 from core.user_schedule_rules import (
     UserScheduleRulesManager,
     apply_rules_to_lessons,
@@ -111,7 +106,7 @@ async def cleanup_old_cache():
         # Получаем статистику после очистки
         stats_after = await cache_manager.get_cache_stats()
 
-        logging.info(f"Очистка кэша завершена: удалено {deleted_files} файлов, {deleted_size / (1024*1024):.2f} MB")
+        logging.info(f"Очистка кэша завершена: удалено {deleted_files} файлов, {deleted_size / (1024 * 1024):.2f} MB")
         logging.info(f"Redis статистика: до - {stats_before}, после - {stats_after}")
 
     except Exception as e:
@@ -149,7 +144,7 @@ async def get_cache_info():
             for file_path in output_dir.glob("*.png"):
                 try:
                     file_size = file_path.stat().st_size
-                    file_list.append(f"{file_path.name} ({file_size / (1024*1024):.2f} MB)")
+                    file_list.append(f"{file_path.name} ({file_size / (1024 * 1024):.2f} MB)")
                 except Exception as e:
                     logging.error(f"Ошибка при получении информации о файле {file_path}: {e}")
 
@@ -1328,7 +1323,9 @@ schedul_dialog_windows = [
         parse_mode="HTML",
     ),
     Window(
-        Const("🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. Нажмите ◀️ Назад внизу изображения."),
+        Const(
+            "🖼 Генерация или показ расписания недели выполняется в отдельном сообщении. " "Нажмите ◀️ Назад внизу изображения."
+        ),
         Row(
             Button(
                 Format("{btn_original}"),

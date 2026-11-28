@@ -18,8 +18,8 @@ from core.time_utils import now_msk_naive
 
 # Использовать неинтерактивный бэкенд Agg для работы без GUI / в контейнере
 matplotlib.use("Agg")
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
+import matplotlib.dates as mdates  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -157,8 +157,9 @@ def generate_dynamics_chart(
             active_users = [0] * len(dates)
 
         # Построение линий с маркерами
+        plot_dates: Any = dates
         ax.plot(
-            dates,
+            plot_dates,
             active_users,
             label="Активные за день (DAU)",
             color=color_dau,
@@ -167,7 +168,7 @@ def generate_dynamics_chart(
             markersize=4,
         )
         ax.plot(
-            dates,
+            plot_dates,
             new_users,
             label="Новые пользователи",
             color=color_new,
@@ -178,7 +179,7 @@ def generate_dynamics_chart(
 
         if notifications_sent and len(notifications_sent) == len(dates):
             ax.plot(
-                dates,
+                plot_dates,
                 notifications_sent,
                 label="Отправлено рассылок",
                 color=color_notify,

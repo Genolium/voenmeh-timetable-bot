@@ -1,11 +1,10 @@
 import json
 import logging
 import time
-from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict
 
 from aiogram import BaseMiddleware
-from aiogram.types import CallbackQuery, Message, TelegramObject
+from aiogram.types import TelegramObject
 
 from bot.middlewares.event_utils import (
     extract_callback_data,
@@ -20,7 +19,6 @@ from core.metrics import (
     DIALOG_USAGE,
     FEATURE_POPULARITY,
     NEW_USERS_DAILY,
-    USER_ACTION_INTERVAL,
     USER_ACTIONS,
     USER_ACTIVITY_DAILY,
     USER_ACTIVITY_HOURLY,
