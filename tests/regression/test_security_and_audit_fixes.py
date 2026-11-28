@@ -202,7 +202,7 @@ def test_summary_advisor_overlapping_lessons_and_html_escape():
     stats = analyze_lessons_window(
         [
             {"start_time_raw": "09:00", "end_time_raw": "12:15"},
-            {"start_time_raw": "09:00", "end_time_raw": "10:30"},
+            {"start_time_raw": "10:00", "end_time_raw": "11:00"},
             {"start_time_raw": "12:30", "end_time_raw": "23:45"},
         ]
     )
@@ -242,11 +242,12 @@ def test_inline_parse_day_uses_whole_tokens():
     assert rem == ["O735B", "not_today_group"]
 
 
-def test_custom_emoji_explicit_parse_mode_none():
+def test_custom_emoji_parse_mode_inheritance():
     bot = MagicMock()
     bot.default = MagicMock(parse_mode="HTML")
-    assert _is_html_parse_mode(None, bot) is False
+    assert _is_html_parse_mode(None, bot) is True
     assert _is_html_parse_mode("HTML", bot) is True
+    assert _is_html_parse_mode("Markdown", bot) is False
 
 
 @pytest.mark.asyncio
@@ -380,7 +381,7 @@ async def test_additional_security_branches_for_full_coverage(monkeypatch, tmp_p
 
     # 7. image_cache_manager: empty redis scan in invalidate_generated_images_for_groups & write error cleanup
     mock_redis = MagicMock()
-    mock_redis.get = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=b"0")
     mock_redis.set = AsyncMock()
 
     async def _empty_scan(_pat):
@@ -439,11 +440,13 @@ async def test_additional_security_branches_for_full_coverage(monkeypatch, tmp_p
         def get(self, *a, **k):
             return _Resp401()
 
-    monkeypatch.setattr("aiohttp.ClientSession", lambda *a, **k: _Sess401())
-    with patch("core.alert_sender.AlertSender", side_effect=RuntimeError("alert broken")):
+    with (
+        patch("aiohttp.ClientSession", lambda *a, **k: _Sess401()),
+        patch("core.alert_sender.AlertSender", side_effect=RuntimeError("alert broken")),
+    ):
         assert await api.get_forecast_for_time(datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)) is None
 
-    # 9. worker_loop: re-entrant call & submit error closes coro
+    # 9. worker_loop: re-entrant call, submit error closes coro, clean stop_worker_loop
     from bot.utils import worker_loop
 
     loop = worker_loop.get_worker_loop()
@@ -458,6 +461,7 @@ async def test_additional_security_branches_for_full_coverage(monkeypatch, tmp_p
         with pytest.raises(RuntimeError, match="no loop"):
             worker_loop.run_async(coro)
     assert loop is not None
+    worker_loop.stop_worker_loop()
 
     # 10. user_data: close() closes redis + disposes engine (and tolerates redis close error)
     udm = UserDataManager(db_url="sqlite+aiosqlite:///:memory:")
@@ -465,3 +469,97 @@ async def test_additional_security_branches_for_full_coverage(monkeypatch, tmp_p
     udm._redis_client.aclose = AsyncMock(side_effect=RuntimeError("redis close err"))
     await udm.close()
     assert udm._redis_client is None
+
+    # 11. image_cache_manager: cache_image unsafe key (tmp_path is None in except) & resolve escape
+    await mgr.cache_image("../bad", b"123")
+    with patch.object(Path, "is_relative_to", return_value=False):
+        with pytest.raises(ValueError, match="escapes cache directory"):
+            mgr.get_file_path("SAFE_KEY")
+
+    # 12. manager: corrupt Redis cache falls through to fetch/fallback & tolerates delete error
+    from core.manager import TimetableManager
+
+    bad_redis = MagicMock()
+    lock_cm = AsyncMock()
+    lock_cm.__aenter__.return_value = None
+    lock_cm.__aexit__.return_value = False
+    bad_redis.lock = MagicMock(return_value=lock_cm)
+    bad_redis.get = AsyncMock(return_value=b"not-valid-gzip-or-json")
+    bad_redis.delete = AsyncMock(side_effect=RuntimeError("del failed"))
+    bad_redis.set = AsyncMock()
+    fresh_data = {"__metadata__": {}, "О735Б": {"odd": {}, "even": {}}}
+    with patch("core.parser.fetch_and_parse_all_schedules", new=AsyncMock(return_value=fresh_data)):
+        tm = await TimetableManager.create(bad_redis)
+    assert tm is not None and "О735Б" in tm._schedules
+
+    # 13. scheduler: handle_graduated_groups aborts when current_groups is empty
+    from bot.scheduler import handle_graduated_groups
+
+    udm_mock = MagicMock()
+    udm_mock.get_students_with_groups = AsyncMock(return_value=[(1, "О735Б")])
+    tm_empty = MagicMock(_schedules={"__metadata__": {}})
+    await handle_graduated_groups(udm_mock, tm_empty, MagicMock())
+
+    # 14. admin_menu: post-download file size > MAX_RESTORE_BYTES & _cleanup_restore_dir non-temp file
+    from bot.dialogs import admin_menu
+
+    plain_file = tmp_path / "plain.sql"
+    plain_file.write_text("SELECT 1;", encoding="utf-8")
+    admin_menu._cleanup_restore_dir(str(plain_file))
+    assert not plain_file.exists()
+
+    big_msg = MagicMock()
+    big_msg.document = SimpleNamespace(file_name="big.sql", file_size=None)
+    big_msg.answer = AsyncMock()
+
+    async def _download_big(_doc, destination):
+        Path(destination).write_bytes(b"0" * 32)
+
+    big_msg.bot = MagicMock(download=AsyncMock(side_effect=_download_big))
+    big_mgr = MagicMock(dialog_data={}, switch_to=AsyncMock())
+    with patch.object(admin_menu, "MAX_RESTORE_BYTES", 10):
+        await admin_menu.on_backup_upload_received(big_msg, MagicMock(), big_mgr)
+    big_msg.answer.assert_awaited_once()
+    assert "слишком большой" in big_msg.answer.await_args[0][0]
+
+    # 15. schedule_view: blocked unsafe path & fail-closed answer exception swallowed
+    from bot.dialogs import schedule_view as sv
+    from bot.dialogs.constants import DialogDataKeys
+
+    ctx = MagicMock(dialog_data={DialogDataKeys.GROUP: "О735Б", DialogDataKeys.CURRENT_DATE_ISO: "2025-09-01"})
+    sv_dm = MagicMock()
+    sv_dm.current_context.return_value = ctx
+    sv_manager = MagicMock(redis=AsyncMock())
+    sv_manager.get_academic_week_type = AsyncMock(return_value=("odd", "Нечётная"))
+    sv_udm = MagicMock()
+    sv_udm.get_user_language = AsyncMock(return_value="ru")
+    sv_udm.get_user_theme = AsyncMock(return_value="standard")
+    sv_dm.middleware_data = {"bot": AsyncMock(), "manager": sv_manager, "user_data_manager": sv_udm}
+    sv_cb = MagicMock(from_user=SimpleNamespace(id=1), message=AsyncMock(), answer=AsyncMock())
+    with (
+        patch.object(sv, "_get_user_rules_for_target", new=AsyncMock(return_value=[])),
+        patch.object(Path, "is_relative_to", return_value=False),
+    ):
+        await sv.on_send_original_file(sv_cb, None, sv_dm)
+
+    sv_cb2 = MagicMock(
+        from_user=SimpleNamespace(id=1),
+        message=AsyncMock(),
+        answer=AsyncMock(side_effect=RuntimeError("cb fail")),
+    )
+    with (
+        patch.object(sv, "_get_user_rules_for_target", new=AsyncMock(return_value=[])),
+        patch("core.subscription_filter.is_user_subscribed", side_effect=RuntimeError("sub err")),
+    ):
+        await sv.on_send_original_file(sv_cb2, None, sv_dm)
+
+    # 16. feedback_reply_handler: non-admin user ignored when ADMIN_IDS is set
+    import core.config as cfg
+    from tests.coverage.test_feedback_reply_coverage import _load, _message
+
+    monkeypatch.setattr(cfg, "ADMIN_IDS", [111])
+    ns = _load("-1001234567890")
+    non_admin_msg = _message(reply_to=SimpleNamespace(forward_from=SimpleNamespace(id=42)), text="hi")
+    bot_mock = AsyncMock()
+    await ns["handle_feedback_reply"](non_admin_msg, bot_mock, MagicMock())
+    bot_mock.send_message.assert_not_awaited()

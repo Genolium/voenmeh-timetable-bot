@@ -113,10 +113,7 @@ def save_fallback_schedule(data: dict) -> bool:
 
     except Exception as e:
         if tmp_path is not None:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+            tmp_path.unlink(missing_ok=True)
         logging.error(f"Failed to save fallback schedule: {e}")
         return False
 

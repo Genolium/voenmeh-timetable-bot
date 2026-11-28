@@ -295,13 +295,13 @@ _restore_lock = asyncio.Lock()
 def _cleanup_restore_dir(raw_path: str | None) -> None:
     if not raw_path:
         return
-    try:
-        path = Path(raw_path)
-        if path.parent.name.startswith("voenmeh_restore_"):
-            import shutil
+    import shutil
 
+    path = Path(raw_path)
+    try:
+        if path.parent.name.startswith("voenmeh_restore_"):
             shutil.rmtree(path.parent, ignore_errors=True)
-        elif path.exists():
+        else:
             path.unlink(missing_ok=True)
     except OSError:
         pass

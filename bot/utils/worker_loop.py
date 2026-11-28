@@ -31,8 +31,7 @@ def get_worker_loop() -> asyncio.AbstractEventLoop:
                 except Exception as e:
                     logger.error(f"Worker loop crashed: {e}")
                 finally:
-                    if not loop.is_closed():
-                        loop.close()
+                    loop.close()
                     logger.info("Background worker event loop stopped")
 
             _worker_loop_thread = threading.Thread(
@@ -63,12 +62,10 @@ def stop_worker_loop() -> None:
         if loop and loop.is_running():
             loop.call_soon_threadsafe(loop.stop)
             logger.info("Stopping worker loop...")
+        _worker_loop = None
+        _worker_loop_thread = None
     if thread and thread.is_alive():
         thread.join(timeout=5.0)
-    with _lock:
-        if _worker_loop is loop:
-            _worker_loop = None
-            _worker_loop_thread = None
 
 
 def run_async(coro):
@@ -76,7 +73,11 @@ def run_async(coro):
     Runs a coroutine in the global worker loop and waits for the result (synchronously).
     Timeout должен быть больше чем Dramatiq time_limit, чтобы позволить задаче завершиться.
     """
-    if threading.current_thread() is _worker_loop_thread:
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+    if running_loop is not None and running_loop is _worker_loop:
         coro.close()
         raise RuntimeError("run_async() cannot be called from the worker event loop thread")
 
@@ -87,12 +88,11 @@ def run_async(coro):
         # Timeout 1900 сек = ~31 мин (чуть больше consumer_timeout и time_limit в Dramatiq)
         return future.result(timeout=1900)
     except asyncio.TimeoutError:
-        if future is not None:
-            future.cancel()
+        future.cancel()
         logger.error("Coroutine timed out in worker loop after 1900 seconds")
         raise
     except Exception as e:
-        if future is None and hasattr(coro, "close"):
+        if future is None:
             coro.close()
         logger.error(f"Error running async task: {e}")
         raise

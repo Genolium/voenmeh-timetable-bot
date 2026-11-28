@@ -93,9 +93,8 @@ async def _run_subprocess(
         await process.communicate()
         raise BackupError(f"Command {cmd[0]} timed out after {timeout} seconds") from exc
     except BaseException:
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
+        process.kill()
+        await process.wait()
         raise
 
     if process.returncode != 0:
@@ -202,15 +201,13 @@ async def create_db_backup(
     try:
         await _run_subprocess(*cmd, env=_prepare_connection_env(conn), timeout=timeout)
     except Exception:
-        if backup_path.exists():
-            backup_path.unlink(missing_ok=True)
+        backup_path.unlink(missing_ok=True)
         raise
 
     if not backup_path.exists():
         raise BackupError("Backup file was not created by pg_dump.")
 
-    if os.name == "posix":
-        os.chmod(backup_path, 0o600)
+    os.chmod(backup_path, 0o600)
 
     _sanitize_dump_file(backup_path)
     return backup_path
@@ -267,8 +264,7 @@ def compress_file_gzip(source: Path) -> Path:
     target = source.with_suffix(source.suffix + ".gz")
     with open(source, "rb") as src, gzip.open(target, "wb", compresslevel=6) as dst:
         shutil.copyfileobj(src, dst)
-    if os.name == "posix":
-        os.chmod(target, 0o600)
+    os.chmod(target, 0o600)
     return target
 
 
