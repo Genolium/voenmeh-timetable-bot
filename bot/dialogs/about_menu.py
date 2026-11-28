@@ -1,5 +1,5 @@
 import logging
-from typing import Any
+from typing import Any, cast
 
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery
@@ -19,8 +19,9 @@ from .states import About, Schedule
 
 
 async def get_about_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
     user_lang = await user_data_manager.get_user_language(user_id)
 
     # Реинициализируем функцию перевода с актуальным языком
@@ -43,11 +44,12 @@ TOTAL_PAGES = 5
 
 
 async def on_finish_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_group = await user_data_manager.get_user_group(callback.from_user.id)
 
     try:
-        await callback.message.delete()
+        cb_msg: Any = callback.message
+        await cb_msg.delete()
     except TelegramBadRequest as e:
         if "message can't be deleted" in str(e):
             logging.warning(f"Не удалось удалить сообщение с туториалом (слишком старое): {e}")

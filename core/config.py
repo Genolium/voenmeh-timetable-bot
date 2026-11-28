@@ -105,6 +105,8 @@ FEEDBACK_CHAT_ID = settings.FEEDBACK_CHAT_ID
 # Может быть ID канала (например, -1001234567890) или @username
 SUBSCRIPTION_CHANNEL = settings.SUBSCRIPTION_CHANNEL
 DEFAULT_NEWS_CHANNEL = "voenmeh404"
+GOST_REPORT_BOT_MENU_URL = "https://t.me/auditorium_404_bot?start=tt_menu"
+GOST_REPORT_BOT_LAB_URL = "https://t.me/auditorium_404_bot?start=tt_lab"
 
 
 def news_channel_url() -> str:

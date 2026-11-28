@@ -91,6 +91,7 @@
     "btn_change_group": "🔄 Сменить",
     "btn_search": "🔍 Поиск",
     "btn_news": "📢 Новости",
+    "btn_gost_report": "📄 Оформить отчёт по ГОСТ",
     "btn_original": "📄 Оригинал (файл)",
     "schedule_teacher_label": "Преподаватель:",
     "schedule_week_caption": "✅ Расписание на неделю готово!\n\n{subject_line}\nНеделя: <b>{week_name}</b>\nПериод: <b>с {start} по {end}</b>",
@@ -114,6 +115,7 @@
     "fmt_week_no_lessons": "🎉 На этой неделе занятий нет!",
     "unsubscribe_footer": "\n\n<tg-spoiler><i>Отключить эту рассылку можно в «⚙️ Настройки»</i></tg-spoiler>",
     "channel_promo": "\n\n📢 <i>Новости разработки бота: <a href='https://t.me/voenmeh404'>Аудитория 404 | Военмех</a></i>",
+    "gost_lab_promo": "\n\n📄 <i>Завтра лаба? Оформить отчёт по ГОСТ ВОЕНМЕХа за 1 мин (0 правок текста) → <a href='https://t.me/auditorium_404_bot?start=tt_lab'>@auditorium_404_bot</a></i>",
     "evening_greetings": [
         "Добрый вечер! 👋",
         "Привет! Готовимся к завтрашнему дню.",

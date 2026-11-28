@@ -91,6 +91,7 @@
     "btn_change_group": "🔄 Change",
     "btn_search": "🔍 Find",
     "btn_news": "📢 News",
+    "btn_gost_report": "📄 Format GOST Report",
     "btn_original": "📄 Original (File)",
     "schedule_teacher_label": "Teacher:",
     "schedule_week_caption": "✅ Weekly schedule ready!\n\n{subject_line}\nWeek: <b>{week_name}</b>\nPeriod: <b>{start} - {end}</b>",
@@ -114,6 +115,7 @@
     "fmt_week_no_lessons": "🎉 No lessons this week!",
     "unsubscribe_footer": "\n\n<tg-spoiler><i>Notification settings can be changed in «⚙️ Settings»</i></tg-spoiler>",
     "channel_promo": "\n\n📢 <i>Dev News: <a href='https://t.me/voenmeh404'>Auditorium 404 | Voenmeh</a></i>",
+    "gost_lab_promo": "\n\n📄 <i>Lab tomorrow? Format your Voenmeh GOST report in 1 min (zero text edits) → <a href='https://t.me/auditorium_404_bot?start=tt_lab'>@auditorium_404_bot</a></i>",
     "evening_greetings": [
         "Good evening! 👋",
         "Hi! Preparing for tomorrow.",

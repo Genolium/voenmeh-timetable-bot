@@ -27,7 +27,8 @@ def get_button_text(status: bool, action_key: str, lang: str = "ru") -> str:
 
 
 async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, dialog_manager.middleware_data.get("user_data_manager"))
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
     settings = await user_data_manager.get_user_settings(user_id)
 
@@ -117,9 +118,10 @@ async def get_settings_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
 
 
 async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_id = callback.from_user.id
     setting_name = button.widget_id
+    assert setting_name is not None
 
     current_settings = await user_data_manager.get_user_settings(user_id)
     current_status = current_settings.get(setting_name, False)
@@ -136,7 +138,7 @@ async def on_toggle_setting(callback: CallbackQuery, button: Button, manager: Di
 
 
 async def on_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_id = callback.from_user.id
 
     await user_data_manager.set_reminder_time(user_id, int(item_id))
@@ -145,7 +147,7 @@ async def on_time_selected(callback: CallbackQuery, widget: Select, manager: Dia
 
 
 async def on_morning_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_id = callback.from_user.id
 
     await user_data_manager.set_morning_time(user_id, item_id)
@@ -154,7 +156,7 @@ async def on_morning_time_selected(callback: CallbackQuery, widget: Select, mana
 
 
 async def on_evening_time_selected(callback: CallbackQuery, widget: Select, manager: DialogManager, item_id: str) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     user_id = callback.from_user.id
 
     await user_data_manager.set_evening_time(user_id, item_id)
@@ -173,7 +175,7 @@ async def on_change_role_click(callback: CallbackQuery, button: Button, manager:
 
 
 async def on_lang_selected(callback: CallbackQuery, widget: Any, manager: DialogManager, item_id: str) -> None:
-    user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+    user_data_manager = cast(UserDataManager, manager.middleware_data.get("user_data_manager"))
     await user_data_manager.set_user_language(callback.from_user.id, item_id)
 
     # Reload middleware I18n context manually or just reply
@@ -221,7 +223,8 @@ async def on_theme_button_click(callback: CallbackQuery, button: Button, manager
             kb = InlineKeyboardMarkup(
                 inline_keyboard=[[InlineKeyboardButton(text="🔔 Подписаться", url=_build_channel_link(SUBSCRIPTION_CHANNEL))]]
             )
-            await callback.message.answer(
+            cb_msg: Any = callback.message
+            await cb_msg.answer(
                 "Доступ к персональным темам доступен по подписке на канал.",
                 reply_markup=kb,
             )
@@ -256,7 +259,7 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
     """Сохраняет выбранную тему пользователя и возвращает в меню настроек."""
     try:
         user_id = callback.from_user.id
-        user_data_manager: UserDataManager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: UserDataManager | None = manager.middleware_data.get("user_data_manager")
         if not await _is_theme_subscribed(user_id, manager):
             await callback.answer("❌ Требуется подписка на канал", show_alert=True)
             return
@@ -280,7 +283,8 @@ async def on_theme_selected(callback: CallbackQuery, widget: Select, manager: Di
 
 async def get_theme_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
     """Возвращает текущую тему и список тем с пометкой текущей."""
-    user_data_manager: UserDataManager = dialog_manager.middleware_data.get("user_data_manager")
+    user_data_manager: UserDataManager | None = dialog_manager.middleware_data.get("user_data_manager")
+    assert dialog_manager.event.from_user is not None
     user_id = dialog_manager.event.from_user.id
 
     # CRITICAL: Fetch user_lang and define _ FIRST before any usage
@@ -320,7 +324,7 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
     """Открывает канал с новостями разработки"""
     # Force fetch language from DB to ensure correct localization even if middleware is stale
     try:
-        user_data_manager = manager.middleware_data.get("user_data_manager")
+        user_data_manager: Any = manager.middleware_data.get("user_data_manager")
         user_id = callback.from_user.id
         user_lang = await user_data_manager.get_user_language(user_id) or "ru"
     except Exception:
@@ -328,7 +332,8 @@ async def on_news_clicked(callback: CallbackQuery, button: Button, manager: Dial
 
     _ = lambda k, **kw: i18n.get(k, lang=user_lang, **kw)
     await callback.answer(_("news_toast"))
-    await callback.message.answer(
+    cb_msg: Any = callback.message
+    await cb_msg.answer(
         _("news_message"),
         parse_mode="HTML",
         disable_web_page_preview=True,

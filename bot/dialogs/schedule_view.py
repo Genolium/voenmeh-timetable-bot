@@ -1,7 +1,7 @@
 import html
 import logging
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from aiogram import Bot
 from aiogram.types import (
@@ -27,6 +27,7 @@ from bot.text_formatters import (
     generate_dynamic_header,
 )
 from core.config import (
+    GOST_REPORT_BOT_MENU_URL,
     MEDIA_PATH,
     MOSCOW_TZ,
     NO_LESSONS_IMAGE_PATH,
@@ -195,22 +196,24 @@ async def _get_user_rules_for_target(manager: DialogManager, user_id: int | None
 
 
 async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
-    user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
+    manager = cast(TimetableManager, dialog_manager.middleware_data.get("manager"))
+    user_data_manager: Any = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
 
     # CRITICAL: Fetch user language from DB for proper localization
     lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
     ctx = dialog_manager.current_context()
+    ctx_data: dict[str, Any] = cast(dict[str, Any], ctx.dialog_data)
+    start_data: Any = dialog_manager.start_data
 
-    if DialogDataKeys.GROUP not in ctx.dialog_data:
-        ctx.dialog_data[DialogDataKeys.GROUP] = dialog_manager.start_data.get(DialogDataKeys.GROUP)
+    if DialogDataKeys.GROUP not in ctx_data:
+        ctx_data[DialogDataKeys.GROUP] = start_data.get(DialogDataKeys.GROUP)
 
-    if not ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
-        ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
+    if not ctx_data.get(DialogDataKeys.CURRENT_DATE_ISO):
+        ctx_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
-    current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
-    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
+    current_date = date.fromisoformat(ctx_data[DialogDataKeys.CURRENT_DATE_ISO])
+    group: Any = ctx_data.get(DialogDataKeys.GROUP, "N/A")
 
     # Определяем тип пользователя для корректного отображения
     user_type = "student"  # По умолчанию
@@ -333,6 +336,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "show_my_group": show_my_group,
         "nav_date_label": nav_date_label,
         "news_url": news_channel_url(),
+        "gost_report_url": GOST_REPORT_BOT_MENU_URL,
         "user_type": user_type,
         "user_type_emoji": "" if user_type == "student" else "🧑‍🏫",
         "user_type_text": "" if user_type == "student" else _("schedule_teacher_label"),
@@ -344,6 +348,7 @@ async def get_schedule_data(dialog_manager: DialogManager, **kwargs: Any) -> dic
         "btn_make_my_group": _("btn_make_my_group"),
         "btn_search": _("btn_search"),
         "btn_news": _("btn_news"),
+        "btn_gost_report": _("btn_gost_report"),
         "full_quality_gate_text": _("full_quality_gate_text"),
         "btn_check_subscription": _("btn_check_subscription"),
         "btn_help": _("btn_help"),
@@ -364,7 +369,7 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
     # Проверяем время последнего нажатия для этого пользователя
     last_click_key = f"last_week_click:{user_id}"
     try:
-        manager_obj = manager.middleware_data.get("manager")
+        manager_obj: Any = manager.middleware_data.get("manager")
         last_click_time = await manager_obj.redis.get(last_click_key)
         if last_click_time:
             # Если прошло меньше 3 секунд, игнорируем нажатие
@@ -404,7 +409,7 @@ async def on_full_week_image_click(callback: CallbackQuery, button: Button, mana
 
 
 async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> dict[str, Any]:
-    manager: TimetableManager = dialog_manager.middleware_data.get("manager")
+    manager = cast(TimetableManager, dialog_manager.middleware_data.get("manager"))
     bot = dialog_manager.middleware_data.get("bot")
     user_data_manager = dialog_manager.middleware_data.get("user_data_manager")
     user_id = dialog_manager.event.from_user.id if dialog_manager.event and dialog_manager.event.from_user else None
@@ -413,15 +418,17 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     lang = await user_data_manager.get_user_language(user_id) if user_data_manager and user_id else "ru"
     _ = lambda k, **kw: i18n.get(k, lang=lang, **kw)
     ctx = dialog_manager.current_context()
+    ctx_data: dict[str, Any] = cast(dict[str, Any], ctx.dialog_data)
+    start_data: Any = dialog_manager.start_data
 
-    if DialogDataKeys.GROUP not in ctx.dialog_data:
-        ctx.dialog_data[DialogDataKeys.GROUP] = dialog_manager.start_data.get(DialogDataKeys.GROUP)
+    if DialogDataKeys.GROUP not in ctx_data:
+        ctx_data[DialogDataKeys.GROUP] = start_data.get(DialogDataKeys.GROUP)
 
-    if not ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
-        ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
+    if not ctx_data.get(DialogDataKeys.CURRENT_DATE_ISO):
+        ctx_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
 
-    current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
-    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
+    current_date = date.fromisoformat(ctx_data[DialogDataKeys.CURRENT_DATE_ISO])
+    group: Any = ctx_data.get(DialogDataKeys.GROUP, "N/A")
 
     # Метрики активности и популярности
     try:
@@ -434,7 +441,7 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> d
     except Exception:
         pass
 
-    week_info = await manager.get_academic_week_type(current_date)
+    week_info: Any = await manager.get_academic_week_type(current_date)
     if not week_info:
         return {
             "week_name": "Неизвестно",
@@ -496,11 +503,11 @@ async def get_week_image_data(dialog_manager: DialogManager, **kwargs: Any) -> d
 
     # Получаем или генерируем изображение
     # CRITICAL: Используем user_id из события если в контексте нет — иначе тема не будет учтена
-    user_id_for_image = ctx.dialog_data.get("user_id")
+    user_id_for_image: Any = ctx_data.get("user_id")
     if not user_id_for_image and user_id:
         user_id_for_image = user_id
-        ctx.dialog_data["user_id"] = user_id  # Сохраняем для последующих вызовов
-    placeholder_msg_id = ctx.dialog_data.get(f"placeholder_msg_id:{group}_{week_key}")
+        ctx_data["user_id"] = user_id  # Сохраняем для последующих вызовов
+    placeholder_msg_id: Any = ctx_data.get(f"placeholder_msg_id:{group}_{week_key}")
 
     # Определяем тему пользователя (если доступно)
     user_theme = None
@@ -562,35 +569,36 @@ async def on_check_subscription_button(callback: CallbackQuery, button: Button, 
     await on_send_original_file(callback, None, manager)
 
 
-async def on_send_original_file(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
+async def on_send_original_file(callback: CallbackQuery, button: Button | None, manager: DialogManager) -> None:
     """Отправляет оригинал изображения недели как файл (Document), без сжатия Telegram."""
     logging.info(f"📄 on_send_original_file STARTED for user {callback.from_user.id if callback.from_user else 'unknown'}")
     ctx = manager.current_context()
-    manager_obj: TimetableManager = manager.middleware_data.get("manager")
+    ctx_data: dict[str, Any] = cast(dict[str, Any], ctx.dialog_data)
+    manager_obj = cast(TimetableManager, manager.middleware_data.get("manager"))
     # Всегда сохраняем user_id для последующих отправок/плейсхолдера
     try:
         if callback.from_user:
-            ctx.dialog_data["user_id"] = callback.from_user.id
+            ctx_data["user_id"] = callback.from_user.id
     except Exception:
         pass
     # Поддержка нажатия за пределами диалога: достаём группу из БД пользователя при отсутствии в контексте
-    if not ctx.dialog_data.get(DialogDataKeys.GROUP):
+    if not ctx_data.get(DialogDataKeys.GROUP):
         try:
             user_data_manager = manager.middleware_data.get("user_data_manager")
             if user_data_manager and callback.from_user:
                 saved_group = await user_data_manager.get_user_group(callback.from_user.id)
                 if saved_group:
-                    ctx.dialog_data[DialogDataKeys.GROUP] = saved_group
+                    ctx_data[DialogDataKeys.GROUP] = saved_group
         except Exception:
             pass
-    if not ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO):
-        ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
-    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
+    if not ctx_data.get(DialogDataKeys.CURRENT_DATE_ISO):
+        ctx_data[DialogDataKeys.CURRENT_DATE_ISO] = datetime.now(MOSCOW_TZ).date().isoformat()
+    group: Any = ctx_data.get(DialogDataKeys.GROUP, "N/A")
     try:
-        current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
+        current_date = date.fromisoformat(cast(str, ctx_data.get(DialogDataKeys.CURRENT_DATE_ISO)))
     except Exception:
         current_date = datetime.now(MOSCOW_TZ).date()
-    week_info = await manager_obj.get_academic_week_type(current_date)
+    week_info: Any = await manager_obj.get_academic_week_type(current_date)
     if not week_info:
         try:
             await callback.answer("Неделя не определена", show_alert=True)
@@ -645,7 +653,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     try:
         from core.subscription_filter import is_user_subscribed
 
-        bot: Bot = manager.middleware_data.get("bot")
+        bot = cast(Bot, manager.middleware_data.get("bot"))
         subscribed = await is_user_subscribed(
             user_id=callback.from_user.id,
             bot=bot,
@@ -675,7 +683,8 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
                         [InlineKeyboardButton(text=i18n.get("btn_check_subscription", lang=lang), callback_data="check_sub")],
                     ]
                 )
-                await callback.message.answer(
+                cb_msg: Any = callback.message
+                await cb_msg.answer(
                     i18n.get("full_quality_gate_text", lang=lang),
                     reply_markup=kb,
                     parse_mode="HTML",
@@ -696,10 +705,10 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     # Если файла нет — генерируем синхронно и отправляем сразу (без поллинга)
     if not output_path.exists():
         try:
-            timetable_manager: TimetableManager = manager.middleware_data.get("manager")
+            timetable_manager = cast(TimetableManager, manager.middleware_data.get("manager"))
 
             # Получаем расписание, используя week_key напрямую
-            user_type = ctx.dialog_data.get("user_type", "student")
+            user_type = ctx_data.get("user_type", "student")
             if user_type == "teacher":
                 week_schedule: dict[str, list[dict[str, Any]]] = {}
                 teacher_lessons = timetable_manager._teachers_index.get(group, [])
@@ -723,7 +732,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
             from core.image_service import ImageService
 
             cache_manager = ImageCacheManager(manager_obj.redis, cache_ttl_hours=24)
-            bot: Bot = manager.middleware_data.get("bot")
+            bot = cast(Bot, manager.middleware_data.get("bot"))
             image_service = ImageService(cache_manager, bot)
 
             success, file_path = await image_service.get_or_generate_week_image(
@@ -742,7 +751,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
     # Отправляем файл, если он готов
     if output_path.exists():
         try:
-            bot: Bot = manager.middleware_data.get("bot")
+            bot = cast(Bot, manager.middleware_data.get("bot"))
             caption = f"📄 {week_name_full} ({safe_group})"
             doc_file = FSInputFile(output_path, filename=f"Schedule_{safe_group}_{week_key}.png")
             logging.info(f"📤 Sending document to user {callback.from_user.id}, file={output_path}")
@@ -771,7 +780,7 @@ async def on_send_original_file(callback: CallbackQuery, button: Button, manager
 
 async def on_date_shift(callback: CallbackQuery, button: Button, manager: DialogManager, days: int) -> None:
     ctx = manager.current_context()
-    current_date = date.fromisoformat(ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO))
+    current_date = date.fromisoformat(cast(str, ctx.dialog_data.get(DialogDataKeys.CURRENT_DATE_ISO)))
     new_date = current_date + timedelta(days=days)
     ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO] = new_date.isoformat()
     try:
@@ -798,12 +807,13 @@ async def on_today_click(callback: CallbackQuery, button: Button, manager: Dialo
 
 async def on_text_week_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     ctx = manager.current_context()
-    manager_obj: TimetableManager = manager.middleware_data.get("manager")
+    ctx_data: dict[str, Any] = cast(dict[str, Any], ctx.dialog_data)
+    manager_obj = cast(TimetableManager, manager.middleware_data.get("manager"))
     user_data_manager = manager.middleware_data.get("user_data_manager")
     user_id = callback.from_user.id
     lang = await user_data_manager.get_user_language(user_id) if user_data_manager else "ru"
-    group = ctx.dialog_data.get(DialogDataKeys.GROUP, "N/A")
-    current_date = date.fromisoformat(ctx.dialog_data[DialogDataKeys.CURRENT_DATE_ISO])
+    group: Any = ctx_data.get(DialogDataKeys.GROUP, "N/A")
+    current_date = date.fromisoformat(ctx_data[DialogDataKeys.CURRENT_DATE_ISO])
     week_start = current_date - timedelta(days=current_date.weekday())
     week_schedule = {}
     week_name = ""
@@ -811,7 +821,7 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
     if isinstance(raw_schedules, dict):
         is_group_target = str(group).upper() in raw_schedules
     else:
-        role = ctx.dialog_data.get("user_type")
+        role = ctx_data.get("user_type")
         is_group_target = role != "teacher"
     user_rules = await _get_user_rules_for_target(manager, user_id, str(group))
     for offset in range(6):
@@ -834,18 +844,19 @@ async def on_text_week_click(callback: CallbackQuery, button: Button, manager: D
         group=html.escape(str(group)),
     )
     text = f"{title}\n\n{format_full_week_text(week_schedule, week_name or i18n.get('week_even', lang), lang=lang)}"
+    cb_msg: Any = callback.message
     if len(text) <= 4096:
-        await callback.message.answer(text, parse_mode="HTML", disable_web_page_preview=True)
+        await cb_msg.answer(text, parse_mode="HTML", disable_web_page_preview=True)
         return
     chunk = ""
     for line in text.split("\n"):
         candidate = f"{chunk}\n{line}" if chunk else line
         if len(candidate) > 4096 and chunk:
-            await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
+            await cb_msg.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
             chunk = line
         else:
             chunk = candidate
-    await callback.message.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
+    await cb_msg.answer(chunk, parse_mode="HTML", disable_web_page_preview=True)
 
 
 async def on_export_ics_click(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
@@ -1172,13 +1183,15 @@ def _when_show_my_group(data: dict, widget: object, manager: object) -> bool:
 async def on_news_clicked(callback: CallbackQuery, button: Button, manager: DialogManager) -> None:
     """Fallback: send the news channel URL if a URL button is unavailable."""
     await callback.answer()
-    await callback.message.answer(news_channel_url())
+    cb_msg: Any = callback.message
+    await cb_msg.answer(news_channel_url())
 
 
 async def on_inline_back(callback: CallbackQuery, dialog_manager: DialogManager) -> None:
     # Удаляем медиасообщение с изображением и остаёмся в текущем окне диалога
     try:
-        await callback.message.delete()
+        cb_msg: Any = callback.message
+        await cb_msg.delete()
     except Exception:
         pass
     try:
@@ -1250,6 +1263,13 @@ schedul_dialog_windows = [
                 Format("{btn_more}"),
                 id=WidgetIds.MORE,
                 on_click=on_more_click,
+            ),
+        ),
+        Row(
+            Url(
+                Format("{btn_gost_report}"),
+                Format("{gost_report_url}"),
+                id="gost_report_url",
             ),
         ),
         Row(
